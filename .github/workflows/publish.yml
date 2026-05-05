@@ -18,11 +18,16 @@ jobs:
           node-version: 20
           cache: npm
           registry-url: 'https://registry.npmjs.org'
+      # Trusted publishing (OIDC) requires npm >= 11.5.1; Node 20
+      # ships with npm 10.x, which silently falls back to anonymous
+      # publish (ENEEDAUTH).
+      - run: npm install -g npm@latest
       - run: npm ci
       - run: npm run lint
       - run: npm test
       - run: npm run build
       - run: npm run size
+      # No NODE_AUTH_TOKEN: with a Trusted Publisher configured for
+      # this workflow file at npmjs.com, npm picks up the OIDC token
+      # from the GitHub Actions environment automatically.
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

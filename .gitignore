@@ -1,0 +1,4 @@
+node_modules/
+spektrum.min.js
+*.tgz
+.DS_Store

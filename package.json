@@ -1,0 +1,29 @@
+{
+  "name": "spektrum",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./spektrum.js",
+  "types": "./spektrum.d.ts",
+  "exports": {
+    ".": {
+      "types": "./spektrum.d.ts",
+      "import": "./spektrum.js"
+    }
+  },
+  "files": [
+    "spektrum.js",
+    "spektrum.min.js",
+    "spektrum.d.ts"
+  ],
+  "scripts": {
+    "start": "python3 -m http.server 8088",
+    "test": "node --test",
+    "lint": "eslint .",
+    "build": "esbuild spektrum.js --minify --format=esm --outfile=spektrum.min.js --legal-comments=none"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "eslint": "^9.0.0"
+  }
+}

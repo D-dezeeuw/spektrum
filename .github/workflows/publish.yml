@@ -37,6 +37,14 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run size
+      # Diagnostic: confirm npm version and that the OIDC env vars
+      # are present (presence only — values are secrets).
+      - name: Diagnose publish auth
+        run: |
+          echo "npm version: $(npm --version)"
+          echo "registry: $(npm config get registry)"
+          echo "OIDC URL set: $([[ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]] && echo yes || echo no)"
+          echo "OIDC TOKEN set: $([[ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]] && echo yes || echo no)"
       # No NODE_AUTH_TOKEN env: with a Trusted Publisher configured
       # for this workflow file at npmjs.com, npm picks up the OIDC
       # token from the GitHub Actions environment automatically.

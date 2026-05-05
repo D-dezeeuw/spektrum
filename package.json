@@ -1,7 +1,7 @@
 {
   "name": "spektrum",
   "version": "0.1.0",
-  "description": "Reactive HTML bindings with time-travel replay. 4.7kB, zero deps, ESM.",
+  "description": "Tiny reactive engine with HTML bindings and time-travel. 4.7kB, zero deps.",
   "type": "module",
   "main": "./spektrum.js",
   "types": "./spektrum.d.ts",

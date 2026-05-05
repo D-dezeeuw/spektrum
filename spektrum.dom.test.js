@@ -15,8 +15,9 @@ GlobalRegistrator.register();
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import spektrum, {
-  appState, setValue, bindDOM, tick, reset, getPathObj,
+  appState, setValue, bindDOM, tick, reset, getPathObj, precompile,
 } from './spektrum.js';
+import { extractExpressions, emitPrecompileSource } from './spektrum-compile.js';
 
 beforeEach(() => {
   reset();
@@ -273,6 +274,260 @@ test('reset() clears refs', () => {
   assert.ok(spektrum.refs.email);
   reset();
   assert.equal(spektrum.refs.email, undefined);
+});
+
+// === Keyed data-each ===
+
+test('keyed data-each preserves nodes by key when index is unchanged', () => {
+  document.body.innerHTML = `
+    <ul data-each="items" data-as="item" data-key="item.id">
+      <li>{{item.label}}</li>
+    </ul>`;
+  setValue('items', [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }]);
+  bindDOM(document.body);
+  tick();
+  const before = [...document.body.querySelectorAll('ul li')];
+  assert.equal(before.length, 2);
+
+  // Append: existing nodes must be the same DOM elements after re-render.
+  setValue('items', [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }]);
+  tick();
+  const after = [...document.body.querySelectorAll('ul li')];
+  assert.equal(after.length, 3);
+  assert.equal(after[0], before[0], 'item 0 node reused');
+  assert.equal(after[1], before[1], 'item 1 node reused');
+});
+
+test('keyed data-each preserves focus on appended-to lists', () => {
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-key="row.id">
+      <li><input data-model="row.text"></li>
+    </ul>`;
+  setValue('rows', [{ id: 1, text: 'one' }, { id: 2, text: 'two' }]);
+  bindDOM(document.body);
+  tick();
+
+  const firstInput = document.body.querySelector('ul li input');
+  firstInput.focus();
+  assert.equal(document.activeElement, firstInput);
+
+  // Append a row. Without keying this would tear down all bindings and
+  // focus would leave the input.
+  setValue('rows', [{ id: 1, text: 'one' }, { id: 2, text: 'two' }, { id: 3, text: 'three' }]);
+  tick();
+  assert.equal(document.activeElement, firstInput, 'focus survives append');
+});
+
+test('keyed data-each removes nodes for dropped keys', () => {
+  document.body.innerHTML = `
+    <ul data-each="items" data-as="item" data-key="item.id">
+      <li>{{item.label}}</li>
+    </ul>`;
+  setValue('items', [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }]);
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelectorAll('ul li').length, 3);
+
+  setValue('items', [{ id: 'a', label: 'A' }, { id: 'c', label: 'C' }]);
+  tick();
+  const labels = [...document.body.querySelectorAll('ul li')].map(li => li.textContent);
+  assert.deepEqual(labels, ['A', 'C']);
+});
+
+test('unkeyed data-each falls back to full rebuild (legacy behavior)', () => {
+  document.body.innerHTML = `
+    <ul data-each="items" data-as="item">
+      <li>{{item.label}}</li>
+    </ul>`;
+  setValue('items', [{ label: 'a' }]);
+  bindDOM(document.body);
+  tick();
+  const before = document.body.querySelector('ul li');
+
+  setValue('items', [{ label: 'a' }, { label: 'b' }]);
+  tick();
+  const after = document.body.querySelector('ul li');
+  assert.notEqual(after, before, 'unkeyed mode rebuilds existing nodes');
+});
+
+test('replay() backward through a populated list wipes the rendered rows', () => {
+  // User-reported regression (1/2): "add fruit, scrub history slider
+  // back, list still shows the old rows". Without the replay-completion
+  // refresh, bindEach never re-fires when its subscribed path falls
+  // out of state, leaving stale `<li>` and stale data-model bindings
+  // behind. The user could then type into a phantom row.
+  document.body.innerHTML = `
+    <div id="basket">
+      <ul data-each="items" data-as="item" data-key="item.id">
+        <li>{{item.label}}</li>
+      </ul>
+    </div>`;
+  setValue('items', []);
+  bindDOM(document.body);
+  tick();
+
+  setValue('items', [{ id: 1, label: '🍎' }], 'add');
+  tick();
+  assert.equal(document.body.querySelectorAll('#basket li').length, 1);
+
+  spektrum.replay(1); // back to just the seed; items is []
+  assert.equal(
+    document.body.querySelectorAll('#basket li').length,
+    0,
+    'rows must be cleared once items is empty again',
+  );
+});
+
+test('typing into a per-item input (data-model on item.note) preserves the array', () => {
+  // User-reported regression (2/2): typing into a per-item note input
+  // made the list disappear. Cause: setValue('items.0.note', 'x')
+  // wrote `delta = {items: {0: {note: 'x'}}}`, and deepMerge replaced
+  // state.items (an array) wholesale with that plain object. items
+  // became `{0: {note: 'x'}}`, so bindEach's `Array.isArray` check
+  // wiped the DOM and the next addKind tried to spread an object.
+  document.body.innerHTML = `
+    <div id="basket">
+      <ul data-each="items" data-as="item" data-key="item.id">
+        <li>
+          <span class="label">{{item.label}}</span>
+          <input class="note" data-model="item.note">
+        </li>
+      </ul>
+    </div>`;
+  setValue('items', [
+    { id: 1, label: '🍎', note: '' },
+    { id: 2, label: '🍌', note: '' },
+  ]);
+  bindDOM(document.body);
+  tick();
+
+  const firstNote = document.body.querySelector('#basket li:nth-child(1) .note');
+  firstNote.value = 'ripe';
+  firstNote.dispatchEvent(new Event('input'));
+  tick();
+
+  assert.ok(Array.isArray(appState.items), 'items must remain an array');
+  assert.equal(appState.items.length, 2, 'no items lost');
+  assert.equal(appState.items[0].note, 'ripe');
+  assert.equal(appState.items[0].label, '🍎', 'sibling fields on the edited item survive');
+  assert.equal(appState.items[1].label, '🍌', 'other items are unaffected');
+  assert.equal(
+    document.body.querySelectorAll('#basket li').length,
+    2,
+    'list still renders both rows',
+  );
+});
+
+// === Event modifiers ===
+
+test('data-action="click.prevent" calls preventDefault', () => {
+  document.body.innerHTML = `
+    <a href="#nope" data-action="click.prevent" data-fn="trigger" data-id="x" data-value="1" data-name="hit">go</a>`;
+  setValue('x', 0);
+  bindDOM(document.body);
+  tick();
+
+  const a = document.body.querySelector('a');
+  let prevented = false;
+  // happy-dom dispatches the event; capture defaultPrevented after the click.
+  const ev = new Event('click', { cancelable: true, bubbles: true });
+  a.dispatchEvent(ev);
+  prevented = ev.defaultPrevented;
+  tick();
+  assert.equal(prevented, true, 'preventDefault was called');
+  assert.equal(getPathObj(appState, 'x'), 1);
+});
+
+test('bindDOM(footerEl) wires data-action on elements outside the main panels', () => {
+  // Regression for the demo's "clear saved state" link: a data-fn
+  // registered on an instance is only reachable from elements the
+  // instance has bindDOM'd. The example panels each bindDOM'd their
+  // own subtree, leaving the <footer> link inert (.prevent never
+  // wired either, so the <a href="#"> would also navigate). The fix:
+  // a second bindDOM call on the footer with the same instance.
+  document.body.innerHTML = `
+    <section id="panel">
+      <p>{{label}}</p>
+    </section>
+    <footer>
+      <a href="#" data-action="click.prevent" data-fn="reset">reset</a>
+    </footer>`;
+  setValue('label', 'live');
+  let resetCalls = 0;
+  spektrum.defineFn('reset', () => { resetCalls++; });
+
+  bindDOM(document.getElementById('panel'));
+  bindDOM(document.querySelector('footer'));
+  tick();
+
+  const link = document.querySelector('footer a');
+  const ev = new Event('click', { cancelable: true, bubbles: true });
+  link.dispatchEvent(ev);
+
+  assert.equal(ev.defaultPrevented, true, '.prevent modifier wired');
+  assert.equal(resetCalls, 1, 'data-fn fired once');
+});
+
+test('data-action="click.once" runs only once', () => {
+  document.body.innerHTML = `
+    <button data-action="click.once" data-fn="trigger" data-id="n" data-value="1" data-name="hit">+</button>`;
+  setValue('n', 0);
+  bindDOM(document.body);
+  tick();
+
+  const btn = document.body.querySelector('button');
+  btn.click();
+  btn.click();
+  btn.click();
+  tick();
+  assert.equal(getPathObj(appState, 'n'), 1);
+});
+
+// === Precompile end-to-end ===
+
+test('precompile() entry is used by {{...}} bindings before new Function', () => {
+  // Pick an unusual expression so we can be sure the cache miss
+  // would otherwise compile fresh.
+  const expr = '__precompile_e2e__ * 3';
+  let calls = 0;
+  precompile(expr, (state) => { calls++; return state.__precompile_e2e__ * 3; });
+
+  document.body.innerHTML = `<p>{{${expr}}}</p>`;
+  setValue('__precompile_e2e__', 4);
+  bindDOM(document.body);
+  tick();
+
+  assert.equal(document.body.querySelector('p').textContent, '12');
+  assert.ok(calls >= 1, 'precompiled fn was invoked');
+});
+
+// === Compile helper ===
+
+test('extractExpressions pulls {{...}}, :attr, data-if, data-key sources', () => {
+  const html = `
+    <p>{{count + 1}} and {{user.name}}</p>
+    <button :disabled="locked"></button>
+    <div data-if="!hidden">x</div>
+    <ul data-each="items" data-as="item" data-key="item.id">
+      <li>{{item.label}}</li>
+    </ul>
+  `;
+  const exprs = extractExpressions(html);
+  // Order is encounter order; assert as a set instead.
+  assert.deepEqual(
+    new Set(exprs),
+    new Set(['count + 1', 'user.name', 'locked', '!hidden', 'item.id', 'item.label']),
+  );
+  // data-each value is NOT an expression — it's a path. Make sure we
+  // didn't accidentally include it.
+  assert.ok(!exprs.includes('items'));
+});
+
+test('emitPrecompileSource emits parseable JS that imports precompile', () => {
+  const out = emitPrecompileSource(['count + 1', 'user.name']);
+  assert.match(out, /import \{ precompile \} from 'spektrum';/);
+  assert.match(out, /precompile\("count \+ 1"/);
+  assert.match(out, /precompile\("user\.name"/);
 });
 
 test('destroy() removes listeners and releases the root for re-binding', () => {

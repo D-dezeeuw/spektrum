@@ -45,13 +45,27 @@ export const setPathValue = (obj, path, value) => {
 };
 
 const deepMerge = (target, source) => {
-  /* Recursive in-place merge: plain values overwrite, nested objects descend. */
+  /*
+    Recursive in-place merge: plain values overwrite, nested objects
+    descend.
+
+    Sub-path edits on arrays produce a source like `{items: {0: {note:
+    'x'}}}` — the path walker creates plain-object intermediates, even
+    when the target slot is an array. We must merge into the existing
+    array (writing index 0's properties) rather than replacing it.
+    Arrays accept numeric-string property writes the same way objects
+    do, so the recursion is safe; we only reset the slot when the
+    target is a non-object that can't be descended into (primitive or
+    null), which would otherwise throw on property write.
+
+    Whole-array replacement still happens via the else branch when
+    `source[k]` is itself an Array — `setValue('items', newArr)` lays
+    the array directly into the delta and wins over the existing slot.
+  */
   for (const k of Object.keys(source)) {
     const v = source[k];
     if (v && typeof v === 'object' && !Array.isArray(v)) {
-      // Replace the slot with {} when target[k] is a primitive or array,
-      // otherwise descending and writing properties on a primitive throws.
-      if (target[k] == null || typeof target[k] !== 'object' || Array.isArray(target[k])) {
+      if (target[k] == null || typeof target[k] !== 'object') {
         target[k] = {};
       }
       deepMerge(target[k], v);
@@ -77,12 +91,34 @@ const parseValue = (s) => {
 
 const callAll = (fns) => fns.forEach(f => f && f());
 
+// Built-in `data-fn` helpers. History id falls back to "<fn>@<id>"
+// so unnamed actions still get a stable label; value falls back to
+// the element's own value so form inputs work without an explicit
+// data-value. Pure functions of the element + arg, hoisted out of
+// the factory so multiple instances don't each carry a copy.
+const histId = (el) => el.dataset.name || `${el.dataset.fn}@${el.dataset.id}`;
+const fnVal  = (el, v) => v ?? parseValue(el.value);
+
 // === Expression engine ===
 // Compile-on-first-use, cached by source string. Templates are
 // author-written, so `new Function` is acceptable (same caveat as
-// Vue and Alpine — don't accept untrusted templates).
+// Vue and Alpine — don't accept untrusted templates). For CSP
+// deployments that disable `unsafe-eval`, pre-register every
+// expression via `precompile()` from a build step — `new Function`
+// then never runs (the cache hits first).
 
+const EVAL_CACHE_LIMIT = 500;
 const evalCache = new Map();
+
+const cacheSet = (k, v) => {
+  // FIFO eviction — Map preserves insertion order. Bounds memory for
+  // long-running pages that mint many distinct expressions (e.g.
+  // dynamic per-row strings inside a frequently rebuilt data-each).
+  if (evalCache.size >= EVAL_CACHE_LIMIT) {
+    evalCache.delete(evalCache.keys().next().value);
+  }
+  evalCache.set(k, v);
+};
 
 const evalExpr = (expr) => {
   let fn = evalCache.get(expr);
@@ -96,12 +132,23 @@ const evalExpr = (expr) => {
     // before the first tick) render as undefined instead of throwing.
     fn = (state) => { try { return compiled(state); } catch { return undefined; } };
   } catch (err) {
+    // CSP that disables `unsafe-eval` lands here. Without a precompiled
+    // entry, the binding renders as undefined.
     console.warn(`[spektrum] invalid expression: "${expr}"`, err);
     fn = () => undefined;
   }
-  evalCache.set(expr, fn);
+  cacheSet(expr, fn);
   return fn;
 };
+
+/**
+ * Register a precompiled expression function. Build-time tooling
+ * walks templates, emits one `precompile(source, fn)` call per unique
+ * expression, and ships those calls in a sibling module loaded
+ * before `bindDOM`. With every expression precompiled, the runtime
+ * never reaches the `new Function` fallback — safe under strict CSP.
+ */
+export const precompile = (source, fn) => cacheSet(source, fn);
 
 // Lookbehind excludes identifiers preceded by `.` or `\w` so
 // `user.name.toUpperCase` matches as one path, not three.
@@ -152,22 +199,65 @@ const walkTextNodes = (root, visit) => {
 
 // === Factory ===
 
-/** Create an isolated Spektrum instance. Each call returns its own
- *  state, delta, history, systems, fns, and refs — fully separate from
- *  other instances. */
-export const createSpektrum = () => {
+/**
+ * Create an isolated Spektrum instance. Each call returns its own
+ * state, delta, history, systems, fns, and refs — fully separate
+ * from other instances.
+ *
+ * Options:
+ *   historyLimit  Cap `history.length`. Oldest entries drop on overflow.
+ *                 With a cap, replay() to indices below the surviving
+ *                 window is undefined; don't set this if you need
+ *                 unlimited scrubback.
+ *   snapshotEvery Capture an `appState` snapshot every K recorded
+ *                 entries so replay() costs O(K) instead of O(n).
+ *                 Snapshots are dropped alongside the entries they
+ *                 cover when historyLimit trims.
+ *   forkLimit     Cap the number of preserved fork tails (entries
+ *                 dropped when you mutate while scrubbed back).
+ *                 Defaults to 50. Set Infinity to disable trimming;
+ *                 set 0 to discard forks immediately.
+ */
+export const createSpektrum = (opts = {}) => {
 
+  const { historyLimit, snapshotEvery } = opts;
+  const forkLimit = opts.forkLimit ?? 50;
   const appState = {};
   const appStateDelta = {};
   const history = [];
+  const snapshots = []; // [{ index, state }] — index = history.length when captured
+  const forks = [];     // tails dropped by mutate-while-scrubbed-back
   const systems = [];
   const fns = {};
   const refs = {}; // DOM handles registered via data-ref="name"
   let cursor = 0;
   let replaying = false;
+  let errorHandler = null;
+  let recordHandler = null;
+  let forkHandler = null;
   let boundRoots = new WeakSet(); // tracks bindDOM roots for idempotency
 
   // --- Engine helpers (state-bound) ---
+
+  /** Fire a nullable hook with namespaced error logging. Centralises
+   *  the `if (h) try { h(...) } catch { console.error('[spektrum]
+   *  ${name} threw', err) }` pattern shared by every hook. */
+  const safeFire = (fn, name, ...args) => {
+    if (!fn) return;
+    try { fn(...args); }
+    catch (err) { console.error(`[spektrum] ${name} threw`, err); }
+  };
+
+  /** Snapshot of `appState` overlaid with the pending `appStateDelta`
+   *  — the values systems will see after the *next* tick drains.
+   *  Used by `bindReactive`'s initial render and by snapshotEvery
+   *  capture so both see post-tick values. */
+  const stateSnapshot = () => {
+    const s = {};
+    deepMerge(s, appState);
+    deepMerge(s, appStateDelta);
+    return s;
+  };
 
   /** Ensure both delta and state have parents materialised for `path`. */
   const checkPath = (path) => {
@@ -189,12 +279,75 @@ export const createSpektrum = () => {
   };
 
   /** Apply an entry, push to history, advance cursor. Truncates the
-   *  future first if scrubbed back. */
+   *  future first if scrubbed back, preserving the dropped tail on
+   *  `forks` so apps can warn or restore. */
   const record = (entry) => {
-    if (cursor < history.length) history.length = cursor;
+    if (cursor < history.length) {
+      // Capture the about-to-be-discarded tail before mutating
+      // history. Each fork is a plain HistoryEntry[] (no new types),
+      // tagged with the cursor it forked from and a wall-clock ts so
+      // a UI can show "X future edits discarded N seconds ago".
+      const dropped = history.slice(cursor);
+      history.length = cursor;
+      // Snapshots ahead of cursor are now invalid (their state was
+      // post-truncated entries that no longer exist).
+      while (snapshots.length && snapshots[snapshots.length - 1].index > cursor) {
+        snapshots.pop();
+      }
+      if (dropped.length && forkLimit !== 0) {
+        const fork = { entries: dropped, forkedAt: cursor, ts: Date.now() };
+        forks.push(fork);
+        if (forks.length > forkLimit) forks.splice(0, forks.length - forkLimit);
+        safeFire(forkHandler, 'onFork', fork);
+      }
+    }
     applyEntry(entry);
     history.push(entry);
     cursor = history.length;
+    if (snapshotEvery && history.length % snapshotEvery === 0) {
+      // Snapshot AFTER tick would be cleaner but record() is pre-tick;
+      // capture state ⊕ delta so the snapshot reflects what replay()
+      // will land on at this index.
+      snapshots.push({ index: history.length, state: stateSnapshot() });
+    }
+    if (historyLimit && history.length > historyLimit) {
+      const drop = history.length - historyLimit;
+      history.splice(0, drop);
+      cursor = Math.max(0, cursor - drop);
+      while (snapshots.length && snapshots[0].index <= drop) snapshots.shift();
+      for (const s of snapshots) s.index -= drop;
+    }
+    // After-record hook for cross-cutting concerns (persistence,
+    // telemetry, devtools). Fires synchronously, after trim, with the
+    // full entry. Does NOT fire during replay() — replay re-applies
+    // entries without re-recording them.
+    safeFire(recordHandler, 'onRecord', entry);
+  };
+
+  /** Install an error handler. Receives (err, systemFn) when a
+   *  subscribed system throws inside tick(). One handler per instance;
+   *  later calls replace earlier. Pass `null` to clear. */
+  const onError = (fn) => { errorHandler = fn; };
+
+  /** Install a post-record hook. Called as `(entry)` after every
+   *  recorded mutation has been applied, snapshotted, and trimmed.
+   *  One handler per instance. Pass `null` to clear. */
+  const onRecord = (fn) => { recordHandler = fn; };
+
+  /** Install a fork hook. Fires when a record() truncates entries
+   *  (mutate-while-scrubbed-back). Receives the just-saved fork
+   *  record `{ entries, forkedAt, ts }`. Descriptive — the truncate
+   *  has already happened by the time this fires; throwing here
+   *  cannot roll it back. One handler per instance. */
+  const onFork = (fn) => { forkHandler = fn; };
+
+  /** Run one system, routing exceptions through the error handler. */
+  const runSystem = (sys) => {
+    try { sys.fn(appState, appStateDelta); }
+    catch (err) {
+      if (errorHandler) safeFire(errorHandler, 'onError', err, sys.fn);
+      else console.error('[spektrum] system threw', err);
+    }
   };
 
   // --- Public mutators ---
@@ -225,13 +378,10 @@ export const createSpektrum = () => {
 
   /** Detach the first system registered with `fn`. Returns true if removed. */
   const removeSystem = (fn) => {
-    for (let i = 0; i < systems.length; i++) {
-      if (systems[i].fn === fn) {
-        systems.splice(i, 1);
-        return true;
-      }
-    }
-    return false;
+    const i = systems.findIndex(s => s.fn === fn);
+    if (i === -1) return false;
+    systems.splice(i, 1);
+    return true;
   };
 
   /** Register a named handler callable from `data-fn` attributes. */
@@ -265,10 +415,7 @@ export const createSpektrum = () => {
       );
       deepMerge(appState, appStateDelta);
       clearObject(appStateDelta);
-      for (const sys of toRun) {
-        try { sys.fn(appState, appStateDelta); }
-        catch (err) { console.error('[spektrum] system threw', err); }
-      }
+      for (const sys of toRun) runSystem(sys);
     }
   };
 
@@ -278,13 +425,18 @@ export const createSpektrum = () => {
     requestAnimationFrame(run);
   };
 
-  /** Wipe runtime state. Built-in fns survive. Also resets refs and
-   *  the bindDOM idempotency tracker. */
+  /** Wipe runtime state. Built-in fns survive. Also resets refs,
+   *  snapshots, forks, and the bindDOM idempotency tracker. Hook
+   *  registrations (onError, onRecord, onFork) survive — they're
+   *  configuration, not state; clear them explicitly with
+   *  onError(null) / onRecord(null) / onFork(null) if desired. */
   const reset = () => {
     clearObject(appState);
     clearObject(appStateDelta);
     clearObject(refs);
     history.length = 0;
+    snapshots.length = 0;
+    forks.length = 0;
     systems.length = 0;
     boundRoots = new WeakSet();
     cursor = 0;
@@ -309,11 +461,38 @@ export const createSpektrum = () => {
     cursor = 0;
     clearObject(appState);
     clearObject(appStateDelta);
-    for (let i = 0; i < n; i++) {
+
+    // Skip ahead to the latest snapshot ≤ n, if any. Snapshots are
+    // captured every `snapshotEvery` entries, so this turns O(n)
+    // replay into O(n mod K) for long histories.
+    let startIdx = 0;
+    for (let i = snapshots.length - 1; i >= 0; i--) {
+      if (snapshots[i].index <= n) {
+        deepMerge(appState, snapshots[i].state);
+        startIdx = snapshots[i].index;
+        cursor = startIdx;
+        break;
+      }
+    }
+
+    for (let i = startIdx; i < n; i++) {
       applyEntry(history[i]);
       cursor = i + 1;
       tick();
     }
+
+    // Replay-completion refresh: re-fire every system once against
+    // the final state. Without this, a path that *was* in state
+    // before the scrub but is *absent* afterward (because no replayed
+    // entry touches it) leaves its bound systems stuck rendering
+    // stale data — most visibly, scrubbing back past a `data-each`
+    // populate leaves the rendered rows in the DOM, with their
+    // `data-model` listeners still wired. Force-firing here puts
+    // every binding in sync with the new state. The `replaying` flag
+    // stays true so user systems can opt out of replay-time side
+    // effects (e.g. analytics, network calls).
+    for (const sys of systems) runSystem(sys);
+
     replaying = false;
   };
 
@@ -326,10 +505,7 @@ export const createSpektrum = () => {
    *  immediately (no flicker between bind time and the first tick). */
   const bindReactive = (paths, render) => {
     const unsub = addSystem(paths, render);
-    const snapshot = {};
-    deepMerge(snapshot, appState);
-    deepMerge(snapshot, appStateDelta);
-    render(snapshot, appStateDelta);
+    render(stateSnapshot(), appStateDelta);
     return unsub;
   };
 
@@ -441,36 +617,103 @@ export const createSpektrum = () => {
     }
   };
 
-  /** data-each="arrayPath" data-as="varName". First child is captured
-   *  as a template and detached. On any change to arrayPath: wipe,
-   *  clone-and-bind per item with paths rewritten to absolute form.
-   *  Each clone gets `contain: layout style` for perf isolation.
-   *  Cost: O(n × bindings-per-item) per change. No keyed reconciliation. */
+  /**
+   * data-each="arrayPath" data-as="varName" [data-key="expr"].
+   *
+   * First child is captured as a template and detached. On change:
+   *
+   *   - Without data-key: full rebuild (every clone is destroyed and
+   *     re-bound). Backward-compatible, fine for ~100 read-only items.
+   *
+   *   - With data-key: keyed reconciliation. The key expression is
+   *     evaluated per item with `varName` in scope (e.g.
+   *     data-key="item.id"). Items whose key + index are unchanged
+   *     are left in place — their bindings, listeners, focus, and
+   *     selection survive. Items at a new index re-bind (paths must
+   *     be rewritten to the new absolute index). Removed keys are
+   *     cleaned up.
+   *
+   * Each clone gets `contain: layout style` for perf isolation.
+   */
   const bindEach = (el) => {
     const arrayPath = el.dataset.each;
     if (!arrayPath) return;
     const varName = el.dataset.as || 'item';
+    const keyExpr = el.dataset.key;
     const templateChild = el.firstElementChild;
     if (!templateChild) return;
     const template = templateChild.cloneNode(true);
     templateChild.remove();
 
+    // Keyed cache: key -> { clone, cleanup, index }. Unkeyed mode keeps
+    // a flat cleanups[] and rebuilds on every change.
+    const cache = new Map();
     let cleanups = [];
-    return bindReactive([arrayPath], (state) => {
+
+    const buildClone = (i) => {
+      const clone = template.cloneNode(true);
+      if (clone.style && !clone.style.contain) clone.style.contain = 'layout style';
+      rewriteScope(clone, varName, `${arrayPath}.${i}`);
+      return { clone, cleanup: bindDOM(clone) };
+    };
+
+    const wipeAll = () => {
+      for (const e of cache.values()) e.cleanup();
+      cache.clear();
       callAll(cleanups);
       cleanups = [];
       el.replaceChildren();
+    };
 
+    return bindReactive([arrayPath], (state) => {
       const items = getPathObj(state, arrayPath);
-      if (!Array.isArray(items)) return;
+      if (!Array.isArray(items)) { wipeAll(); return; }
 
-      items.forEach((_, i) => {
-        const clone = template.cloneNode(true);
-        if (clone.style && !clone.style.contain) clone.style.contain = 'layout style';
-        rewriteScope(clone, varName, `${arrayPath}.${i}`);
-        cleanups.push(bindDOM(clone));
-        el.appendChild(clone);
-      });
+      if (!keyExpr) {
+        wipeAll();
+        items.forEach((_, i) => {
+          const { clone, cleanup } = buildClone(i);
+          cleanups.push(cleanup);
+          el.appendChild(clone);
+        });
+        return;
+      }
+
+      // Keyed path. Evaluate the key expression with the item bound
+      // under `varName` so authors can write data-key="item.id".
+      const keyFn = evalExpr(keyExpr);
+      const newKeys = items.map(item => keyFn({ [varName]: item }));
+      const seen = new Set();
+
+      for (let i = 0; i < items.length; i++) {
+        const key = newKeys[i];
+        seen.add(key);
+        let entry = cache.get(key);
+        if (!entry || entry.index !== i) {
+          // Index changed (or first time): re-bind. Paths inside the
+          // template were baked at clone time, so a new index needs a
+          // fresh clone. This is the cost of static path rewriting —
+          // the win is that *unmoved* items pay zero.
+          if (entry) {
+            entry.cleanup();
+            entry.clone.remove(); // drop the stale DOM node before its cache slot is overwritten
+          }
+          entry = buildClone(i);
+          entry.index = i;
+          cache.set(key, entry);
+        }
+        if (el.children[i] !== entry.clone) {
+          el.insertBefore(entry.clone, el.children[i] || null);
+        }
+      }
+
+      for (const [key, entry] of cache) {
+        if (!seen.has(key)) {
+          entry.cleanup();
+          entry.clone.remove();
+          cache.delete(key);
+        }
+      }
     });
   };
 
@@ -523,9 +766,21 @@ export const createSpektrum = () => {
       if (action === 'cycle') {
         collect(addSystem([el.dataset.id], (state, delta) => handler(el, state, delta, value)));
       } else {
-        const listener = () => handler(el, appState, appStateDelta, value);
-        el.addEventListener(action, listener);
-        unsubs.push(() => el.removeEventListener(action, listener));
+        // Modifier syntax: data-action="click.prevent.stop.once".
+        // First segment is the event name; rest are flags. Mirrors
+        // Vue's v-on modifiers — covers the common footguns
+        // (preventing form submits, stopping propagation, fire-once)
+        // without forcing every author to write a custom data-fn.
+        const [eventName, ...modifiers] = action.split('.');
+        const mods = new Set(modifiers);
+        const listener = (ev) => {
+          if (mods.has('prevent')) ev.preventDefault();
+          if (mods.has('stop')) ev.stopPropagation();
+          handler(el, appState, appStateDelta, value);
+          if (mods.has('once')) el.removeEventListener(eventName, listener);
+        };
+        el.addEventListener(eventName, listener);
+        unsubs.push(() => el.removeEventListener(eventName, listener));
       }
     }
 
@@ -537,15 +792,8 @@ export const createSpektrum = () => {
 
   // --- Built-in fns (registered per instance) ---
 
-  defineFn('trigger', (el, _s, _d, value) => {
-    const histId = el.dataset.name || `${el.dataset.fn}@${el.dataset.id}`;
-    trigger(histId, el.dataset.id, value ?? parseValue(el.value));
-  });
-
-  defineFn('setValue', (el, _s, _d, value) => {
-    const histId = el.dataset.name || `${el.dataset.fn}@${el.dataset.id}`;
-    setValue(el.dataset.id, value ?? parseValue(el.value), histId);
-  });
+  defineFn('trigger',  (el, _s, _d, v) => trigger (histId(el), el.dataset.id, fnVal(el, v)));
+  defineFn('setValue', (el, _s, _d, v) => setValue(el.dataset.id, fnVal(el, v), histId(el)));
 
   defineFn('setText', (el, state) => {
     el.textContent = getPathObj(state, el.dataset.id);
@@ -564,11 +812,11 @@ export const createSpektrum = () => {
   // --- Public API of the instance ---
 
   return {
-    appState, appStateDelta, history, refs,
+    appState, appStateDelta, history, snapshots, forks, refs,
     get cursor() { return cursor; },
     get replaying() { return replaying; },
     trigger, setValue, computed,
-    addSystem, removeSystem, defineFn,
+    addSystem, removeSystem, defineFn, onError, onRecord, onFork,
     bindDOM, run, tick, replay, reset,
   };
 };
@@ -580,8 +828,8 @@ export const createSpektrum = () => {
 const _default = createSpektrum();
 export default _default;
 export const {
-  appState, appStateDelta, history, refs,
+  appState, appStateDelta, history, snapshots, forks, refs,
   trigger, setValue, computed,
-  addSystem, removeSystem, defineFn,
+  addSystem, removeSystem, defineFn, onError, onRecord, onFork,
   bindDOM, run, tick, replay, reset,
 } = _default;

@@ -7,15 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+### Added
 
-- `checkPath` no longer materialises the leaf segment of a path on `appState`. Previously, `setValue('count', 0)` would put a `{}` placeholder on `appState.count` until the first tick merged the real value. Bindings that read state pre-tick (most commonly `data-model` on an `<input type="number">` or `:disabled="someExpr"`) would receive that placeholder and produce `"[object Object]"` warnings on number inputs and similar coercion oddities elsewhere. Intermediate parents are still materialised so systems can do direct property writes like `state.user.x = …`.
-- `bindReactive`'s initial render now uses a snapshot of `appState ⊕ appStateDelta` instead of `appState` alone, so bindings registered after `setValue()` but before the first `tick()` see the seeded values immediately — eliminates a one-frame flicker between bind time and the first tick.
-- `deepMerge` no longer crashes when a state slot's type changes from primitive to object. Previously `deepMerge({k: 5}, {k: {nested: 1}})` would try to write `(5).nested = 1` and throw in strict mode; now the slot is replaced with `{}` before recursing.
+- **`onFork(fn)` hook + `spektrum.forks`** for mutate-while-scrubbed-back. When `record()` truncates entries, the dropped tail is now preserved on `spektrum.forks` (oldest first, capped by `forkLimit`, default 50) and the optional `onFork` hook fires with `{ entries, forkedAt, ts }`. Apps can warn ("X future edits will be discarded"), surface telemetry, or restore by re-applying the fork's entries via `setValue` / `trigger`. Descriptive only — the truncate has already happened by the time the hook fires; throwing inside it can't roll back. Set `forkLimit: 0` to discard forks immediately while still firing the hook; set `Infinity` to keep them all.
+- **Keyed list reconciliation** via `data-key="expr"` on `data-each`. Items at the same key + index keep their DOM, listeners, focus, and selection across re-renders. Without a key, lists fall back to the previous full-rebuild behavior (backward-compatible).
+- **Bounded history & snapshot-accelerated replay**: `createSpektrum({ historyLimit, snapshotEvery })`. `historyLimit` caps `history.length` (oldest entries drop on overflow); `snapshotEvery` captures `appState` every K recorded entries so `replay()` runs in O(K) instead of O(n).
+- **`onError(fn)` hook** for surfacing system exceptions. Receives `(err, systemFn)`. Without a handler, throwing systems still fall through to `console.error` — the engine itself never crashes.
+- **`precompile(source, fn)`** API for CSP-safe deployments. Build-time tooling emits one call per unique template expression; the runtime cache hits before the `new Function` fallback runs.
+- **`spektrum/compile`** subpath module: `extractExpressions(html)` + `emitPrecompileSource(exprs)` for the build step.
+- **`spektrum/devtools`** subpath module: a small floating scrubber panel (`mount(spektrum)`) that exposes time-travel as a UI in dev.
+- **`spektrum/persist`** subpath module: `saveHistory` / `loadHistory` / `autoSave` over localStorage (or any Storage-shaped backend).
+- **Event modifiers** on `data-action`: `.prevent`, `.stop`, `.once` (e.g. `data-action="submit.prevent"`). Mirrors Vue's v-on modifiers for the common footguns.
+- **`SECURITY.md`**, **`CONTRIBUTING.md`**, **bug-report issue template**, and a zero-dep size-budget script (`scripts/size.js`) gated in CI.
 
 ### Changed
 
-- Trimmed docstrings throughout the engine. ~580 lines now (down from ~770), same behavior. Code is denser; rationale and historical notes were removed where the code is self-explanatory.
+- `evalCache` is now bounded (FIFO, 500 entries) so long-running pages with dynamic templates can't grow it without limit.
+- CI runs coverage (`node --test --experimental-test-coverage`) and enforces the size budget on every PR.
+- Minimum Node version raised to 20 (test runner coverage flag).
+
+### Fixed
+
+- `replay()` now refreshes every system once against the final state after the entry-replay loop, so bindings stay in sync when scrubbing back to a state where their subscribed paths are absent. Previously, scrubbing back through a populated `data-each` left the rendered rows in the DOM (because no replayed entry touched the array, no system fired, no wipe). Users could then type into a phantom row and corrupt state.
+- `deepMerge` no longer wholesale-replaces an array slot when the source is a plain object with numeric keys. `setValue('items.1.note', 'x')` writes `delta = {items: {0: {note: 'x'}}}` (path walker creates plain-object intermediates); the merge now descends into the existing array and updates `items[1].note` in place, preserving the other elements. Whole-array replacement still happens via `setValue('items', newArr)` because that lays an Array directly into the delta. Visible symptom of the prior behavior: typing into a per-item input bound via `data-model="item.note"` made the entire list disappear.
+- `reset()` no longer clears `onError` / `onRecord` registrations. Hooks are configuration, not state — clearing them caused `loadHistory()` (which calls reset internally) to silently tear down handlers installed before the load. Clear them explicitly with `onError(null)` / `onRecord(null)` if needed.
+- `checkPath` no longer materialises the leaf segment of a path on `appState`. Previously, `setValue('count', 0)` would put a `{}` placeholder on `appState.count` until the first tick merged the real value. Bindings that read state pre-tick (most commonly `data-model` on an `<input type="number">` or `:disabled="someExpr"`) would receive that placeholder and produce `"[object Object]"` warnings on number inputs and similar coercion oddities elsewhere. Intermediate parents are still materialised so systems can do direct property writes like `state.user.x = …`.
+- `bindReactive`'s initial render now uses a snapshot of `appState ⊕ appStateDelta` instead of `appState` alone, so bindings registered after `setValue()` but before the first `tick()` see the seeded values immediately — eliminates a one-frame flicker between bind time and the first tick.
+- `deepMerge` no longer crashes when a state slot's type changes from primitive to object. Previously `deepMerge({k: 5}, {k: {nested: 1}})` would try to write `(5).nested = 1` and throw in strict mode; now the slot is replaced with `{}` before recursing.
 
 ## [0.2.0] — 2026-05-05
 

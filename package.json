@@ -1,7 +1,7 @@
 {
   "name": "spektrum",
   "version": "0.2.0",
-  "description": "Tiny reactive engine with HTML bindings and time-travel. 4.7kB, zero deps.",
+  "description": "Tiny reactive engine with HTML bindings and time-travel. ~7kB, zero deps.",
   "type": "module",
   "main": "./spektrum.js",
   "types": "./spektrum.d.ts",
@@ -9,18 +9,32 @@
     ".": {
       "types": "./spektrum.d.ts",
       "import": "./spektrum.js"
+    },
+    "./compile": {
+      "import": "./spektrum-compile.js"
+    },
+    "./devtools": {
+      "import": "./spektrum-devtools.js"
+    },
+    "./persist": {
+      "import": "./spektrum-persist.js"
     }
   },
   "files": [
     "spektrum.js",
     "spektrum.min.js",
-    "spektrum.d.ts"
+    "spektrum.d.ts",
+    "spektrum-compile.js",
+    "spektrum-devtools.js",
+    "spektrum-persist.js"
   ],
   "scripts": {
     "start": "python3 -m http.server 8088",
     "test": "node --test",
+    "test:coverage": "node --test --experimental-test-coverage",
     "lint": "eslint .",
-    "build": "esbuild spektrum.js --minify --format=esm --outfile=spektrum.min.js --legal-comments=none"
+    "build": "esbuild spektrum.js --minify --format=esm --outfile=spektrum.min.js --legal-comments=none",
+    "size": "node scripts/size.js"
   },
   "keywords": [
     "reactive",
@@ -43,7 +57,7 @@
   "homepage": "https://github.com/D-dezeeuw/spektrum#readme",
   "bugs": "https://github.com/D-dezeeuw/spektrum/issues",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^15.0.0",

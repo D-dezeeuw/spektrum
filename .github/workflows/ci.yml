@@ -16,6 +16,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm test
       - run: npm run lint
+      - run: npm run test:coverage
       - run: npm run build
+      - run: npm run size

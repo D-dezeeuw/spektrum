@@ -383,6 +383,18 @@ export const createSpektrum = () => {
 
     O(n) per call. History is preserved — scrub back and forth at will.
     A new trigger while scrubbed truncates the future.
+
+    For step-back undo, drive replay from `cursor` (the live playback
+    position), NOT `history.length` — history doesn't shrink on replay,
+    so successive `replay(history.length - 1)` calls land at the same
+    spot every time. The correct pattern is:
+
+        defineFn('undo', () => {
+          replay(Math.max(seedCount, cursor - 1));
+        });
+
+    where `seedCount` is the number of setValue/seed entries you want
+    to keep applied at the bottom (typically 1 — your initial state).
     */
     n = Math.max(0, Math.min(n, history.length));
     replaying = true;

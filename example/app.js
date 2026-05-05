@@ -30,8 +30,12 @@ counter.setValue('count', 0, 'seed');
 // it up. No addSystem + setPathValue boilerplate.
 counter.computed('atSeed', ['count'], () => counter.cursor <= 1);
 
+// Step the cursor back one entry per click. Using `cursor - 1` (not
+// `history.length - 1`) means each undo lands one earlier than the
+// current playback position, so repeated clicks walk backwards through
+// history instead of always returning to "live minus one".
 counter.defineFn('undo', () => {
-  counter.replay(Math.max(1, counter.history.length - 1));
+  counter.replay(Math.max(1, counter.cursor - 1));
 });
 
 counter.bindDOM(document.getElementById('counter'));
@@ -71,7 +75,7 @@ basket.defineFn('removeAt', (el, state, delta) => {
 });
 
 basket.defineFn('undo', () => {
-  basket.replay(Math.max(2, basket.history.length - 1));
+  basket.replay(Math.max(2, basket.cursor - 1));
 });
 
 basket.bindDOM(document.getElementById('basket'));

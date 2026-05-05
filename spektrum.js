@@ -39,8 +39,20 @@ const isPath = (obj, path) => {
 };
 
 const createNestedObjects = (obj, path) => {
-  /* Materialise every segment of `path` (including the leaf) as `{}` on `obj`. */
-  path.split('.').reduce((acc, k) => (acc[k] = acc[k] || {}), obj);
+  /*
+  Materialise the *intermediate* segments of `path` as `{}` on `obj`,
+  leaving the leaf alone. This lets systems do direct property writes
+  (`state.gas.value = ...`) without first checking that `gas` exists,
+  while keeping the leaf truly absent until something writes a value
+  via setPathValue. (An earlier version materialised the leaf too,
+  which polluted appState with `{}` placeholders that bindings would
+  read back before the first tick merged the real value — surfacing
+  as `el.value = "[object Object]"` errors on `<input>` and the
+  like.)
+  */
+  const keys = path.split('.');
+  keys.pop(); // skip the leaf
+  keys.reduce((acc, k) => (acc[k] = acc[k] || {}), obj);
   return obj;
 };
 

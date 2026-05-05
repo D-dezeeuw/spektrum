@@ -201,6 +201,27 @@ test('getPathObj walks numeric segments (array indices)', () => {
   assert.equal(getPathObj({ users: [{ name: 'a' }, { name: 'b' }] }, 'users.1.name'), 'b');
 });
 
+test('appState leaves are NOT materialised as {} pre-tick', () => {
+  // Regression: an earlier checkPath() materialised every segment of a
+  // path (including the leaf) as `{}` on appState, so bindings reading
+  // state before the first tick got an empty object and tried to
+  // assign it to `<input>.value`, producing "[object Object]". Only
+  // intermediate parents should be created — the leaf stays absent
+  // until something writes a real value.
+  setValue('count', 0);
+  setValue('user.name', 'alice');
+  // Leaf segments are not materialised:
+  assert.equal(appState.count, undefined, 'top-level leaf absent pre-tick');
+  assert.equal(getPathObj(appState, 'user.name'), undefined, 'nested leaf absent pre-tick');
+  // Intermediate parents ARE materialised so systems can do direct
+  // property writes like `state.user.x = ...`.
+  assert.deepEqual(appState.user, {}, 'intermediate parent is created');
+  // After tick, real values land.
+  tick();
+  assert.equal(appState.count, 0);
+  assert.equal(getPathObj(appState, 'user.name'), 'alice');
+});
+
 // === Computed ===
 
 test('computed derives a value from deps and updates on change', () => {

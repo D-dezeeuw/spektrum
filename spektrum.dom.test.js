@@ -14,7 +14,7 @@ GlobalRegistrator.register();
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import spektrum, {
   appState, setValue, bindDOM, tick, reset, getPathObj,
 } from './spektrum.js';
 
@@ -135,6 +135,132 @@ test('bindDOM is idempotent on the same root', () => {
   tick();
   // If double-bound, click would fire trigger twice and x would be 2.
   assert.equal(getPathObj(appState, 'x'), 1);
+});
+
+// === Expressions in {{...}} ===
+
+test('{{expression}} evaluates JS, not just paths', () => {
+  document.body.innerHTML = '<p>{{count + 1}}</p>';
+  setValue('count', 4);
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('p').textContent, '5');
+
+  setValue('count', 9);
+  tick();
+  assert.equal(document.body.querySelector('p').textContent, '10');
+});
+
+test('{{expression}} supports ternaries and method calls', () => {
+  document.body.innerHTML = '<p>{{flag ? name.toUpperCase() : "none"}}</p>';
+  setValue('flag', true);
+  setValue('name', 'spektrum');
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('p').textContent, 'SPEKTRUM');
+
+  setValue('flag', false);
+  tick();
+  assert.equal(document.body.querySelector('p').textContent, 'none');
+});
+
+test(':attr accepts expressions, not just paths', () => {
+  document.body.innerHTML = '<button :disabled="count <= 0">go</button>';
+  setValue('count', 0);
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('button').disabled, true);
+
+  setValue('count', 5);
+  tick();
+  assert.equal(document.body.querySelector('button').disabled, false);
+});
+
+test('data-if accepts expressions (negation)', () => {
+  document.body.innerHTML = '<div data-if="!hidden">visible</div>';
+  setValue('hidden', false);
+  bindDOM(document.body);
+  tick();
+  assert.notEqual(document.body.querySelector('div').style.display, 'none');
+
+  setValue('hidden', true);
+  tick();
+  assert.equal(document.body.querySelector('div').style.display, 'none');
+});
+
+// === :class object form ===
+
+test(':class object form toggles individual classes', () => {
+  document.body.innerHTML = '<div class="card" :class="{active: on, error: bad}">x</div>';
+  setValue('on', true);
+  setValue('bad', false);
+  bindDOM(document.body);
+  tick();
+  const div = document.body.querySelector('div');
+  assert.ok(div.classList.contains('card'), 'preserves static class');
+  assert.ok(div.classList.contains('active'), 'adds when truthy');
+  assert.ok(!div.classList.contains('error'), 'removes when falsy');
+
+  setValue('on', false);
+  setValue('bad', true);
+  tick();
+  assert.ok(!div.classList.contains('active'));
+  assert.ok(div.classList.contains('error'));
+  assert.ok(div.classList.contains('card'), 'still preserves static class');
+});
+
+test(':class string form still overwrites (backward compat)', () => {
+  document.body.innerHTML = '<div :class="theme">x</div>';
+  setValue('theme', 'dark big');
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('div').className, 'dark big');
+});
+
+// === data-model two-way binding ===
+
+test('data-model writes state from input event', () => {
+  document.body.innerHTML = '<input data-model="name">';
+  setValue('name', 'alice');
+  bindDOM(document.body);
+  tick();
+  const input = document.body.querySelector('input');
+  assert.equal(input.value, 'alice');
+
+  input.value = 'bob';
+  input.dispatchEvent(new Event('input'));
+  tick();
+  assert.equal(getPathObj(appState, 'name'), 'bob');
+});
+
+test('data-model checkbox uses `change` and `el.checked`', () => {
+  document.body.innerHTML = '<input type="checkbox" data-model="agreed">';
+  setValue('agreed', false);
+  bindDOM(document.body);
+  tick();
+  const cb = document.body.querySelector('input');
+  assert.equal(cb.checked, false);
+
+  cb.checked = true;
+  cb.dispatchEvent(new Event('change'));
+  tick();
+  assert.equal(getPathObj(appState, 'agreed'), true);
+});
+
+// === data-ref ===
+
+test('data-ref exposes the element on instance.refs', () => {
+  document.body.innerHTML = '<input data-ref="email">';
+  bindDOM(document.body);
+  assert.equal(spektrum.refs.email, document.body.querySelector('input'));
+});
+
+test('reset() clears refs', () => {
+  document.body.innerHTML = '<input data-ref="email">';
+  bindDOM(document.body);
+  assert.ok(spektrum.refs.email);
+  reset();
+  assert.equal(spektrum.refs.email, undefined);
 });
 
 test('destroy() removes listeners and releases the root for re-binding', () => {

@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 
 import spektrum, {
   appState, appStateDelta, history,
-  setValue, trigger, addSystem, removeSystem,
+  setValue, trigger, addSystem, removeSystem, computed,
   tick, replay, reset,
   getPathObj,
 } from './spektrum.js';
@@ -199,4 +199,30 @@ test('getPathObj returns undefined for missing paths', () => {
 
 test('getPathObj walks numeric segments (array indices)', () => {
   assert.equal(getPathObj({ users: [{ name: 'a' }, { name: 'b' }] }, 'users.1.name'), 'b');
+});
+
+// === Computed ===
+
+test('computed derives a value from deps and updates on change', () => {
+  setValue('count', 5);
+  computed('doubled', ['count'], (state) => state.count * 2);
+  tick();
+  assert.equal(getPathObj(appState, 'doubled'), 10);
+
+  setValue('count', 7);
+  tick();
+  assert.equal(getPathObj(appState, 'doubled'), 14);
+});
+
+test('computed returns an unsubscribe', () => {
+  setValue('x', 1);
+  const unsub = computed('y', ['x'], (state) => state.x + 100);
+  tick();
+  assert.equal(getPathObj(appState, 'y'), 101);
+
+  unsub();
+  setValue('x', 5);
+  tick();
+  // y stays at the last computed value because the system was detached.
+  assert.equal(getPathObj(appState, 'y'), 101);
 });

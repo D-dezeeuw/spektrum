@@ -87,6 +87,90 @@ const parseValue = (s) => {
 
 const callAll = (fns) => fns.forEach(f => f && f());
 
+// Expression engine: compile-on-first-use, cached by source string.
+// Templates are author-written, so `new Function` is acceptable here —
+// the same caveat Vue and Alpine carry. Don't accept untrusted templates.
+const evalCache = new Map();
+
+const evalExpr = (expr) => {
+  let fn = evalCache.get(expr);
+  if (fn) return fn;
+  try {
+    // Normalize dotted-numeric segments (e.g. `users.0.name`, the form
+    // bindEach produces after path rewriting) into bracket notation
+    // (`users[0].name`) so JS can parse them. Templates can use either
+    // form; both work on the engine side because path subscriptions
+    // are still dotted.
+    const normalized = expr.replace(/([a-zA-Z_$][\w$]*)\.(\d+)/g, '$1[$2]');
+    const compiled = new Function('state', `with (state) { return (${normalized}); }`);
+    // Wrap in a runtime try/catch so an expression touching a path
+    // that isn't in state yet (common during the initial render before
+    // the first tick) doesn't throw — just renders as undefined.
+    fn = (state) => {
+      try { return compiled(state); }
+      catch { return undefined; }
+    };
+  } catch (err) {
+    console.warn(`[spektrum] invalid expression: "${expr}"`, err);
+    fn = () => undefined;
+  }
+  evalCache.set(expr, fn);
+  return fn;
+};
+
+// Identifier extractor used to derive subscription paths from an
+// expression. Lookbehind excludes identifiers preceded by a dot or word
+// char so `user.name.toUpperCase` is captured once (not three times).
+const IDENT = /(?<![\w$.])([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)*)/g;
+const RESERVED = new Set([
+  'true', 'false', 'null', 'undefined', 'NaN', 'Infinity',
+  'typeof', 'instanceof', 'in', 'new', 'delete', 'void', 'this',
+  'Math', 'JSON', 'Date', 'Number', 'String', 'Array', 'Object',
+  'Boolean', 'RegExp', 'Error', 'Map', 'Set', 'Symbol',
+  'parseInt', 'parseFloat', 'isNaN', 'isFinite',
+  'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI',
+]);
+
+const extractPaths = (expr) => {
+  /*
+  Pull subscribable identifier paths out of an expression source string.
+
+  Returns the list of dotted paths the expression depends on, with
+  reserved-word heads (Math, JSON, true, ...) filtered out. Method
+  calls on values (e.g. user.name.toUpperCase) end up as
+  "user.name.toUpperCase"; isPath() handles the over-precise prefix
+  match correctly because string/array methods are own properties.
+  String literals and bracketed access can produce false-positive
+  identifiers; those are harmless (subscriptions to non-existent
+  paths simply never fire).
+  */
+  const paths = new Set();
+  for (const m of expr.matchAll(IDENT)) {
+    const id = m[1];
+    if (RESERVED.has(id.split('.')[0])) continue;
+    paths.add(id);
+  }
+  return [...paths];
+};
+
+const applyClass = (el, v) => {
+  /*
+  Set element classes from a value. Supports three forms:
+    string:  el.className = v                       (overwrites all classes)
+    array:   el.className = filter(Boolean).join    (overwrites)
+    object:  classList.toggle(name, !!flag) per key (preserves siblings)
+  */
+  if (typeof v === 'string') {
+    el.className = v;
+  } else if (Array.isArray(v)) {
+    el.className = v.filter(Boolean).join(' ');
+  } else if (v && typeof v === 'object') {
+    for (const [name, on] of Object.entries(v)) {
+      el.classList.toggle(name, !!on);
+    }
+  }
+};
+
 const walkTextNodes = (root, visit) => {
   /*
   Visit every text-node descendant of `root`, including `root` itself
@@ -121,6 +205,7 @@ export const createSpektrum = () => {
   const history = [];
   const systems = [];
   const fns = {};
+  const refs = {}; // DOM handles registered via data-ref="name"
   let cursor = 0;
   let replaying = false;
   let boundRoots = new WeakSet(); // tracks bindDOM roots for idempotency
@@ -284,6 +369,7 @@ export const createSpektrum = () => {
     */
     clearObject(appState);
     clearObject(appStateDelta);
+    clearObject(refs);
     history.length = 0;
     systems.length = 0;
     boundRoots = new WeakSet();
@@ -327,17 +413,27 @@ export const createSpektrum = () => {
 
   const bindText = (node) => {
     /*
-    Bind `{{path}}` placeholders in a text node. Multiple placeholders in
-    one node share a single subscription over all referenced paths.
+    Bind `{{expression}}` placeholders in a text node.
+
+    Each placeholder is a JavaScript expression evaluated against state.
+    A bare path (`{{count}}`) is just the simplest expression; richer
+    forms like `{{count + 1}}`, `{{user.name.toUpperCase()}}`, or
+    `{{flag ? "yes" : "no"}}` work the same way. Subscription paths are
+    extracted by identifier scan; the expression re-runs whenever any
+    referenced path appears in the delta.
+
+    Templates are author-written — authors are trusted not to write
+    side-effecting expressions. Don't accept untrusted templates.
     */
     const template = node.textContent;
     if (!template.includes('{{')) return;
-    const paths = [];
-    for (const m of template.matchAll(MUSTACHE)) paths.push(m[1].trim());
-    if (paths.length === 0) return;
-    return bindReactive(paths, (state) => {
-      node.textContent = template.replace(MUSTACHE, (_, p) => {
-        const v = getPathObj(state, p.trim());
+    const paths = new Set();
+    for (const m of template.matchAll(MUSTACHE)) {
+      for (const p of extractPaths(m[1].trim())) paths.add(p);
+    }
+    return bindReactive([...paths], (state) => {
+      node.textContent = template.replace(MUSTACHE, (_, e) => {
+        const v = evalExpr(e.trim())(state);
         return v == null ? '' : String(v);
       });
     });
@@ -345,20 +441,29 @@ export const createSpektrum = () => {
 
   const bindAttrs = (el) => {
     /*
-    Bind `:attr="path"` shorthands to element properties.
+    Bind `:attr="expression"` shorthands to element properties.
 
-    Property assignment, not setAttribute — `:value` updates form state,
-    `:disabled` toggles the boolean prop. Use property names, not HTML
-    attribute names: `:className`, not `:class`.
+    The attribute value is a JS expression (a bare path is the simplest
+    case). Result is assigned via property write, not setAttribute, so
+    `:value` updates form state and `:disabled` toggles the boolean prop.
+
+    Special case: `:class` and `:className` route through applyClass()
+    which accepts strings, arrays, or objects:
+      :class="myStr"                 → overwrites className
+      :class="['a', flag && 'b']"    → joins, overwrites
+      :class="{active: x, err: y}"   → toggles named classes individually
     */
     const unsubs = [];
     for (const attr of Array.from(el.attributes)) {
       if (!attr.name.startsWith(':')) continue;
       const prop = attr.name.slice(1);
-      const path = attr.value;
-      if (!path) continue;
-      unsubs.push(bindReactive([path], (state) => {
-        el[prop] = getPathObj(state, path);
+      const expr = attr.value;
+      if (!expr) continue;
+      const isClass = prop === 'class' || prop === 'className';
+      unsubs.push(bindReactive(extractPaths(expr), (state) => {
+        const v = evalExpr(expr)(state);
+        if (isClass) applyClass(el, v);
+        else el[prop] = v;
       }));
     }
     return unsubs.length ? () => callAll(unsubs) : undefined;
@@ -366,16 +471,82 @@ export const createSpektrum = () => {
 
   const bindIf = (el) => {
     /*
-    Bind `data-if="path"` to display visibility.
+    Bind `data-if="expression"` to display visibility.
 
-    Truthy state → element shows (display: ''). Falsy → display: none.
-    Children stay bound and continue receiving updates while hidden;
-    matches Vue's v-show semantics, not v-if.
+    Expression form lets you write `data-if="!user.loggedIn"` or
+    `data-if="count > 0"` without a derived state path. Truthy result →
+    element shows; falsy → display: none. Children stay bound and keep
+    receiving updates while hidden — matches Vue's v-show, not v-if.
     */
-    const path = el.dataset.if;
+    const expr = el.dataset.if;
+    if (!expr) return;
+    return bindReactive(extractPaths(expr), (state) => {
+      el.style.display = evalExpr(expr)(state) ? '' : 'none';
+    });
+  };
+
+  const bindModel = (el) => {
+    /*
+    Bind `data-model="path"` for two-way binding.
+
+    Shorthand for the verbose pair of `:value="path"` (state → element)
+    plus `data-action="input" data-fn="setValue" data-id="path"` (element
+    → state). Detects checkboxes by `el.type === 'checkbox'` and uses
+    `el.checked` + the `change` event accordingly; everything else uses
+    `el.value` + `input`. Writes go through setValue so they land in
+    history with id `model:<path>`.
+    */
+    const path = el.dataset.model;
     if (!path) return;
-    return bindReactive([path], (state) => {
-      el.style.display = getPathObj(state, path) ? '' : 'none';
+    const isCheckbox = el.type === 'checkbox';
+    const eventName = isCheckbox ? 'change' : 'input';
+    const writeEl = (v) => {
+      if (isCheckbox) el.checked = !!v;
+      else el.value = v == null ? '' : v;
+    };
+    const readEl = () => isCheckbox ? el.checked : parseValue(el.value);
+
+    const unsubs = [];
+    unsubs.push(bindReactive([path], (state) => writeEl(getPathObj(state, path))));
+    const listener = () => setValue(path, readEl(), `model:${path}`);
+    el.addEventListener(eventName, listener);
+    unsubs.push(() => el.removeEventListener(eventName, listener));
+    return () => callAll(unsubs);
+  };
+
+  const bindRef = (el) => {
+    /*
+    Bind `data-ref="name"` to expose the element on instance.refs.
+
+    Refs are framework-level handles, not domain state — they don't go
+    through history or replay. Useful for imperative DOM access (focus,
+    scroll, measure) from app code: `instance.refs.email.focus()`.
+    */
+    const name = el.dataset.ref;
+    if (!name) return;
+    refs[name] = el;
+    return () => { delete refs[name]; };
+  };
+
+  const computed = (path, deps, fn) => {
+    /*
+    First-class derived state. Computes `state[path]` from `deps` whenever
+    any of them change, writing the result into the delta so subscribers
+    fire on the next tick pass.
+
+    Equivalent to: `addSystem(deps, (state, delta) => setPathValue(delta,
+    path, fn(state)))`. Returns the unsubscribe handle.
+
+    Args:
+        path (str): dotted path to write the computed value into.
+        deps (List[str]): paths to watch — re-computes when any change.
+        fn (Callable[[State], Any]): receives current state, returns the value.
+
+    Returns:
+        () -> None: unsubscribe handle.
+    */
+    return addSystem(deps, (state, delta) => {
+      setPathValue(delta, path, fn(state));
     });
   };
 
@@ -456,9 +627,11 @@ export const createSpektrum = () => {
 
     Forms (all reactive, all returning unsubs collected here):
       data-each="path"            on any element        — render array (FIRST pass)
-      {{path}}                    in any text node      — interpolated text
-      :attr="path"                on any element        — property write
-      data-if="path"              on any element        — show/hide via display
+      {{expression}}              in any text node      — interpolated text
+      :attr="expression"          on any element        — property write (object form for :class)
+      data-if="expression"        on any element        — show/hide via display
+      data-model="path"           on form controls      — two-way binding
+      data-ref="name"             on any element        — expose el on instance.refs
       data-action="cycle"         + data-fn / data-id   — cycle system
       data-action="click|..."     + data-fn             — DOM event listener
 
@@ -496,6 +669,8 @@ export const createSpektrum = () => {
 
     for (const el of root.querySelectorAll('*')) collect(bindAttrs(el));
     for (const el of root.querySelectorAll('[data-if]')) collect(bindIf(el));
+    for (const el of root.querySelectorAll('[data-model]')) collect(bindModel(el));
+    for (const el of root.querySelectorAll('[data-ref]')) collect(bindRef(el));
 
     for (const el of root.querySelectorAll('[data-action]')) {
       const action = el.dataset.action;
@@ -549,10 +724,10 @@ export const createSpektrum = () => {
   // --- Public API of the instance ---
 
   return {
-    appState, appStateDelta, history,
+    appState, appStateDelta, history, refs,
     get cursor() { return cursor; },
     get replaying() { return replaying; },
-    trigger, setValue,
+    trigger, setValue, computed,
     addSystem, removeSystem, defineFn,
     bindDOM, run, tick, replay, reset,
   };
@@ -565,8 +740,8 @@ export const createSpektrum = () => {
 const _default = createSpektrum();
 export default _default;
 export const {
-  appState, appStateDelta, history,
-  trigger, setValue,
+  appState, appStateDelta, history, refs,
+  trigger, setValue, computed,
   addSystem, removeSystem, defineFn,
   bindDOM, run, tick, replay, reset,
 } = _default;

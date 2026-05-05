@@ -28,6 +28,8 @@ export interface Spektrum {
   readonly appStateDelta: State;
   /** Append-only log of recorded mutations. */
   readonly history: HistoryEntry[];
+  /** DOM handles registered via `data-ref="name"`. Keyed by the ref name. */
+  readonly refs: Record<string, Element>;
   /** Index of the next history slot. Equals history.length unless scrubbed back via replay. */
   readonly cursor: number;
   /** True while replay() is in flight. */
@@ -37,6 +39,8 @@ export interface Spektrum {
   trigger(id: string, path: string, value: number): void;
   /** Record an absolute set. `id` defaults to `set:${path}`. */
   setValue(path: string, value: any, id?: string): void;
+  /** First-class derived value: re-computed when any `deps` path changes. */
+  computed(path: string, deps: string[], fn: (state: State) => any): () => void;
 
   /** Subscribe a system to one or more paths. Returns an unsubscribe function. */
   addSystem(paths: string[], fn: SystemFn): () => void;
@@ -46,9 +50,9 @@ export interface Spektrum {
   defineFn(name: string, fn: BoundFn): void;
 
   /**
-   * Scan a DOM subtree for declarative bindings: {{path}}, :attr="path",
-   * data-if, data-each, and data-action. Returns a destroy function that
-   * undoes every binding it set up.
+   * Scan a DOM subtree for declarative bindings: {{expr}}, :attr="expr",
+   * data-if, data-each, data-model, data-ref, and data-action. Returns
+   * a destroy function that undoes every binding it set up.
    */
   bindDOM(root?: Element | Document): () => void;
   /** rAF-driven tick pump. Reschedules itself every animation frame. */
@@ -58,7 +62,7 @@ export interface Spektrum {
 
   /** Reset state and re-apply the first `n` recorded entries. O(n). */
   replay(n: number): void;
-  /** Wipe runtime state. Built-in fns survive (set up at instance creation). */
+  /** Wipe runtime state and refs. Built-in fns survive. */
   reset(): void;
 }
 
@@ -75,14 +79,16 @@ declare const _default: Spektrum;
 export default _default;
 
 // Named exports of the default singleton's methods/state. Live bindings
-// for `appState`, `appStateDelta`, and `history` (same object refs as
-// the singleton's). For `cursor` and `replaying` use the default import
-// or `createSpektrum()` and read the property.
+// for `appState`, `appStateDelta`, `history`, and `refs` (same object
+// refs as the singleton's). For `cursor` and `replaying` use the
+// default import or `createSpektrum()` and read the property.
 export const appState: State;
 export const appStateDelta: State;
 export const history: HistoryEntry[];
+export const refs: Record<string, Element>;
 export const trigger: Spektrum['trigger'];
 export const setValue: Spektrum['setValue'];
+export const computed: Spektrum['computed'];
 export const addSystem: Spektrum['addSystem'];
 export const removeSystem: Spektrum['removeSystem'];
 export const defineFn: Spektrum['defineFn'];

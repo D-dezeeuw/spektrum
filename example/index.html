@@ -5,212 +5,283 @@
 <title>Spektrum</title>
 <link rel="icon" type="image/svg+xml" href="../favicon.svg">
 <style>
+  :root {
+    color-scheme: dark;
+    --bg: #0f0f10;
+    --panel: #1a1a1c;
+    --line: #2a2a2e;
+    --text: #eee;
+    --text-dim: #888;
+    --text-faint: #555;
+    --accent: #4ade80;
+    --button: #26262a;
+    --button-line: #36363c;
+    --hover: #2f2f34;
+  }
+
+  * { box-sizing: border-box; }
+
   body {
     margin: 0;
     min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: #0f0f10;
-    color: #eee;
+    background: var(--bg);
+    color: var(--text);
     font-family: ui-monospace, Menlo, monospace;
+    display: flex;
+    flex-direction: column;
   }
-  .panel {
-    width: min(420px, 90vw);
+
+  header {
+    padding: 24px 24px 8px;
+    text-align: center;
+  }
+  header .logo {
+    display: block;
+    margin: 0 auto 4px;
+    max-width: 320px;
+    width: 80%;
+    height: auto;
+  }
+  header p {
+    margin: 0;
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.18em;
+  }
+
+  main {
+    flex: 1;
+    display: flex;
+    gap: 24px;
     padding: 24px;
-    background: #1a1a1c;
-    border: 1px solid #2a2a2e;
-    border-radius: 6px;
+    max-width: 920px;
+    margin: 0 auto;
+    width: 100%;
+    flex-wrap: wrap;
   }
-  h1 {
+
+  .panel {
+    flex: 1;
+    min-width: 280px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+  }
+  .panel h2 {
     margin: 0 0 16px;
-    font-size: 12px;
-    color: #888;
+    font-size: 11px;
+    color: var(--text-dim);
     font-weight: normal;
     letter-spacing: 0.18em;
   }
-  .readout { font-size: 64px; line-height: 1; margin-bottom: 16px; }
-  .readout small { font-size: 14px; color: #666; margin-left: 8px; letter-spacing: 0.1em; }
-  .gauge {
-    height: 8px;
-    background: #2a2a2e;
+
+  button, input {
+    font-family: inherit;
+    font-size: 13px;
+  }
+  button {
+    padding: 8px 12px;
+    background: var(--button);
+    border: 1px solid var(--button-line);
+    color: var(--text);
     border-radius: 4px;
-    overflow: hidden;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* counter panel */
+  #counter .readout {
+    font-size: 72px;
+    text-align: center;
+    margin: 16px 0 4px;
+    color: var(--text-dim);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    transition: color 120ms ease-out;
+  }
+  #counter .readout.positive { color: var(--accent); }
+  #counter .readout.negative { color: #ef4444; }
+  #counter .meta {
+    text-align: center;
+    font-size: 10px;
+    color: var(--text-faint);
+    letter-spacing: 0.15em;
     margin-bottom: 24px;
   }
-  .gauge > div {
-    height: 100%;
-    background: linear-gradient(90deg, #4ade80, #22c55e);
-    transition: width 120ms ease-out;
-  }
-  .warning {
-    margin: 0 0 16px;
-    padding: 8px 12px;
-    background: #2a1717;
-    border: 1px solid #5a2424;
-    color: #ef4444;
-    border-radius: 4px;
-    font-size: 12px;
-    letter-spacing: 0.1em;
-  }
-  .status {
-    font-size: 11px;
-    color: #888;
-    letter-spacing: 0.1em;
-    margin-bottom: 16px;
-  }
-  .status span { color: #4ade80; }
-  .set-row {
+  #counter .controls {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-top: 12px;
-    font-size: 11px;
-    color: #888;
-    letter-spacing: 0.1em;
+    gap: 8px;
+    margin-bottom: 12px;
   }
-  .set-row input {
-    flex: 1;
-    padding: 6px 10px;
-    background: #26262a;
-    border: 1px solid #36363c;
-    color: #eee;
+  #counter .controls button { flex: 1; }
+  #counter .set {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--button);
+    border: 1px solid var(--button-line);
+    color: var(--text);
     border-radius: 4px;
-    font-family: inherit;
-    font-size: 13px;
-  }
-  .controls { display: flex; gap: 8px; }
-  button {
-    flex: 1;
-    padding: 10px;
-    background: #26262a;
-    border: 1px solid #36363c;
-    color: #eee;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 13px;
-    cursor: pointer;
-  }
-  button:hover:not(:disabled) { background: #2f2f34; }
-  button:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+    margin-bottom: 12px;
   }
 
-  .hourglass {
-    position: fixed;
-    bottom: 16px;
-    right: 16px;
-    width: 44px;
-    height: 44px;
-    padding: 0;
-    border-radius: 50%;
-    background: #26262a;
-    border: 1px solid #36363c;
-    color: #aaa;
-    font-size: 18px;
-    cursor: pointer;
-    z-index: 100;
+  /* basket panel */
+  #basket .kinds {
     display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  #basket .filter {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--button);
+    border: 1px solid var(--button-line);
+    color: var(--text);
+    border-radius: 4px;
+    margin-bottom: 12px;
+    font-size: 12px;
+  }
+  #basket .kinds button {
+    flex: 1;
+    font-size: 28px;
+    padding: 12px 0;
+  }
+  #basket .items {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 12px;
+    flex: 1;
+    overflow-y: auto;
+    max-height: 240px;
+  }
+  #basket .items li {
+    display: flex;
+    justify-content: space-between;
     align-items: center;
-    justify-content: center;
+    padding: 6px 12px;
+    background: #232328;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    font-size: 13px;
+  }
+  #basket .items .remove {
+    padding: 0 8px;
+    background: transparent;
+    border: none;
+    color: var(--text-faint);
+    font-size: 16px;
     line-height: 1;
   }
-  .hourglass:hover { background: #2f2f34; }
-
-  .timeline {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: #14141a;
-    border-top: 1px solid #2a2a2e;
-    padding: 16px 72px 16px 24px;
-    z-index: 50;
-    display: none;
+  #basket .items .remove:hover {
+    color: var(--text);
+    background: transparent;
   }
-  .timeline.open { display: block; }
-
-  .scrub {
-    width: 100%;
-    margin: 0 0 12px;
-    accent-color: #4ade80;
-  }
-  .scrub-label {
-    font-size: 10px;
-    color: #555;
-    letter-spacing: 0.15em;
-    margin-bottom: 6px;
-  }
-  .log {
-    font-size: 11px;
-    color: #777;
-    border-top: 1px solid #26262a;
-    padding-top: 10px;
-    margin-top: 4px;
-    max-height: 140px;
-    overflow-y: auto;
-    white-space: pre;
-  }
-  .log > div { padding: 2px 0; }
-  .log .empty {
-    color: #444;
+  #basket .empty-msg {
+    font-size: 12px;
+    color: var(--text-faint);
     font-style: italic;
-    padding: 6px 0;
+    text-align: center;
+    padding: 32px 0;
   }
+  #basket .foot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: auto;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+  #basket .foot .undo { width: auto; }
+
+  .undo {
+    width: 100%;
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    padding: 6px 12px;
+  }
+
+  footer {
+    padding: 16px 24px 32px;
+    text-align: center;
+    font-size: 10px;
+    color: var(--text-faint);
+    letter-spacing: 0.15em;
+  }
+  footer a { color: var(--text-dim); text-decoration: none; }
+  footer a:hover { color: var(--accent); }
 </style>
 </head>
 <body>
-  <div class="panel">
-    <h1>SPEKTRUM / GAS</h1>
+  <header>
+    <img src="Spektrum-logo.png" alt="Spektrum" class="logo">
+    <p>two isolated instances · one page · no shared state</p>
+  </header>
 
-    <div class="readout">
-      <span>{{gas.value}}</span><small>UNITS</small>
-    </div>
+  <main>
+    <section id="counter" class="panel">
+      <h2>COUNTER</h2>
 
-    <div class="status">
-      STATUS: <span data-action="cycle" data-fn="setText" data-id="gas.statusText">--</span>
-    </div>
+      <div class="readout" :class="{positive: count > 0, negative: count < 0}">{{count}}</div>
+      <div class="meta">next: {{count + 1}} · doubled: {{count * 2}}</div>
 
-    <div class="gauge">
-      <div data-action="cycle" data-fn="setStyle" data-id="gas.value"
-           data-prop="width" data-suffix="%" style="width: 0%"></div>
-    </div>
+      <div class="controls">
+        <button data-action="click" data-fn="trigger" data-id="count" data-value="-1" data-name="dec">−1</button>
+        <button data-action="click" data-fn="trigger" data-id="count" data-value="1"  data-name="inc">+1</button>
+        <button data-action="click" data-fn="trigger" data-id="count" data-value="10" data-name="inc10">+10</button>
+      </div>
 
-    <div class="warning" data-if="gas.empty">⚠ TANK EMPTY</div>
+      <input class="set" type="number" step="1" data-model="count"
+             aria-label="set count directly" placeholder="set directly">
 
-    <div class="controls">
-      <button :disabled="gas.full"
-              data-action="click" data-fn="trigger" data-id="gas.value"
-              data-value="10" data-name="refuel">refuel +10</button>
-      <button :disabled="gas.empty"
-              data-action="click" data-fn="trigger" data-id="gas.value"
-              data-value="-5" data-name="burn">burn -5</button>
-    </div>
+      <button class="undo"
+              data-action="click" data-fn="undo"
+              :disabled="atSeed">↶ undo</button>
+    </section>
 
-    <div class="set-row">
-      <label>SET</label>
-      <input type="number" min="0" max="100" step="1"
-             :value="gas.value"
-             data-action="input" data-fn="setValue" data-id="gas.value"
-             data-name="manual">
-    </div>
-  </div>
+    <section id="basket" class="panel">
+      <h2>BASKET</h2>
 
-  <button class="hourglass"
-          data-action="click" data-fn="toggle"
-          data-target=".timeline" data-class="open"
-          title="Toggle timeline">⏳</button>
+      <div class="kinds">
+        <button data-action="click" data-fn="addKind" data-name="🍎 apple"  aria-label="add apple"  title="apple">🍎</button>
+        <button data-action="click" data-fn="addKind" data-name="🍌 banana" aria-label="add banana" title="banana">🍌</button>
+        <button data-action="click" data-fn="addKind" data-name="🍇 grapes" aria-label="add grapes" title="grapes">🍇</button>
+        <button data-action="click" data-fn="addKind" data-name="🥭 mango"  aria-label="add mango"  title="mango">🥭</button>
+      </div>
 
-  <div class="timeline">
-    <div class="scrub-label">TIMELINE</div>
-    <input id="scrub" class="scrub" type="range" min="0" max="0" value="0"
-           data-action="input" data-fn="scrub">
+      <input class="filter" type="text" data-model="filter" data-ref="filterInput"
+             aria-label="filter basket" placeholder="filter…">
 
-    <div class="log" data-each="recentEvents" data-as="event">
-      <div>{{event.display}}</div>
-    </div>
-  </div>
+      <ul class="items" data-each="items" data-as="item">
+        <li data-if="!filter || item.label.includes(filter)">
+          <span>{{item.label}}</span>
+          <button class="remove" data-action="click" data-fn="removeAt" data-id="item"
+                  aria-label="remove" title="remove">×</button>
+        </li>
+      </ul>
+
+      <div class="empty-msg" data-if="!items || items.length === 0">your basket is empty — pick something</div>
+
+      <div class="foot">
+        <span>{{items.length}} items</span>
+        <button class="undo"
+                data-action="click" data-fn="undo"
+                :disabled="atSeed">↶ undo</button>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <a href="https://github.com/D-dezeeuw/spektrum">github</a>
+    ·
+    <a href="https://www.npmjs.com/package/spektrum">npm</a>
+  </footer>
 
   <script type="module" src="app.js"></script>
 </body>

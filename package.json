@@ -46,6 +46,7 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "^15.0.0",
     "esbuild": "^0.24.0",
     "eslint": "^9.0.0"
   }

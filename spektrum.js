@@ -87,6 +87,20 @@ const parseValue = (s) => {
 
 const callAll = (fns) => fns.forEach(f => f && f());
 
+const walkTextNodes = (root, visit) => {
+  /*
+  Visit every text-node descendant of `root`, including `root` itself
+  if it's a text node. Hand-written walker rather than DOM TreeWalker
+  because some DOM implementations (happy-dom in particular) return
+  no nodes for SHOW_TEXT filters even when text descendants exist.
+  */
+  if (root.nodeType === 3) {
+    visit(root);
+    return;
+  }
+  for (const child of root.childNodes) walkTextNodes(child, visit);
+};
+
 // === Factory ===
 
 // type: () -> Spektrum
@@ -109,6 +123,7 @@ export const createSpektrum = () => {
   const fns = {};
   let cursor = 0;
   let replaying = false;
+  let boundRoots = new WeakSet(); // tracks bindDOM roots for idempotency
 
   // --- Engine helpers (state-bound) ---
 
@@ -169,10 +184,18 @@ export const createSpektrum = () => {
     /*
     Register `fn` to run on ticks where the delta touches any of `paths`.
 
+    The top-level key of each subscribed path is cached so the per-tick
+    filter can skip systems whose subscriptions don't intersect the
+    delta's top-level keys before doing the full isPath walk.
+
     Returns:
         An unsubscribe function. Call it to detach the system.
     */
-    const entry = { paths, fn };
+    const entry = {
+      paths,
+      fn,
+      topKeys: paths.map(p => p.split('.')[0]),
+    };
     systems.push(entry);
     return () => {
       const i = systems.indexOf(entry);
@@ -230,7 +253,11 @@ export const createSpektrum = () => {
         clearObject(appStateDelta);
         return;
       }
-      const toRun = systems.filter(s => s.paths.some(p => isPath(appStateDelta, p)));
+      const deltaKeys = new Set(Object.keys(appStateDelta));
+      const toRun = systems.filter(s =>
+        s.topKeys.some(k => deltaKeys.has(k))
+        && s.paths.some(p => isPath(appStateDelta, p))
+      );
       deepMerge(appState, appStateDelta);
       clearObject(appStateDelta);
       for (const sys of toRun) {
@@ -253,11 +280,13 @@ export const createSpektrum = () => {
     /*
     Wipe runtime state. Useful for tests and dev hot-reload.
     Built-in fns survive (they're set up at instance creation).
+    Also resets the bindDOM idempotency tracker so a fresh bind works.
     */
     clearObject(appState);
     clearObject(appStateDelta);
     history.length = 0;
     systems.length = 0;
+    boundRoots = new WeakSet();
     cursor = 0;
     replaying = false;
   };
@@ -360,13 +389,11 @@ export const createSpektrum = () => {
     */
     const re = new RegExp(`\\b${escapeRegex(varName)}\\b`, 'g');
 
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let n;
-    while ((n = walker.nextNode())) {
+    walkTextNodes(root, (n) => {
       if (n.textContent.includes(varName)) {
         n.textContent = n.textContent.replace(re, prefix);
       }
-    }
+    });
 
     for (const el of [root, ...root.querySelectorAll('*')]) {
       for (const attr of Array.from(el.attributes)) {
@@ -439,10 +466,18 @@ export const createSpektrum = () => {
     the live tree; subsequent passes only see what's still attached, so
     the template's {{...}} placeholders aren't bound prematurely.
 
+    Idempotent at the root level: calling bindDOM(sameRoot) twice is a
+    safe no-op. Don't call with overlapping subtrees (e.g. the document
+    and a child of it) — only the root reference is tracked, not every
+    descendant. Calling the returned destroy() releases the root so it
+    can be bound again.
+
     Returns:
         () -> None: call to detach every binding made by this scan.
     */
     root = root || document;
+    if (boundRoots.has(root)) return () => {};
+    boundRoots.add(root);
     const unsubs = [];
 
     const collect = (u) => { if (u) unsubs.push(u); };
@@ -457,9 +492,7 @@ export const createSpektrum = () => {
       collect(bindEach(el));
     }
 
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let n;
-    while ((n = walker.nextNode())) collect(bindText(n));
+    walkTextNodes(root, (n) => collect(bindText(n)));
 
     for (const el of root.querySelectorAll('*')) collect(bindAttrs(el));
     for (const el of root.querySelectorAll('[data-if]')) collect(bindIf(el));
@@ -481,7 +514,10 @@ export const createSpektrum = () => {
       }
     }
 
-    return () => callAll(unsubs);
+    return () => {
+      boundRoots.delete(root);
+      callAll(unsubs);
+    };
   };
 
   // --- Built-in fns (registered per instance) ---

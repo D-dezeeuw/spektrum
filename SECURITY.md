@@ -30,7 +30,6 @@ In scope:
   (`spektrum-compile.js`, `spektrum-devtools.js`,
   `spektrum-persist.js`).
 - Anything published under the `spektrum` npm package.
-- The published GitHub Actions workflows in this repository.
 
 Out of scope:
 
@@ -43,9 +42,10 @@ Out of scope:
 
 ## Hardening posture
 
-Spektrum publishes with [npm provenance](https://docs.npmjs.com/generating-provenance-statements);
-each release is built and published from the public `Publish`
-workflow on push of a `v*` tag, with no manual artifact uploads.
+Releases are published manually from the maintainer's machine after
+local `npm test` / `lint` / `build` / `size` checks pass. The
+package has no runtime dependencies, so the supply-chain surface is
+limited to the single tarball.
 
 For deployments under strict CSP that disable `unsafe-eval`, use
 the `precompile()` API plus the build-time scanner in

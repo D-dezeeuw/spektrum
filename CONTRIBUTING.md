@@ -64,9 +64,10 @@ Open the demo with `npm start` and visit
 
 ## Reviewing & merging
 
-PRs need green CI (test, lint, build, size) and a maintainer's
-review. Substantive changes usually want an issue first to avoid
-work going sideways.
+Before you open a PR, run `npm test`, `npm run lint`, `npm run build`,
+and `npm run size` locally and make sure they pass. There's no CI to
+catch regressions for you. Substantive changes usually want an issue
+first to avoid work going sideways.
 
 Be patient — this is a side project and reviews aren't always
 same-day.

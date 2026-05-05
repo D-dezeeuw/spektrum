@@ -5,7 +5,6 @@
 [![npm](https://img.shields.io/npm/v/spektrum.svg)](https://www.npmjs.com/package/spektrum)
 [![bundle size](https://img.shields.io/bundlephobia/minzip/spektrum.svg)](https://bundlephobia.com/package/spektrum)
 [![license](https://img.shields.io/npm/l/spektrum.svg)](LICENSE)
-[![CI](https://github.com/D-dezeeuw/spektrum/actions/workflows/ci.yml/badge.svg)](https://github.com/D-dezeeuw/spektrum/actions/workflows/ci.yml)
 [![types](https://img.shields.io/npm/types/spektrum.svg)](spektrum.d.ts)
 
 **[Live demo →](https://d-dezeeuw.github.io/spektrum/example/)**

@@ -233,7 +233,13 @@ export const createSpektrum = () => {
       const toRun = systems.filter(s => s.paths.some(p => isPath(appStateDelta, p)));
       deepMerge(appState, appStateDelta);
       clearObject(appStateDelta);
-      for (const sys of toRun) sys.fn(appState, appStateDelta);
+      for (const sys of toRun) {
+        try {
+          sys.fn(appState, appStateDelta);
+        } catch (err) {
+          console.error('[spektrum] system threw', err);
+        }
+      }
     }
   };
 

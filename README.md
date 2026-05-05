@@ -1,10 +1,38 @@
 # Spektrum
 
-A tiny reactive engine and a small demo built on it. One file (`spektrum.js`, ~500 lines), zero runtime dependencies.
+[![npm](https://img.shields.io/npm/v/spektrum.svg)](https://www.npmjs.com/package/spektrum)
+[![bundle size](https://img.shields.io/bundlephobia/minzip/spektrum.svg)](https://bundlephobia.com/package/spektrum)
+[![license](https://img.shields.io/npm/l/spektrum.svg)](LICENSE)
+[![CI](https://github.com/D-dezeeuw/spektrum/actions/workflows/ci.yml/badge.svg)](https://github.com/D-dezeeuw/spektrum/actions/workflows/ci.yml)
+[![types](https://img.shields.io/npm/types/spektrum.svg)](spektrum.d.ts)
 
-State is mutated through a recorded delta; each tick fires subscribed systems and merges the delta into committed state. Every mutation is logged to `history`, so `replay(n)` reconstructs any past point.
+Tiny reactive engine with declarative HTML bindings, fan-out, and time-travel replay. ~500 lines, zero runtime dependencies. ESM.
 
-## Run it
+**[Live demo →](https://d-dezeeuw.github.io/spektrum/example/)**
+
+## Install
+
+```bash
+npm install spektrum
+```
+
+## Quick start
+
+```html
+<p>{{count}}</p>
+<button data-action="click" data-fn="trigger" data-id="count" data-value="1" data-name="inc">+1</button>
+
+<script type="module">
+  import { setValue, bindDOM, run } from 'spektrum';
+  setValue('count', 0);
+  bindDOM();
+  run();
+</script>
+```
+
+That's a working reactive counter. State lives in the engine, the `<p>` stays in sync via `{{count}}`, the button mutates state via `data-action`/`data-fn` — no virtual DOM, no build step.
+
+## Run the local demo
 
 ```bash
 npm start                 # python3 -m http.server 8088

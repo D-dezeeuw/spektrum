@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-05-05
+
+### Fixed
+
+- Publish workflow now uses npm Trusted Publishing (OIDC) instead of `NPM_TOKEN`, and bumps `npm` to latest before publishing because trusted publishing requires npm ≥ 11.5.1 and Node 20 ships with npm 10.x. The v0.3.0 tag was pushed but its publish run failed with `ENEEDAUTH`; v0.3.1 is identical in shipped code, just the first version actually reaching npm in the 0.3.x line.
+
 ## [0.3.0] — 2026-05-05
 
 ### Added

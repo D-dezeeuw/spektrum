@@ -1,6 +1,6 @@
 {
   "name": "spektrum",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Tiny reactive engine with HTML bindings and time-travel. ~8.4kB, zero deps.",
   "type": "module",
   "main": "./spektrum.js",

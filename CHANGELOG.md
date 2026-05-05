@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-05
+
 ### Added
 
 - **`onFork(fn)` hook + `spektrum.forks`** for mutate-while-scrubbed-back. When `record()` truncates entries, the dropped tail is now preserved on `spektrum.forks` (oldest first, capped by `forkLimit`, default 50) and the optional `onFork` hook fires with `{ entries, forkedAt, ts }`. Apps can warn ("X future edits will be discarded"), surface telemetry, or restore by re-applying the fork's entries via `setValue` / `trigger`. Descriptive only — the truncate has already happened by the time the hook fires; throwing inside it can't roll back. Set `forkLimit: 0` to discard forks immediately while still firing the hook; set `Infinity` to keep them all.
 - **Keyed list reconciliation** via `data-key="expr"` on `data-each`. Items at the same key + index keep their DOM, listeners, focus, and selection across re-renders. Without a key, lists fall back to the previous full-rebuild behavior (backward-compatible).
 - **Bounded history & snapshot-accelerated replay**: `createSpektrum({ historyLimit, snapshotEvery })`. `historyLimit` caps `history.length` (oldest entries drop on overflow); `snapshotEvery` captures `appState` every K recorded entries so `replay()` runs in O(K) instead of O(n).
 - **`onError(fn)` hook** for surfacing system exceptions. Receives `(err, systemFn)`. Without a handler, throwing systems still fall through to `console.error` — the engine itself never crashes.
+- **`onRecord(fn)` hook** fires after every recorded mutation with the full `HistoryEntry`. Does not fire during `replay()`. Used by `spektrum/persist`'s `autoSave` so `data-model` two-way edits are caught the same way explicit `setValue`/`trigger` calls are.
 - **`precompile(source, fn)`** API for CSP-safe deployments. Build-time tooling emits one call per unique template expression; the runtime cache hits before the `new Function` fallback runs.
 - **`spektrum/compile`** subpath module: `extractExpressions(html)` + `emitPrecompileSource(exprs)` for the build step.
 - **`spektrum/devtools`** subpath module: a small floating scrubber panel (`mount(spektrum)`) that exposes time-travel as a UI in dev.

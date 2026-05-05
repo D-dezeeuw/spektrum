@@ -8,6 +8,8 @@
 [![CI](https://github.com/D-dezeeuw/spektrum/actions/workflows/ci.yml/badge.svg)](https://github.com/D-dezeeuw/spektrum/actions/workflows/ci.yml)
 [![types](https://img.shields.io/npm/types/spektrum.svg)](spektrum.d.ts)
 
+**[Live demo →](https://d-dezeeuw.github.io/spektrum/example/)**
+
 A tiny templating engine. ~6.5 kB minified, ~400 lines of actual code, zero runtime dependencies.
 
 That third number is what matters. The ecosystem has spent the last decade normalizing "tiny" libraries that quietly pull in dozens of transitive dependencies — and the steady drumbeat of npm supply-chain attacks keeps proving how fragile that is. Spektrum is one file. You can audit it in an afternoon.
@@ -35,8 +37,6 @@ What it doesn't do:
 - No SSR or hydration. Client-only.
 - No router, store layer, or animation system. It's an engine, not a framework.
 - Templates are author-written; expressions execute via `new Function`. Don't accept untrusted templates (same caveat as Vue and Alpine).
-
-**[Live demo →](https://d-dezeeuw.github.io/spektrum/example/)**
 
 ## Install
 

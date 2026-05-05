@@ -1,7 +1,7 @@
 {
   "name": "spektrum",
   "version": "0.1.0",
-  "private": true,
+  "description": "Reactive HTML bindings with time-travel replay. 4.7kB, zero deps, ESM.",
   "type": "module",
   "main": "./spektrum.js",
   "types": "./spektrum.d.ts",
@@ -21,6 +21,29 @@
     "test": "node --test",
     "lint": "eslint .",
     "build": "esbuild spektrum.js --minify --format=esm --outfile=spektrum.min.js --legal-comments=none"
+  },
+  "keywords": [
+    "reactive",
+    "state-management",
+    "data-binding",
+    "ui",
+    "time-travel",
+    "history",
+    "esm",
+    "no-dependencies",
+    "tiny",
+    "declarative"
+  ],
+  "author": "Danny de Zeeuw <danny@nekomedia.nl>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/D-dezeeuw/spektrum.git"
+  },
+  "homepage": "https://github.com/D-dezeeuw/spektrum#readme",
+  "bugs": "https://github.com/D-dezeeuw/spektrum/issues",
+  "engines": {
+    "node": ">=18"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",

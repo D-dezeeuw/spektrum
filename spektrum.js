@@ -1,69 +1,43 @@
 /*
-  Tiny reactive engine.
+  Spektrum — tiny reactive engine.
 
-  - Mutations write into a per-instance delta (never directly into committed state).
-  - Each tick: any system whose subscribed paths appear in the delta runs,
-    the delta is merged into appState, then the delta is wiped.
-  - Every mutation is logged to history so replay(n) can rebuild any past point.
-
-  Public API: a default singleton (`export default`) plus named exports of its
-  methods for the common single-instance case. For multiple isolated apps on
-  one page, call createSpektrum() to get a fresh instance.
+  Mutations write into a per-instance delta. Each tick drains the delta
+  to quiescence, merging into `appState` and firing subscribed systems.
+  Every mutation is logged to `history` so `replay(n)` rebuilds any
+  past point. `createSpektrum()` makes an isolated instance; the
+  default singleton serves the single-instance case.
 */
 
 // === Module-level constants and pure utilities ===
-// These don't depend on instance state, so they live outside the factory.
+// Instance-independent; live outside the factory.
 
 const MUSTACHE = /\{\{\s*([^}]+?)\s*\}\}/g;
 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// type: (Dict[str, Any], str) -> Any
-export const getPathObj = (obj, path) => {
-  /*
-  Walk a dotted path into `obj` and return the leaf value.
+/** Walk a dotted path into `obj`. Returns the leaf value or undefined. */
+export const getPathObj = (obj, path) =>
+  path.split('.').reduce((acc, k) => (acc == null ? acc : acc[k]), obj);
 
-  Args:
-      obj (Dict[str, Any]): root object to descend into.
-      path (str): dotted path, e.g. "gas.value" or "users.0.name".
+/** True if every segment of `path` resolves on `obj`. */
+const isPath = (obj, path) =>
+  path.split('.').every(k => (obj = obj == null ? undefined : obj[k]) !== undefined);
 
-  Returns:
-      Any: the value at `path`, or undefined if any segment is missing.
-  */
-  return path.split('.').reduce((acc, k) => (acc == null ? acc : acc[k]), obj);
-};
-
-const isPath = (obj, path) => {
-  /* True if every segment of `path` resolves on `obj`. */
-  return path.split('.').every(k => (obj = obj == null ? undefined : obj[k]) !== undefined);
-};
-
+/**
+ * Materialise *intermediate* segments of `path` as `{}` on `obj`. The
+ * leaf is left absent — earlier versions materialised it too, which
+ * polluted appState with `{}` placeholders that bindings read back
+ * pre-tick, producing `"[object Object]"` on `<input>.value`.
+ */
 const createNestedObjects = (obj, path) => {
-  /*
-  Materialise the *intermediate* segments of `path` as `{}` on `obj`,
-  leaving the leaf alone. This lets systems do direct property writes
-  (`state.gas.value = ...`) without first checking that `gas` exists,
-  while keeping the leaf truly absent until something writes a value
-  via setPathValue. (An earlier version materialised the leaf too,
-  which polluted appState with `{}` placeholders that bindings would
-  read back before the first tick merged the real value — surfacing
-  as `el.value = "[object Object]"` errors on `<input>` and the
-  like.)
-  */
   const keys = path.split('.');
-  keys.pop(); // skip the leaf
+  keys.pop();
   keys.reduce((acc, k) => (acc[k] = acc[k] || {}), obj);
   return obj;
 };
 
+/** Walk `path` (creating missing parents) and assign `value` at the leaf. */
 export const setPathValue = (obj, path, value) => {
-  /*
-  Walk `path` (creating missing parents) and assign `value` at the leaf.
-
-  Useful for systems that want to fan out into the delta without going
-  through history, e.g. mirroring engine-internal state into a path that
-  declarative bindings can subscribe to.
-  */
   const keys = path.split('.');
   const last = keys.pop();
   const target = keys.reduce((acc, k) => (acc[k] = acc[k] || {}), obj);
@@ -75,7 +49,11 @@ const deepMerge = (target, source) => {
   for (const k of Object.keys(source)) {
     const v = source[k];
     if (v && typeof v === 'object' && !Array.isArray(v)) {
-      target[k] = target[k] || {};
+      // Replace the slot with {} when target[k] is a primitive or array,
+      // otherwise descending and writing properties on a primitive throws.
+      if (target[k] == null || typeof target[k] !== 'object' || Array.isArray(target[k])) {
+        target[k] = {};
+      }
       deepMerge(target[k], v);
     } else {
       target[k] = v;
@@ -99,29 +77,24 @@ const parseValue = (s) => {
 
 const callAll = (fns) => fns.forEach(f => f && f());
 
-// Expression engine: compile-on-first-use, cached by source string.
-// Templates are author-written, so `new Function` is acceptable here —
-// the same caveat Vue and Alpine carry. Don't accept untrusted templates.
+// === Expression engine ===
+// Compile-on-first-use, cached by source string. Templates are
+// author-written, so `new Function` is acceptable (same caveat as
+// Vue and Alpine — don't accept untrusted templates).
+
 const evalCache = new Map();
 
 const evalExpr = (expr) => {
   let fn = evalCache.get(expr);
   if (fn) return fn;
   try {
-    // Normalize dotted-numeric segments (e.g. `users.0.name`, the form
-    // bindEach produces after path rewriting) into bracket notation
-    // (`users[0].name`) so JS can parse them. Templates can use either
-    // form; both work on the engine side because path subscriptions
-    // are still dotted.
+    // Dotted-numeric segments (e.g. `users.0.name`, the form bindEach
+    // produces) → bracket notation (`users[0].name`) so JS can parse.
     const normalized = expr.replace(/([a-zA-Z_$][\w$]*)\.(\d+)/g, '$1[$2]');
     const compiled = new Function('state', `with (state) { return (${normalized}); }`);
-    // Wrap in a runtime try/catch so an expression touching a path
-    // that isn't in state yet (common during the initial render before
-    // the first tick) doesn't throw — just renders as undefined.
-    fn = (state) => {
-      try { return compiled(state); }
-      catch { return undefined; }
-    };
+    // Runtime try/catch so references to paths not yet in state (e.g.
+    // before the first tick) render as undefined instead of throwing.
+    fn = (state) => { try { return compiled(state); } catch { return undefined; } };
   } catch (err) {
     console.warn(`[spektrum] invalid expression: "${expr}"`, err);
     fn = () => undefined;
@@ -130,9 +103,8 @@ const evalExpr = (expr) => {
   return fn;
 };
 
-// Identifier extractor used to derive subscription paths from an
-// expression. Lookbehind excludes identifiers preceded by a dot or word
-// char so `user.name.toUpperCase` is captured once (not three times).
+// Lookbehind excludes identifiers preceded by `.` or `\w` so
+// `user.name.toUpperCase` matches as one path, not three.
 const IDENT = /(?<![\w$.])([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)*)/g;
 const RESERVED = new Set([
   'true', 'false', 'null', 'undefined', 'NaN', 'Infinity',
@@ -143,19 +115,11 @@ const RESERVED = new Set([
   'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI',
 ]);
 
+/** Pull subscription paths out of an expression. Reserved-word heads
+ *  (Math, JSON, true, ...) are filtered. False positives from string
+ *  literals or bracket access are harmless (subscriptions to
+ *  non-existent paths just never fire). */
 const extractPaths = (expr) => {
-  /*
-  Pull subscribable identifier paths out of an expression source string.
-
-  Returns the list of dotted paths the expression depends on, with
-  reserved-word heads (Math, JSON, true, ...) filtered out. Method
-  calls on values (e.g. user.name.toUpperCase) end up as
-  "user.name.toUpperCase"; isPath() handles the over-precise prefix
-  match correctly because string/array methods are own properties.
-  String literals and bracketed access can produce false-positive
-  identifiers; those are harmless (subscriptions to non-existent
-  paths simply never fire).
-  */
   const paths = new Set();
   for (const m of expr.matchAll(IDENT)) {
     const id = m[1];
@@ -165,31 +129,20 @@ const extractPaths = (expr) => {
   return [...paths];
 };
 
+/** Set element classes. Accepts a string (overwrites), an array
+ *  (filtered + joined, overwrites), or an object (`{name: bool}` —
+ *  toggles named classes individually, preserves siblings). */
 const applyClass = (el, v) => {
-  /*
-  Set element classes from a value. Supports three forms:
-    string:  el.className = v                       (overwrites all classes)
-    array:   el.className = filter(Boolean).join    (overwrites)
-    object:  classList.toggle(name, !!flag) per key (preserves siblings)
-  */
-  if (typeof v === 'string') {
-    el.className = v;
-  } else if (Array.isArray(v)) {
-    el.className = v.filter(Boolean).join(' ');
-  } else if (v && typeof v === 'object') {
-    for (const [name, on] of Object.entries(v)) {
-      el.classList.toggle(name, !!on);
-    }
+  if (typeof v === 'string') el.className = v;
+  else if (Array.isArray(v)) el.className = v.filter(Boolean).join(' ');
+  else if (v && typeof v === 'object') {
+    for (const [name, on] of Object.entries(v)) el.classList.toggle(name, !!on);
   }
 };
 
+// Hand-written walker — happy-dom's TreeWalker silently returns no
+// nodes for SHOW_TEXT filters even when text descendants exist.
 const walkTextNodes = (root, visit) => {
-  /*
-  Visit every text-node descendant of `root`, including `root` itself
-  if it's a text node. Hand-written walker rather than DOM TreeWalker
-  because some DOM implementations (happy-dom in particular) return
-  no nodes for SHOW_TEXT filters even when text descendants exist.
-  */
   if (root.nodeType === 3) {
     visit(root);
     return;
@@ -199,18 +152,10 @@ const walkTextNodes = (root, visit) => {
 
 // === Factory ===
 
-// type: () -> Spektrum
+/** Create an isolated Spektrum instance. Each call returns its own
+ *  state, delta, history, systems, fns, and refs — fully separate from
+ *  other instances. */
 export const createSpektrum = () => {
-  /*
-  Create an isolated Spektrum instance.
-
-  Each instance owns its own state, delta, history, systems, and fns.
-  Multiple instances on the same page do not interfere.
-
-  Returns:
-      An object with the engine's public API. See the named exports at
-      module bottom for the same fields on the default instance.
-  */
 
   const appState = {};
   const appStateDelta = {};
@@ -224,14 +169,14 @@ export const createSpektrum = () => {
 
   // --- Engine helpers (state-bound) ---
 
+  /** Ensure both delta and state have parents materialised for `path`. */
   const checkPath = (path) => {
-    /* Ensure both delta and state have parents materialised for `path`. */
     if (!isPath(appStateDelta, path)) createNestedObjects(appStateDelta, path);
     if (!isPath(appState, path)) createNestedObjects(appState, path);
   };
 
+  /** Dispatch a recorded entry into the delta. */
   const applyEntry = (e) => {
-    /* Dispatch a recorded entry into the delta. Used by record() and replay(). */
     checkPath(e.path);
     if (e.op === 'set') {
       setPathValue(appStateDelta, e.path, e.value);
@@ -243,11 +188,9 @@ export const createSpektrum = () => {
     }
   };
 
+  /** Apply an entry, push to history, advance cursor. Truncates the
+   *  future first if scrubbed back. */
   const record = (entry) => {
-    /*
-    Apply an entry, append it to history, advance the cursor.
-    Truncates the future first if the cursor is scrubbed back.
-    */
     if (cursor < history.length) history.length = cursor;
     applyEntry(entry);
     history.push(entry);
@@ -256,43 +199,23 @@ export const createSpektrum = () => {
 
   // --- Public mutators ---
 
+  /** Record an additive numeric change. Multiple in one tick accumulate. */
   const trigger = (id, path, value) => {
-    /*
-    Record an additive numeric change. Multiple triggers in one tick accumulate.
-    */
     record({ id, path, value, op: 'add' });
   };
 
+  /** Record an absolute set. `id` defaults to `set:<path>` when omitted. */
   const setValue = (path, value, id) => {
-    /*
-    Record an absolute set. Overwrites any pending value at `path`.
-
-    If `id` is omitted, an autogenerated label `set:<path>` is used so
-    history entries always carry a meaningful identifier (no magic
-    placeholders leaking into logs). Pass an explicit id when the call
-    site has a meaningful name — `setValue('gas.value', 100, 'seed')`.
-    */
     record({ id: id || `set:${path}`, path, value, op: 'set' });
   };
 
   // --- Subscriptions ---
 
+  /** Subscribe `fn` to one or more paths. Returns an unsubscribe.
+   *  topKeys is precomputed so tick() can pre-filter systems whose
+   *  subscriptions don't intersect the delta's top-level keys. */
   const addSystem = (paths, fn) => {
-    /*
-    Register `fn` to run on ticks where the delta touches any of `paths`.
-
-    The top-level key of each subscribed path is cached so the per-tick
-    filter can skip systems whose subscriptions don't intersect the
-    delta's top-level keys before doing the full isPath walk.
-
-    Returns:
-        An unsubscribe function. Call it to detach the system.
-    */
-    const entry = {
-      paths,
-      fn,
-      topKeys: paths.map(p => p.split('.')[0]),
-    };
+    const entry = { paths, fn, topKeys: paths.map(p => p.split('.')[0]) };
     systems.push(entry);
     return () => {
       const i = systems.indexOf(entry);
@@ -300,13 +223,8 @@ export const createSpektrum = () => {
     };
   };
 
+  /** Detach the first system registered with `fn`. Returns true if removed. */
   const removeSystem = (fn) => {
-    /*
-    Detach the first system registered with `fn` as its handler.
-
-    Returns:
-        bool: true if a system was removed.
-    */
     for (let i = 0; i < systems.length; i++) {
       if (systems[i].fn === fn) {
         systems.splice(i, 1);
@@ -316,33 +234,23 @@ export const createSpektrum = () => {
     return false;
   };
 
-  const defineFn = (name, fn) => {
-    /* Register a named handler callable from `data-fn` attributes. */
-    fns[name] = fn;
-  };
+  /** Register a named handler callable from `data-fn` attributes. */
+  const defineFn = (name, fn) => { fns[name] = fn; };
 
   // --- Tick / lifecycle ---
 
+  /**
+   * Drain the delta to quiescence. Each pass: snapshot matching
+   * systems, merge the delta into state, clear the delta, run the
+   * systems. Writes during a system's run are picked up by the next
+   * pass — that's how fan-out propagates within a single tick.
+   * Capped at 1024 iterations to catch feedback loops.
+   *
+   * The `delta` arg systems receive is empty (cleared before they
+   * run); use the subscription path to know what triggered you, or
+   * read state directly.
+   */
   const tick = () => {
-    /*
-    Run one simulation step, draining the delta to quiescence.
-
-    Each pass: snapshot subscribed systems, merge delta into state,
-    clear the delta, then run the systems. Systems that write to the
-    delta during their run have those writes processed by another pass —
-    fan-out (e.g. a system mirroring history into a state path that
-    data-each subscribes to) propagates within a single tick.
-
-    The snapshot via filter() is a defensive copy so systems can safely
-    splice `systems` during their handlers (bindEach rebuilds rely on
-    this). The 1024-iteration cap guards against runaway feedback
-    loops; in practice fan-outs are 1–2 deep.
-
-    Note: because the delta is cleared before systems run, the `delta`
-    argument they receive starts empty. If a system needs to react to a
-    specific change, derive it from state, or watch only the path that
-    triggered it — the subscription already tells you that.
-    */
     let iterations = 0;
     while (Object.keys(appStateDelta).length > 0) {
       if (iterations++ > 1024) {
@@ -358,27 +266,21 @@ export const createSpektrum = () => {
       deepMerge(appState, appStateDelta);
       clearObject(appStateDelta);
       for (const sys of toRun) {
-        try {
-          sys.fn(appState, appStateDelta);
-        } catch (err) {
-          console.error('[spektrum] system threw', err);
-        }
+        try { sys.fn(appState, appStateDelta); }
+        catch (err) { console.error('[spektrum] system threw', err); }
       }
     }
   };
 
+  /** rAF-driven tick pump. */
   const run = () => {
-    /* rAF-driven tick pump. */
     tick();
     requestAnimationFrame(run);
   };
 
+  /** Wipe runtime state. Built-in fns survive. Also resets refs and
+   *  the bindDOM idempotency tracker. */
   const reset = () => {
-    /*
-    Wipe runtime state. Useful for tests and dev hot-reload.
-    Built-in fns survive (they're set up at instance creation).
-    Also resets the bindDOM idempotency tracker so a fresh bind works.
-    */
     clearObject(appState);
     clearObject(appStateDelta);
     clearObject(refs);
@@ -389,25 +291,19 @@ export const createSpektrum = () => {
     replaying = false;
   };
 
+  /**
+   * Reset state and re-apply the first `n` recorded entries. O(n).
+   * History is preserved — scrub forward and back at will. A new
+   * trigger while scrubbed truncates the future.
+   *
+   * For step-back undo, drive from `cursor` (the live playback
+   * position), NOT `history.length`. history doesn't shrink on
+   * replay, so `replay(history.length - 1)` lands at the same spot
+   * every time. Correct pattern:
+   *
+   *     defineFn('undo', () => replay(Math.max(seedCount, cursor - 1)));
+   */
   const replay = (n) => {
-    /*
-    Reset state and re-apply the first `n` recorded entries.
-
-    O(n) per call. History is preserved — scrub back and forth at will.
-    A new trigger while scrubbed truncates the future.
-
-    For step-back undo, drive replay from `cursor` (the live playback
-    position), NOT `history.length` — history doesn't shrink on replay,
-    so successive `replay(history.length - 1)` calls land at the same
-    spot every time. The correct pattern is:
-
-        defineFn('undo', () => {
-          replay(Math.max(seedCount, cursor - 1));
-        });
-
-    where `seedCount` is the number of setValue/seed entries you want
-    to keep applied at the bottom (typically 1 — your initial state).
-    */
     n = Math.max(0, Math.min(n, history.length));
     replaying = true;
     cursor = 0;
@@ -421,34 +317,26 @@ export const createSpektrum = () => {
     replaying = false;
   };
 
-  // --- Binding helpers ---
-  // Each helper returns an unsubscribe (or undefined if it didn't bind).
-  // bindDOM collects these and returns a destroy function for the whole tree.
+  // === Binding helpers ===
+  // Each returns an unsubscribe (or undefined). bindDOM collects them
+  // and returns a destroy function for the whole tree.
 
+  /** Register a system + fire one initial render against a snapshot of
+   *  appState ⊕ appStateDelta, so bindings see post-first-tick values
+   *  immediately (no flicker between bind time and the first tick). */
   const bindReactive = (paths, render) => {
-    /*
-    Register a system AND fire it once against current state at bind time.
-    Returns the system's unsubscribe.
-    */
     const unsub = addSystem(paths, render);
-    render(appState, appStateDelta);
+    const snapshot = {};
+    deepMerge(snapshot, appState);
+    deepMerge(snapshot, appStateDelta);
+    render(snapshot, appStateDelta);
     return unsub;
   };
 
+  /** {{expression}} in a text node. Each placeholder is JS evaluated
+   *  against state; bare paths are the simplest case. Re-runs when any
+   *  referenced path appears in the delta. */
   const bindText = (node) => {
-    /*
-    Bind `{{expression}}` placeholders in a text node.
-
-    Each placeholder is a JavaScript expression evaluated against state.
-    A bare path (`{{count}}`) is just the simplest expression; richer
-    forms like `{{count + 1}}`, `{{user.name.toUpperCase()}}`, or
-    `{{flag ? "yes" : "no"}}` work the same way. Subscription paths are
-    extracted by identifier scan; the expression re-runs whenever any
-    referenced path appears in the delta.
-
-    Templates are author-written — authors are trusted not to write
-    side-effecting expressions. Don't accept untrusted templates.
-    */
     const template = node.textContent;
     if (!template.includes('{{')) return;
     const paths = new Set();
@@ -463,20 +351,11 @@ export const createSpektrum = () => {
     });
   };
 
+  /** :attr="expression". Property write (not setAttribute), so `:value`
+   *  updates form state and `:disabled` toggles the boolean prop.
+   *  `:class` / `:className` route through applyClass() — accepts
+   *  string, array, or `{name: bool}` object. */
   const bindAttrs = (el) => {
-    /*
-    Bind `:attr="expression"` shorthands to element properties.
-
-    The attribute value is a JS expression (a bare path is the simplest
-    case). Result is assigned via property write, not setAttribute, so
-    `:value` updates form state and `:disabled` toggles the boolean prop.
-
-    Special case: `:class` and `:className` route through applyClass()
-    which accepts strings, arrays, or objects:
-      :class="myStr"                 → overwrites className
-      :class="['a', flag && 'b']"    → joins, overwrites
-      :class="{active: x, err: y}"   → toggles named classes individually
-    */
     const unsubs = [];
     for (const attr of Array.from(el.attributes)) {
       if (!attr.name.startsWith(':')) continue;
@@ -493,15 +372,9 @@ export const createSpektrum = () => {
     return unsubs.length ? () => callAll(unsubs) : undefined;
   };
 
+  /** data-if="expression". Truthy → shown; falsy → display: none.
+   *  Children stay bound (Vue v-show semantics, not v-if). */
   const bindIf = (el) => {
-    /*
-    Bind `data-if="expression"` to display visibility.
-
-    Expression form lets you write `data-if="!user.loggedIn"` or
-    `data-if="count > 0"` without a derived state path. Truthy result →
-    element shows; falsy → display: none. Children stay bound and keep
-    receiving updates while hidden — matches Vue's v-show, not v-if.
-    */
     const expr = el.dataset.if;
     if (!expr) return;
     return bindReactive(extractPaths(expr), (state) => {
@@ -509,17 +382,10 @@ export const createSpektrum = () => {
     });
   };
 
+  /** data-model="path" — two-way input binding. Detects checkboxes
+   *  (uses `change` + el.checked); everything else uses `input` +
+   *  el.value. Writes go through setValue → history. */
   const bindModel = (el) => {
-    /*
-    Bind `data-model="path"` for two-way binding.
-
-    Shorthand for the verbose pair of `:value="path"` (state → element)
-    plus `data-action="input" data-fn="setValue" data-id="path"` (element
-    → state). Detects checkboxes by `el.type === 'checkbox'` and uses
-    `el.checked` + the `change` event accordingly; everything else uses
-    `el.value` + `input`. Writes go through setValue so they land in
-    history with id `model:<path>`.
-    */
     const path = el.dataset.model;
     if (!path) return;
     const isCheckbox = el.type === 'checkbox';
@@ -538,58 +404,34 @@ export const createSpektrum = () => {
     return () => callAll(unsubs);
   };
 
+  /** data-ref="name" exposes the element on instance.refs. Framework-
+   *  level handle — not domain state, doesn't replay. */
   const bindRef = (el) => {
-    /*
-    Bind `data-ref="name"` to expose the element on instance.refs.
-
-    Refs are framework-level handles, not domain state — they don't go
-    through history or replay. Useful for imperative DOM access (focus,
-    scroll, measure) from app code: `instance.refs.email.focus()`.
-    */
     const name = el.dataset.ref;
     if (!name) return;
     refs[name] = el;
     return () => { delete refs[name]; };
   };
 
+  /** Derived state. Re-computes when any `deps` path changes; writes
+   *  result into delta.path so subscribers fire next pass.
+   *  Equivalent to addSystem(deps, (s, d) => setPathValue(d, path, fn(s))). */
   const computed = (path, deps, fn) => {
-    /*
-    First-class derived state. Computes `state[path]` from `deps` whenever
-    any of them change, writing the result into the delta so subscribers
-    fire on the next tick pass.
-
-    Equivalent to: `addSystem(deps, (state, delta) => setPathValue(delta,
-    path, fn(state)))`. Returns the unsubscribe handle.
-
-    Args:
-        path (str): dotted path to write the computed value into.
-        deps (List[str]): paths to watch — re-computes when any change.
-        fn (Callable[[State], Any]): receives current state, returns the value.
-
-    Returns:
-        () -> None: unsubscribe handle.
-    */
     return addSystem(deps, (state, delta) => {
       setPathValue(delta, path, fn(state));
     });
   };
 
+  /** Replace whole-word occurrences of `varName` with `prefix` in every
+   *  text node and attribute value under `root`. Used by bindEach to
+   *  convert per-item template paths (`user.name` → `users.3.name`). */
   const rewriteScope = (root, varName, prefix) => {
-    /*
-    Replace whole-word occurrences of `varName` with `prefix` in every
-    text node and attribute value of `root` and its descendants.
-
-    Used by bindEach to convert per-item template paths (`user.name`)
-    into absolute state paths (`users.3.name`).
-    */
     const re = new RegExp(`\\b${escapeRegex(varName)}\\b`, 'g');
-
     walkTextNodes(root, (n) => {
       if (n.textContent.includes(varName)) {
         n.textContent = n.textContent.replace(re, prefix);
       }
     });
-
     for (const el of [root, ...root.querySelectorAll('*')]) {
       for (const attr of Array.from(el.attributes)) {
         if (attr.value.includes(varName)) {
@@ -599,23 +441,12 @@ export const createSpektrum = () => {
     }
   };
 
+  /** data-each="arrayPath" data-as="varName". First child is captured
+   *  as a template and detached. On any change to arrayPath: wipe,
+   *  clone-and-bind per item with paths rewritten to absolute form.
+   *  Each clone gets `contain: layout style` for perf isolation.
+   *  Cost: O(n × bindings-per-item) per change. No keyed reconciliation. */
   const bindEach = (el) => {
-    /*
-    Bind `data-each="arrayPath" data-as="varName"` to render an array.
-
-    The element's first child is captured as a per-item template (and
-    detached from the live DOM). On every change to `arrayPath`, the
-    container is wiped and the template is cloned + bound once per item;
-    occurrences of `varName` inside each clone are rewritten to absolute
-    paths (`arrayPath.<i>`) so cycle bindings resolve correctly.
-
-    Each cloned item gets `contain: layout style` for free perf isolation.
-
-    Cost: O(n × bindings-per-item) per array change. No keyed
-    reconciliation — appropriate when items are short-lived or the array
-    rarely changes after-the-fact. Pair with cleanup (unsub returned by
-    bindDOM) so the previous render's systems are detached on rebuild.
-    */
     const arrayPath = el.dataset.each;
     if (!arrayPath) return;
     const varName = el.dataset.as || 'item';
@@ -645,45 +476,30 @@ export const createSpektrum = () => {
 
   // --- bindDOM: top-level scan ---
 
+  /**
+   * Scan `root` for declarative bindings and wire them up. Returns a
+   * destroy() that undoes everything. Idempotent at the root level —
+   * calling bindDOM(sameRoot) twice is a no-op until destroy() runs.
+   *
+   * Pass order:
+   *   1. [data-each]   — must be first, to detach per-item templates
+   *                      before other scans walk into them
+   *   2. {{expr}}      text nodes
+   *   3. :attr="expr"
+   *   4. [data-if]
+   *   5. [data-model]
+   *   6. [data-ref]
+   *   7. [data-action] (cycle systems + DOM event listeners)
+   */
   const bindDOM = (root) => {
-    /*
-    Scan `root` for declarative bindings and wire them into the engine.
-
-    Forms (all reactive, all returning unsubs collected here):
-      data-each="path"            on any element        — render array (FIRST pass)
-      {{expression}}              in any text node      — interpolated text
-      :attr="expression"          on any element        — property write (object form for :class)
-      data-if="expression"        on any element        — show/hide via display
-      data-model="path"           on form controls      — two-way binding
-      data-ref="name"             on any element        — expose el on instance.refs
-      data-action="cycle"         + data-fn / data-id   — cycle system
-      data-action="click|..."     + data-fn             — DOM event listener
-
-    data-each runs first because it detaches its per-item template from
-    the live tree; subsequent passes only see what's still attached, so
-    the template's {{...}} placeholders aren't bound prematurely.
-
-    Idempotent at the root level: calling bindDOM(sameRoot) twice is a
-    safe no-op. Don't call with overlapping subtrees (e.g. the document
-    and a child of it) — only the root reference is tracked, not every
-    descendant. Calling the returned destroy() releases the root so it
-    can be bound again.
-
-    Returns:
-        () -> None: call to detach every binding made by this scan.
-    */
     root = root || document;
     if (boundRoots.has(root)) return () => {};
     boundRoots.add(root);
     const unsubs = [];
-
     const collect = (u) => { if (u) unsubs.push(u); };
 
-    // Process data-each FIRST so per-item templates are detached before any
-    // other pass walks into them — otherwise the text/attr scans would
-    // eagerly bind {{event.x}} placeholders against the document scope and
-    // overwrite them with '' (since `event` doesn't resolve there). The
-    // contains() guard skips elements detached by an earlier outer bindEach.
+    // contains() guard: skip data-each elements that were detached by
+    // an outer bindEach earlier in this same loop iteration.
     for (const el of root.querySelectorAll('[data-each]')) {
       if (!root.contains(el)) continue;
       collect(bindEach(el));

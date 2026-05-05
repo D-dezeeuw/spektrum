@@ -121,6 +121,18 @@ test('data-action="click" dispatches data-fn on click', () => {
   assert.equal(getPathObj(appState, 'x'), 5);
 });
 
+test('initial render sees post-first-tick state (no pre-tick flicker)', () => {
+  // Regression: bindReactive's initial render previously used appState
+  // alone, so bindings registered after setValue() but before the first
+  // tick saw an empty state for one frame. Now it merges
+  // appState ⊕ appStateDelta into a snapshot for the initial render.
+  document.body.innerHTML = '<p>{{msg}}</p>';
+  setValue('msg', 'hello');
+  bindDOM(document.body);
+  // No tick yet — but the initial render should already have the value.
+  assert.equal(document.body.querySelector('p').textContent, 'hello');
+});
+
 // === Idempotency ===
 
 test('bindDOM is idempotent on the same root', () => {

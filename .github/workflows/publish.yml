@@ -13,39 +13,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write   # required for npm provenance attestation + OIDC trusted publishing
+      id-token: write   # required for `--provenance` attestation signing
     steps:
       - uses: actions/checkout@v4
-      # NB: no `registry-url:` here. setup-node's registry-url feature
-      # writes an .npmrc with `_authToken=${NODE_AUTH_TOKEN}` AND
-      # defaults NODE_AUTH_TOKEN to the literal placeholder
-      # `XXXXX-XXXXX-XXXXX-XXXXX`. With that placeholder in place, npm
-      # treats the request as token-authenticated and never tries
-      # OIDC, then the registry rejects the bogus token with 404.
-      # npm's default registry is registry.npmjs.org anyway, so we
-      # don't need to set it.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-      # Trusted publishing (OIDC) requires npm >= 11.5.1; Node 20
-      # ships with npm 10.x, which silently falls back to anonymous
-      # publish (ENEEDAUTH).
-      - run: npm install -g npm@latest
+          registry-url: 'https://registry.npmjs.org'
       - run: npm ci
       - run: npm run lint
       - run: npm test
       - run: npm run build
       - run: npm run size
-      # Diagnostic: confirm npm version and that the OIDC env vars
-      # are present (presence only — values are secrets).
-      - name: Diagnose publish auth
-        run: |
-          echo "npm version: $(npm --version)"
-          echo "registry: $(npm config get registry)"
-          echo "OIDC URL set: $([[ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]] && echo yes || echo no)"
-          echo "OIDC TOKEN set: $([[ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]] && echo yes || echo no)"
-      # No NODE_AUTH_TOKEN env: with a Trusted Publisher configured
-      # for this workflow file at npmjs.com, npm picks up the OIDC
-      # token from the GitHub Actions environment automatically.
+      # Token-based auth via NPM_TOKEN secret (granular access token,
+      # scoped to this package, with 2FA bypass enabled). The
+      # `--provenance` flag still uses GitHub OIDC to sign the build
+      # attestation — that's independent of publish auth and only
+      # needs `id-token: write` above.
       - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

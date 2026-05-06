@@ -593,66 +593,6 @@ test('deepMerge skips __proto__ on JSON-parsed sources (V8 own-key edge case)', 
   assert.equal(getPathObj(appState, 'p.safe'), 1, 'safe sibling still merges');
 });
 
-// === Persist hardening (F-3) ===
-
-test('loadHistory ignores entries with non-string path', async () => {
-  const { loadHistory } = await import('./spektrum-persist.js');
-  const fake = {
-    getItem: () => JSON.stringify([
-      { op: 'set', path: 'good', value: 1, id: 'a' },
-      { op: 'set', path: 42, value: 'bad', id: 'b' },
-      { op: 'set', path: null, value: 'bad', id: 'c' },
-    ]),
-    setItem() {},
-  };
-  loadHistory(spektrum, { storage: fake });
-  assert.equal(getPathObj(appState, 'good'), 1);
-  assert.equal(history.length, 1, 'only the well-formed entry replays');
-});
-
-test('loadHistory rejects non-numeric value on additive trigger op', async () => {
-  const { loadHistory } = await import('./spektrum-persist.js');
-  const fake = {
-    getItem: () => JSON.stringify([
-      { op: 'set', path: 'count', value: 5, id: 'seed' },
-      { op: 'add', path: 'count', value: 'NaN-string', id: 'bad' },
-      { op: 'add', path: 'count', value: 3, id: 'good' },
-    ]),
-    setItem() {},
-  };
-  loadHistory(spektrum, { storage: fake });
-  assert.equal(getPathObj(appState, 'count'), 8, 'string value silently skipped, numeric still applies');
-});
-
-test('loadHistory rejects Infinity on additive trigger op', async () => {
-  // `JSON.parse('1e1000')` overflows to Infinity. An earlier
-  // `typeof === 'number'` check let it through (typeof Infinity is
-  // 'number'); once Infinity lands in an additive sequence it sticks
-  // (Infinity + N = Infinity), so a single poisoned entry corrupts
-  // every subsequent op on that path. Number.isFinite catches it.
-  const { loadHistory } = await import('./spektrum-persist.js');
-  // Build the persisted blob as raw text so we can include 1e1000,
-  // which JSON.parse promotes to Infinity at parse time.
-  const raw = '['
-    + '{"op":"set","path":"count","value":0,"id":"seed"},'
-    + '{"op":"add","path":"count","value":1e1000,"id":"bad-overflow"},'
-    + '{"op":"add","path":"count","value":7,"id":"good"}'
-    + ']';
-  const fake = { getItem: () => raw, setItem() {} };
-  loadHistory(spektrum, { storage: fake });
-  assert.equal(getPathObj(appState, 'count'), 7,
-    'overflow-to-Infinity rejected; finite add still applies');
-  assert.ok(Number.isFinite(getPathObj(appState, 'count')),
-    'count must remain finite after replay');
-});
-
-test('loadHistory caps replay at opts.maxEntries', async () => {
-  const { loadHistory } = await import('./spektrum-persist.js');
-  const big = Array.from({ length: 50 }, (_, i) => ({
-    op: 'set', path: 'n', value: i, id: `e${i}`,
-  }));
-  const fake = { getItem: () => JSON.stringify(big), setItem() {} };
-  loadHistory(spektrum, { storage: fake, maxEntries: 10 });
-  assert.equal(history.length, 10, 'replay capped at maxEntries');
-  assert.equal(getPathObj(appState, 'n'), 9, 'last replayed entry is index 9');
-});
+// Persist-module tests live in spektrum-persist.test.js. The F-3 path
+// validation defenses are exercised there alongside saveHistory and
+// autoSave coverage.

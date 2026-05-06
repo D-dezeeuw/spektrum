@@ -12,8 +12,9 @@ import assert from 'node:assert/strict';
 
 import spektrum, {
   appState, appStateDelta, history, forks,
-  setValue, trigger, addSystem, removeSystem, computed,
-  tick, replay, reset, resetState, onError, onRecord, onFork, defineFn,
+  setValue, trigger, checkpoint, addSystem, removeSystem, computed,
+  tick, replay, reset, resetState, serialize,
+  onError, onRecord, onFork, defineFn,
   getPathObj, setPathValue, precompile,
 } from './spektrum.js';
 import { createSpektrum } from './spektrum.js';
@@ -612,11 +613,11 @@ test('deepMerge skips __proto__ on JSON-parsed sources (V8 own-key edge case)', 
 
 // === Tick-overflow routes through onError (F-9) ===
 
-test('tick max-iterations sends an Error to onError when set', (t) => {
+test('tick max-iterations sends an Error to onError with code E_TICK_OVERFLOW', (t) => {
   const seen = [];
   const warnings = [];
   t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
-  onError((err, sysFn) => seen.push({ msg: err.message, sysFn }));
+  onError((err, sysFn) => seen.push({ msg: err.message, code: err.code, sysFn }));
   // Runaway: every tick the system re-writes its own subscribed path,
   // so the delta never settles and tick() bails after 1024 iterations.
   addSystem(['x'], (state, delta) => {
@@ -626,8 +627,23 @@ test('tick max-iterations sends an Error to onError when set', (t) => {
   tick();
   assert.equal(seen.length, 1, 'onError fired exactly once');
   assert.match(seen[0].msg, /max iterations/);
+  assert.equal(seen[0].code, 'E_TICK_OVERFLOW',
+    'engine-thrown error carries discriminating code');
   assert.equal(seen[0].sysFn, null, 'sysFn arg is null for tick-overflow');
   assert.equal(warnings.length, 0, 'no console.warn fallback when handler is set');
+});
+
+test('user-thrown system errors pass through onError without a code', () => {
+  const seen = [];
+  onError((err) => seen.push(err));
+  addSystem(['z'], () => { throw new Error('boom'); });
+  setValue('z', 1);
+  tick();
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].message, 'boom');
+  assert.equal(seen[0].code, undefined,
+    'user-thrown errors are NOT annotated with engine codes');
+  onError(null);
 });
 
 test('tick max-iterations falls back to console.warn when no onError', (t) => {
@@ -752,4 +768,160 @@ test('reset() still clears systems after the warn', () => {
   setValue('x', 1);
   tick();
   assert.equal(calls, 0, 'system cleared by reset()');
+});
+
+// === checkpoints ===
+
+test('checkpoint() appends a tagged history entry with no state effect', () => {
+  setValue('count', 5);
+  tick();
+  const stateBefore = JSON.parse(JSON.stringify(appState));
+  const lenBefore = history.length;
+
+  checkpoint('search-done', { query: 'amsterdam' });
+  tick();
+
+  assert.equal(history.length, lenBefore + 1, 'history grew by one');
+  assert.deepEqual(appState, stateBefore, 'state unchanged');
+  const last = history[history.length - 1];
+  assert.equal(last.op, 'checkpoint');
+  assert.equal(last.id, 'search-done');
+  assert.deepEqual(last.value, { query: 'amsterdam' });
+});
+
+test('checkpoint() fires onRecord (so autoSave catches it)', () => {
+  const recorded = [];
+  onRecord((entry) => recorded.push(entry));
+  checkpoint('marker', { ts: 1 });
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].op, 'checkpoint');
+  assert.equal(recorded[0].id, 'marker');
+  onRecord(null);
+});
+
+test('checkpoint() does NOT fire onRecord during replay', () => {
+  checkpoint('m1');
+  setValue('x', 1);
+  tick();
+
+  const seen = [];
+  onRecord((e) => seen.push(e));
+  replay(0);
+  replay(history.length);
+  assert.equal(seen.length, 0, 'onRecord stays silent during replay');
+  onRecord(null);
+});
+
+test('replay across a checkpoint leaves state identical to skipping it', () => {
+  setValue('a', 1);
+  setValue('b', 2);
+  checkpoint('mid');
+  setValue('c', 3);
+  tick();
+
+  // Replay to the position right after the checkpoint — state should
+  // contain a + b but not c. The checkpoint itself is a no-op.
+  const cpIndex = history.findIndex(e => e.op === 'checkpoint');
+  replay(cpIndex + 1);
+  assert.equal(getPathObj(appState, 'a'), 1);
+  assert.equal(getPathObj(appState, 'b'), 2);
+  assert.equal(getPathObj(appState, 'c'), undefined,
+    'c not yet applied — checkpoint did not bleed through');
+});
+
+test('checkpoints getter returns only checkpoint entries with their index', () => {
+  setValue('a', 1);
+  checkpoint('first');
+  setValue('b', 2);
+  setValue('c', 3);
+  checkpoint('second', { tag: 'milestone' });
+  setValue('d', 4);
+  tick();
+
+  const cps = spektrum.checkpoints;
+  assert.equal(cps.length, 2);
+  assert.equal(cps[0].id, 'first');
+  assert.equal(cps[0].index, 1, 'first checkpoint at history index 1');
+  assert.equal(cps[1].id, 'second');
+  assert.equal(cps[1].index, 4, 'second checkpoint at history index 4');
+  assert.deepEqual(cps[1].value, { tag: 'milestone' });
+});
+
+test('replay-to-checkpoint recipe (find by name, +1) lands at post-checkpoint state', () => {
+  setValue('step', 1);
+  setValue('payload', 'a');
+  checkpoint('step1-done');
+  setValue('step', 2);
+  setValue('payload', 'b');
+  checkpoint('step2-done');
+  setValue('step', 3);
+  tick();
+
+  // Replay to *after* step1-done.
+  const cp = spektrum.checkpoints.find(c => c.id === 'step1-done');
+  replay(cp.index + 1);
+  assert.equal(getPathObj(appState, 'step'), 1);
+  assert.equal(getPathObj(appState, 'payload'), 'a');
+});
+
+test('tick does not fan out from a checkpoint entry', () => {
+  // Subscribe to '' (the empty path checkpoints carry). The system
+  // must NOT fire on a bare checkpoint() call.
+  let calls = 0;
+  addSystem([''], () => { calls++; });
+  checkpoint('m');
+  tick();
+  assert.equal(calls, 0, 'no fan-out from checkpoint op');
+});
+
+test('forks preserve checkpoint entries when scrubbed-back-then-mutated', () => {
+  setValue('a', 1);
+  checkpoint('cp');
+  setValue('b', 2);
+  tick();
+
+  replay(1); // scrub back behind the checkpoint
+  setValue('a', 'fork-edit'); // mutates → truncates the future
+  tick();
+
+  // The fork should hold the checkpoint plus the trailing setValue.
+  const f = forks[forks.length - 1];
+  assert.ok(f, 'a fork was captured');
+  assert.ok(f.entries.some(e => e.op === 'checkpoint' && e.id === 'cp'),
+    'checkpoint is in the fork tail');
+});
+
+// === serialize ===
+
+test('serialize() emits state + history + cursor by default', () => {
+  setValue('count', 5);
+  setValue('user.name', 'alice');
+  tick();
+  const json = serialize();
+  const parsed = JSON.parse(json);
+  assert.deepEqual(parsed.state, { count: 5, user: { name: 'alice' } });
+  assert.equal(parsed.history.length, 2);
+  assert.equal(parsed.cursor, 2);
+  assert.equal(parsed.forks, undefined, 'forks excluded by default');
+});
+
+test('serialize({ includeHistory: false }) emits state only', () => {
+  setValue('a', 1);
+  tick();
+  const parsed = JSON.parse(serialize({ includeHistory: false }));
+  assert.deepEqual(parsed.state, { a: 1 });
+  assert.equal(parsed.history, undefined);
+  assert.equal(parsed.cursor, undefined);
+});
+
+test('serialize({ includeForks: true }) includes preserved fork tails', () => {
+  setValue('a', 1);
+  setValue('a', 2);
+  tick();
+  replay(1);
+  setValue('a', 99);
+  tick();
+  const parsed = JSON.parse(serialize({ includeForks: true }));
+  assert.ok(Array.isArray(parsed.forks));
+  assert.equal(parsed.forks.length, 1, 'one fork captured');
 });

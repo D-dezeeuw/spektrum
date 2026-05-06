@@ -11,7 +11,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import spektrum, {
   appState, history,
-  setValue, trigger, tick, reset,
+  setValue, trigger, checkpoint, tick, reset,
   getPathObj,
 } from './spektrum.js';
 import { saveHistory, loadHistory, autoSave } from './spektrum-persist.js';
@@ -264,4 +264,42 @@ test('autoSave stop() also clears a pending debounced flush', async () => {
   stop();
   await delay(150);
   assert.equal(saves, 0, 'pending flush was cleared by stop()');
+});
+
+// === checkpoints ===
+
+test('loadHistory restores checkpoints from storage', () => {
+  setValue('a', 1);
+  checkpoint('cp', { tag: 'middle' });
+  setValue('b', 2);
+  tick();
+  const storage = fakeStorage();
+  saveHistory(spektrum, { storage });
+
+  // Wipe and restore.
+  const orig = console.warn;
+  console.warn = () => {};
+  try { reset(); } finally { console.warn = orig; }
+
+  loadHistory(spektrum, { storage });
+  assert.equal(history.length, 3, 'all three entries restored');
+  assert.equal(spektrum.checkpoints.length, 1);
+  assert.equal(spektrum.checkpoints[0].id, 'cp');
+  assert.deepEqual(spektrum.checkpoints[0].value, { tag: 'middle' });
+});
+
+test('loadHistory rejects malformed checkpoint entries', () => {
+  const storage = fakeStorage();
+  // Mix of malformed (no id, non-string id) and one valid entry.
+  storage.setItem('spektrum:history', JSON.stringify([
+    { op: 'checkpoint' },                          // no id → skip
+    { op: 'checkpoint', id: 42 },                  // non-string id → skip
+    { op: 'set', path: 'real', value: 7, id: 's' },
+    { op: 'checkpoint', id: 'good' },              // OK
+  ]));
+
+  loadHistory(spektrum, { storage });
+  assert.equal(getPathObj(appState, 'real'), 7);
+  assert.equal(spektrum.checkpoints.length, 1);
+  assert.equal(spektrum.checkpoints[0].id, 'good');
 });

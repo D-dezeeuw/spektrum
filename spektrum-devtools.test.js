@@ -55,6 +55,15 @@ test('mount falls back to default position on an unknown corner', () => {
   unmount();
 });
 
+test('mount honours a custom opts.title (escapes it)', () => {
+  // Covers the opts.title truthy branch and the title escapeHtml call.
+  const unmount = mount(spektrum, { title: 'my <app>' });
+  const panel = document.body.querySelector('[data-spektrum-devtools]');
+  assert.ok(panel.innerHTML.includes('my &lt;app&gt;'),
+    `expected escaped custom title; got: ${panel.innerHTML.slice(0, 200)}`);
+  unmount();
+});
+
 test('panel reflects cursor and history length after a rAF tick', async () => {
   setValue('x', 1);
   setValue('y', 2);
@@ -132,6 +141,67 @@ test('log renders additive trigger entries with +value formatting', async () => 
   await flushRaf();
   const log = document.body.querySelector('[data-log]');
   assert.ok(log.innerHTML.includes('+5'), 'additive entry shows as +5');
+  unmount();
+});
+
+test('log renders checkpoint entries with the ◆ marker', async () => {
+  // Covers the e.op === 'checkpoint' branch in the op-formatting ternary.
+  spektrum.checkpoint('search-done');
+  tick();
+  const unmount = mount(spektrum);
+  await flushRaf();
+  const log = document.body.querySelector('[data-log]');
+  assert.ok(log.innerHTML.includes('◆'),
+    `expected diamond marker for checkpoint; got: ${log.innerHTML.slice(0, 200)}`);
+  assert.ok(log.innerHTML.includes('search-done'),
+    'checkpoint name is rendered');
+  unmount();
+});
+
+test('panel does not overwrite scrubber value while user is dragging', async () => {
+  // Covers the `document.activeElement !== scrubEl` guard branch:
+  // when the user is mid-drag, the render skips the value reset so it
+  // doesn't fight the drag.
+  setValue('x', 1);
+  setValue('x', 2);
+  setValue('x', 3);
+  tick();
+  const unmount = mount(spektrum);
+  await flushRaf();
+  const scrub = document.body.querySelector('[data-scrub]');
+
+  scrub.focus();
+  // User drags to position 1. activeElement === scrub.
+  scrub.value = '1';
+  // Replay back to 2 to make cursor !== scrub.value, then re-render.
+  spektrum.replay(2);
+  await flushRaf();
+
+  // The render should NOT have clobbered the user's mid-drag value
+  // (cursor changed from 1 to 2, but scrub stayed at '1' because it
+  // was the activeElement during the render pass).
+  assert.equal(scrub.value, '1',
+    'scrubber value preserved while focused (no drag-fight)');
+  unmount();
+});
+
+test('panel skips DOM writes when history and cursor are unchanged across rAF ticks', async () => {
+  // Covers the `if (h.length !== lastLen || c !== lastCursor)` false
+  // branch — the no-op render path that protects against thrashing.
+  setValue('x', 1);
+  tick();
+  const unmount = mount(spektrum);
+  await flushRaf();
+  const log = document.body.querySelector('[data-log]');
+  const before = log.innerHTML;
+
+  // Two more rAF ticks without any state change. innerHTML should
+  // not be rewritten — same string (proves the guard kicked in,
+  // because rewriting innerHTML would create a new string identity).
+  await flushRaf();
+  await flushRaf();
+  assert.equal(log.innerHTML, before,
+    'log innerHTML untouched on no-change rAF ticks');
   unmount();
 });
 

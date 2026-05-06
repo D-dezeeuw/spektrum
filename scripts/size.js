@@ -9,10 +9,16 @@
   transitive-dep tail dozens deep. zlib is built into Node.
 
   Tune the caps below as the surface area grows. Today the engine
-  prints around 8.9 kB raw / 4.1 kB gzipped; caps were bumped to
-  9472 / 4224 after PR3 (audit response: tick-overflow → onError,
-  hook-overwrite warns, unknown-modifier warn). Adjust deliberately —
-  every bump invites complacency. Trim before raising.
+  prints around 9.8 kB raw / 4.5 kB gzipped; caps were bumped to
+  10240 / 4608 in 0.4.0 to absorb checkpoint() + checkpoints, the
+  data-stable-key opt-in for keyed data-each, the append/pop tail
+  diff for non-keyed data-each, structured onError (err.code), and
+  serialize(). RESERVED set + KNOWN_MODIFIERS were trimmed beforehand
+  to soak up ~170 B raw before the bump landed. The two list-rendering
+  features (data-stable-key, append/pop diff) cost ~3× their planned
+  estimate — the prefix-scan + dev-mode foot-gun warn + clone-reuse
+  bookkeeping are real. Adjust caps deliberately — every bump invites
+  complacency. Trim before raising.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -24,7 +30,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js', raw: 9472, gz: 4224 },
+  { file: 'spektrum.min.js', raw: 10240, gz: 4608 },
 ];
 
 let failed = false;

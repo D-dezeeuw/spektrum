@@ -146,13 +146,19 @@ test('bindDOM is idempotent on the same root', () => {
     <button data-action="click" data-fn="trigger" data-id="x" data-value="1" data-name="inc">+</button>`;
   setValue('x', 0);
   bindDOM(document.body);
-  bindDOM(document.body); // should be a no-op
+  const noopDestroy = bindDOM(document.body); // should be a no-op
   tick();
 
   document.body.querySelector('button').click();
   tick();
   // If double-bound, click would fire trigger twice and x would be 2.
   assert.equal(getPathObj(appState, 'x'), 1);
+
+  // The no-op destroy returned by the idempotent second call is itself
+  // callable — invoke it to confirm the contract (and to keep coverage
+  // honest: the no-op fn is part of bindDOM's public surface).
+  assert.equal(typeof noopDestroy, 'function');
+  assert.doesNotThrow(() => noopDestroy());
 });
 
 // === Expressions in {{...}} ===
@@ -419,6 +425,167 @@ test('unkeyed data-each falls back to full rebuild (legacy behavior)', () => {
   tick();
   const after = document.body.querySelector('ul li');
   assert.notEqual(after, before, 'unkeyed mode rebuilds existing nodes');
+});
+
+// === non-keyed data-each: append/pop tail diff (RFC §1 Option C) ===
+
+test('non-keyed data-each push reuses existing nodes (only appends tail)', () => {
+  document.body.innerHTML = `
+    <ul data-each="items" data-as="item">
+      <li>{{item.label}}</li>
+    </ul>`;
+  const items = [{ label: 'a' }, { label: 'b' }];
+  setValue('items', items);
+  bindDOM(document.body);
+  tick();
+  const lisBefore = [...document.body.querySelectorAll('li')];
+
+  // Push c using the SAME array reference for the prefix (identity-stable).
+  items.push({ label: 'c' });
+  setValue('items', items.slice());
+  // ^ Different array ref, but same item refs at positions 0 and 1.
+  tick();
+
+  const lisAfter = [...document.body.querySelectorAll('li')];
+  assert.equal(lisAfter.length, 3);
+  assert.equal(lisAfter[0], lisBefore[0], 'li[0] reused (prefix-identity match)');
+  assert.equal(lisAfter[1], lisBefore[1], 'li[1] reused');
+  assert.notEqual(lisAfter[2], undefined, 'tail node appended');
+});
+
+test('non-keyed data-each pop reuses existing nodes (only removes tail)', () => {
+  document.body.innerHTML = `
+    <ul data-each="items" data-as="item">
+      <li>{{item.label}}</li>
+    </ul>`;
+  const a = { label: 'a' }, b = { label: 'b' }, c = { label: 'c' };
+  setValue('items', [a, b, c]);
+  bindDOM(document.body);
+  tick();
+  const lisBefore = [...document.body.querySelectorAll('li')];
+
+  setValue('items', [a, b]);
+  tick();
+
+  const lisAfter = [...document.body.querySelectorAll('li')];
+  assert.equal(lisAfter.length, 2);
+  assert.equal(lisAfter[0], lisBefore[0], 'li[0] reused on pop');
+  assert.equal(lisAfter[1], lisBefore[1], 'li[1] reused on pop');
+});
+
+test('non-keyed data-each interior change (different identity) still rebuilds', () => {
+  document.body.innerHTML = `
+    <ul data-each="items" data-as="item">
+      <li>{{item.label}}</li>
+    </ul>`;
+  setValue('items', [{ label: 'a' }, { label: 'b' }]);
+  bindDOM(document.body);
+  tick();
+  const lisBefore = [...document.body.querySelectorAll('li')];
+
+  // Different object identities even though shape matches → rebuild.
+  setValue('items', [{ label: 'a' }, { label: 'b' }, { label: 'c' }]);
+  tick();
+  const lisAfter = [...document.body.querySelectorAll('li')];
+  assert.notEqual(lisAfter[0], lisBefore[0],
+    'interior identity change triggers full rebuild');
+});
+
+// === data-stable-key (RFC §1 Option B) ===
+
+test('data-stable-key reuses the same DOM node across reorder', () => {
+  // Outer-scope binding only — no per-row paths, so data-stable-key is safe.
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-key="row.id" data-stable-key>
+      <li class="badge">{{currentTag}}</li>
+    </ul>`;
+  setValue('currentTag', 'pinned');
+  setValue('rows', [{ id: 1 }, { id: 2 }, { id: 3 }]);
+  bindDOM(document.body);
+  tick();
+
+  const liByIdBefore = new Map();
+  document.body.querySelectorAll('li').forEach((li, i) => {
+    liByIdBefore.set(['1','2','3'][i], li);
+  });
+
+  // Reverse the order; with data-stable-key the same nodes should
+  // move, not be rebuilt.
+  setValue('rows', [{ id: 3 }, { id: 2 }, { id: 1 }]);
+  tick();
+
+  const liAfter = [...document.body.querySelectorAll('li')];
+  assert.equal(liAfter[0], liByIdBefore.get('3'),
+    'row id=3 reused on its new position');
+  assert.equal(liAfter[1], liByIdBefore.get('2'),
+    'row id=2 stayed (same DOM node)');
+  assert.equal(liAfter[2], liByIdBefore.get('1'),
+    'row id=1 reused on its new position');
+});
+
+test('data-stable-key preserves uncommitted input value across reorder', () => {
+  // The whole point of stable-key is that focus, scroll, selection,
+  // and uncommitted input survive moves. happy-dom's activeElement
+  // behaviour around insertBefore is unreliable, so we verify
+  // survival via the (DOM-property-based) input.value instead — same
+  // signal, same primitive: the same DOM node moved, not rebuilt.
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-key="row.id" data-stable-key>
+      <li><input class="note"></li>
+    </ul>`;
+  setValue('rows', [{ id: 1 }, { id: 2 }]);
+  bindDOM(document.body);
+  tick();
+
+  const inputBefore = document.body.querySelectorAll('input.note')[1];
+  inputBefore.value = 'in-progress text';
+
+  setValue('rows', [{ id: 2 }, { id: 1 }]);
+  tick();
+
+  const inputAfter = document.body.querySelectorAll('input.note')[0];
+  assert.equal(inputAfter, inputBefore,
+    'same DOM node moved (not rebuilt)');
+  assert.equal(inputAfter.value, 'in-progress text',
+    'uncommitted input value survived reorder');
+});
+
+test('data-stable-key warns at bind time when template references the loop variable', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-key="row.id" data-stable-key>
+      <li>{{row.label}}</li>
+    </ul>`;
+  setValue('rows', [{ id: 1, label: 'a' }]);
+  bindDOM(document.body);
+  tick();
+
+  assert.ok(
+    warnings.some(w => /data-stable-key.*references "row"/.test(w)),
+    `expected stable-key foot-gun warn; got: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test('data-stable-key without data-key does no path rewriting either', () => {
+  // Edge case: data-stable-key without data-key. Without a key, every
+  // update goes through the unkeyed path (full rebuild), so data-stable-key
+  // is meaningless there — but it still suppresses path rewriting, so
+  // the bindings on the rebuilt clones reference outer scope only.
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-stable-key>
+      <li>{{currentTag}}</li>
+    </ul>`;
+  setValue('currentTag', 'fixed');
+  setValue('rows', [{}, {}]);
+  bindDOM(document.body);
+  tick();
+
+  const lis = document.body.querySelectorAll('li');
+  assert.equal(lis.length, 2);
+  assert.equal(lis[0].textContent, 'fixed');
+  assert.equal(lis[1].textContent, 'fixed');
 });
 
 test('replay() backward through a populated list wipes the rendered rows', () => {
@@ -778,4 +945,152 @@ test('data-action with all known modifiers does not warn', (t) => {
     warnings.filter(w => /unknown data-action modifier/.test(w)).length, 0,
     'recognised modifiers must not warn',
   );
+});
+
+// === Built-in data-fn handlers (setText, setStyle, toggle) ===
+
+test('built-in data-fn "setValue" sets state from element value on event', () => {
+  // Distinct from data-model — this is the action-driven form: a handler
+  // wired via data-fn="setValue" that reads from el.value (or data-value)
+  // and writes to data-id on the configured DOM event. Used when authors
+  // want explicit event semantics rather than data-model's auto-bind.
+  document.body.innerHTML = `
+    <input data-action="change" data-fn="setValue" data-id="title">`;
+  bindDOM(document.body);
+  tick();
+
+  const input = document.body.querySelector('input');
+  input.value = 'committed';
+  input.dispatchEvent(new Event('change'));
+  tick();
+  assert.equal(getPathObj(appState, 'title'), 'committed');
+});
+
+test('built-in data-fn "setText" writes state path into el.textContent', () => {
+  document.body.innerHTML = `
+    <p data-action="cycle" data-fn="setText" data-id="msg"></p>`;
+  setValue('msg', 'hello');
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('p').textContent, 'hello');
+
+  setValue('msg', 'world');
+  tick();
+  assert.equal(document.body.querySelector('p').textContent, 'world',
+    'updates on subsequent ticks');
+});
+
+test('built-in data-fn "setStyle" writes state to a named CSS property', () => {
+  document.body.innerHTML = `
+    <div data-action="cycle" data-fn="setStyle" data-id="opacity" data-prop="opacity"></div>`;
+  setValue('opacity', 0.5);
+  bindDOM(document.body);
+  tick();
+  const div = document.body.querySelector('div');
+  assert.equal(div.style.opacity, '0.5');
+});
+
+test('built-in data-fn "setStyle" appends data-suffix when present', () => {
+  document.body.innerHTML = `
+    <div data-action="cycle" data-fn="setStyle" data-id="size" data-prop="width" data-suffix="px"></div>`;
+  setValue('size', 120);
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('div').style.width, '120px');
+});
+
+test('built-in data-fn "toggle" toggles a class on a target selector', () => {
+  document.body.innerHTML = `
+    <div id="panel" class=""></div>
+    <button data-action="click" data-fn="toggle" data-target="#panel" data-class="open">flip</button>`;
+  bindDOM(document.body);
+  tick();
+
+  const btn = document.body.querySelector('button');
+  const panel = document.body.querySelector('#panel');
+  btn.click();
+  assert.ok(panel.classList.contains('open'), 'class added on first click');
+  btn.click();
+  assert.ok(!panel.classList.contains('open'), 'class removed on second click');
+});
+
+test('bindDOM warns and skips unknown data-fn names', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+  document.body.innerHTML = `
+    <button data-action="click" data-fn="doesNotExist" data-id="x">go</button>`;
+  bindDOM(document.body);
+  assert.ok(
+    warnings.some(w => /unknown data-fn "doesNotExist"/.test(w)),
+    `expected unknown-fn warn; got: ${JSON.stringify(warnings)}`,
+  );
+  // The element should not have a wired listener — clicking does
+  // nothing, no throw.
+  document.body.querySelector('button').click();
+});
+
+// === evalCache FIFO eviction (cacheSet bound at 500) ===
+
+test('evalCache evicts oldest entries when 500-entry limit is reached', () => {
+  // precompile() routes through cacheSet, which is the only public way
+  // to populate the eval cache. We seed a sentinel as the first entry,
+  // then push >500 distinct entries to force eviction. After eviction,
+  // a binding that references the sentinel source falls through to the
+  // new Function compile path — observable because we register the
+  // sentinel with a precompiled fn that returns a marker, then assert
+  // the binding does NOT see that marker after eviction.
+  const sentinelExpr = '__sentinel_evict_test__';
+  precompile(sentinelExpr, () => 'precompiled-marker');
+
+  for (let i = 0; i < 600; i++) {
+    precompile(`__filler_${i}__`, () => i);
+  }
+
+  // After 600 fillers + 1 sentinel = 601 inserts, the FIFO Map of size
+  // 500 has long since dropped the sentinel. The next bindDOM that
+  // references the sentinel source compiles fresh from `with(state)`
+  // — and the identifier doesn't exist, so it returns undefined → '' in text.
+  document.body.innerHTML = `<p>{{${sentinelExpr}}}</p>`;
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('p').textContent, '',
+    'sentinel was evicted; binding fell through to runtime compile, no marker visible');
+});
+
+// === evalExpr fallback paths ===
+
+test('a malformed template expression compiles to an undefined-returning fallback', (t) => {
+  // `new Function('state', 'with (state) { return ((((); }')` throws
+  // at compile time. The catch arm of evalExpr installs a () => undefined
+  // placeholder so the rest of the page still renders. Covers the
+  // "warn + return undefined" branch.
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+  document.body.innerHTML = `<p>before {{ ((((  }} after</p>`;
+  bindDOM(document.body);
+  tick();
+  // The text node renders the fallback (undefined → empty string).
+  assert.equal(document.body.querySelector('p').textContent, 'before  after');
+  assert.ok(
+    warnings.some(w => /invalid expression/.test(w)),
+    `expected "invalid expression" warn; got: ${JSON.stringify(warnings)}`,
+  );
+});
+
+// === run() — rAF-driven tick pump ===
+
+test('run() invokes tick synchronously and schedules the next rAF', (t) => {
+  // run() self-perpetuates via requestAnimationFrame, which would
+  // hang the test runner. Stub rAF to a no-op so we can observe the
+  // single synchronous side effect (tick) and the scheduling intent
+  // without entering the loop.
+  let scheduled = 0;
+  t.mock.method(globalThis, 'requestAnimationFrame', () => { scheduled++; return 0; });
+  setValue('x', 1);
+  assert.ok(Object.keys(spektrum.appStateDelta).length > 0,
+    'precondition: delta has a pending write');
+  spektrum.run();
+  assert.equal(Object.keys(spektrum.appStateDelta).length, 0,
+    'run() called tick() synchronously, draining the delta');
+  assert.equal(scheduled, 1, 'run() scheduled exactly one next rAF');
 });

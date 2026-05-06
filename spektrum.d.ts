@@ -9,7 +9,15 @@ export interface HistoryEntry {
   id: string;
   path: string;
   value: any;
-  op: 'add' | 'set';
+  op: 'add' | 'set' | 'checkpoint';
+}
+
+/** A checkpoint entry as surfaced by `Spektrum.checkpoints` —
+ *  a `HistoryEntry` augmented with its position in `history`. */
+export interface CheckpointView extends HistoryEntry {
+  op: 'checkpoint';
+  /** Index in `history` where this checkpoint sits. */
+  index: number;
 }
 
 export interface Snapshot {
@@ -30,7 +38,26 @@ export interface ForkRecord {
 
 export type SystemFn = (state: State, delta: State) => void;
 
-export type ErrorHandler = (err: unknown, system: SystemFn) => void;
+/**
+ * Closed enum of engine-attached error codes. User-thrown errors
+ * from system functions pass through unchanged (no `code`). Engine-
+ * originated errors carry one of these:
+ *
+ *  - `E_TICK_OVERFLOW`: tick fan-out exceeded 1024 iterations and
+ *    the delta was discarded. Indicates a runaway feedback cycle
+ *    between systems.
+ */
+export type EngineErrorCode = 'E_TICK_OVERFLOW';
+
+/**
+ * Errors received by `onError`. Engine-originated errors carry a
+ * `code` discriminator; system-thrown errors are passed through
+ * with their original identity (no `code`).
+ */
+export type ErrorHandler = (
+  err: Error & { code?: EngineErrorCode },
+  system: SystemFn | null,
+) => void;
 
 export type RecordHandler = (entry: HistoryEntry) => void;
 
@@ -94,11 +121,25 @@ export interface Spektrum {
   readonly cursor: number;
   /** True while replay() is in flight. */
   readonly replaying: boolean;
+  /**
+   * Filtered view of `history`: every checkpoint entry with its
+   * history index appended. Allocates on read; for hot paths walk
+   * `history` directly and filter inline.
+   */
+  readonly checkpoints: CheckpointView[];
 
   /** Record an additive numeric change. Multiple triggers in one tick accumulate. */
   trigger(id: string, path: string, value: number): void;
   /** Record an absolute set. `id` defaults to `set:${path}`. */
   setValue(path: string, value: any, id?: string): void;
+  /**
+   * Record a tagged checkpoint into history. Pure marker — replay
+   * walks past it without state effect. Use to mark logically atomic
+   * boundaries (search complete, form submitted, wizard step done).
+   * Fires `onRecord`. Replay-to-checkpoint:
+   *   spektrum.replay(spektrum.checkpoints.find(c => c.id === name).index + 1)
+   */
+  checkpoint(name: string, metadata?: any): void;
   /** First-class derived value: re-computed when any `deps` path changes. */
   computed(path: string, deps: string[], fn: (state: State) => any): () => void;
 
@@ -159,6 +200,16 @@ export interface Spektrum {
    * to wipe state.
    */
   reset(): void;
+
+  /**
+   * Serialize a portable snapshot of the instance. By default
+   * includes `state`, `history`, and `cursor` so a fresh instance
+   * can `loadHistory` it back to the same point. Pass
+   * `{ includeHistory: false }` for a state-only snapshot;
+   * `{ includeForks: true }` to also include preserved fork tails
+   * (debug-only; forks aren't replay-restored by `loadHistory`).
+   */
+  serialize(opts?: { includeHistory?: boolean; includeForks?: boolean }): string;
 }
 
 /** Walk a dotted path into `obj` and return the leaf value, or undefined. */
@@ -193,6 +244,7 @@ export const forks: ForkRecord[];
 export const refs: Record<string, Element>;
 export const trigger: Spektrum['trigger'];
 export const setValue: Spektrum['setValue'];
+export const checkpoint: Spektrum['checkpoint'];
 export const computed: Spektrum['computed'];
 export const addSystem: Spektrum['addSystem'];
 export const removeSystem: Spektrum['removeSystem'];
@@ -206,3 +258,4 @@ export const tick: Spektrum['tick'];
 export const replay: Spektrum['replay'];
 export const reset: Spektrum['reset'];
 export const resetState: Spektrum['resetState'];
+export const serialize: Spektrum['serialize'];

@@ -47,8 +47,8 @@ const JS_SCHEME = /^\s*javascript:/i;
 
 /** Recognised data-action modifiers. `data-action="click.preventdefault"`
  *  was a frequent typo that silently fell off the modifier path; we now
- *  warn at bind time. Mirrors the inline check in the listener factory. */
-const KNOWN_MODIFIERS = new Set(['prevent', 'stop', 'once']);
+ *  warn at bind time. Regex is ~15 B cheaper than `new Set([…]).has()`. */
+const KNOWN_MODIFIERS = /^(prevent|stop|once)$/;
 
 /** Walk a dotted path into `obj`. Returns the leaf value or undefined. */
 export const getPathObj = (obj, path) =>
@@ -313,8 +313,11 @@ export const createSpektrum = (opts = {}) => {
     if (!isPath(appState, path)) createNestedObjects(appState, path);
   };
 
-  /** Dispatch a recorded entry into the delta. */
+  /** Dispatch a recorded entry into the delta. Checkpoints are
+   *  pure markers — no state effect, no fan-out — so replay walks
+   *  past them unchanged. */
   const applyEntry = (e) => {
+    if (e.op === 'checkpoint') return;
     checkPath(e.path);
     if (e.op === 'set') {
       setPathValue(appStateDelta, e.path, e.value);
@@ -409,6 +412,33 @@ export const createSpektrum = (opts = {}) => {
     record({ id: id || `set:${path}`, path, value, op: 'set' });
   };
 
+  /** Record a tagged checkpoint into history. Pure marker — replay
+   *  walks past it without touching state. Use to mark "logically
+   *  atomic" boundaries (a search completes, a form submits, a
+   *  multi-step wizard finishes a step) so the app can replay to
+   *  the *end* of that span without inventing a sentinel pattern.
+   *
+   *  `name` becomes the entry's `id`; `metadata` becomes its `value`.
+   *  Fires `onRecord` (so `autoSave` catches it). The companion
+   *  `checkpoints` getter returns each checkpoint entry augmented
+   *  with its `index` in history, so replay-to-checkpoint is one line:
+   *    spektrum.replay(spektrum.checkpoints.find(c => c.id === name).index + 1)
+   *  (the +1 lands at the position *after* the checkpoint). */
+  const checkpoint = (name, metadata) => {
+    record({ id: name, path: '', value: metadata, op: 'checkpoint' });
+  };
+
+  /** Filtered view: every checkpoint entry plus its history index.
+   *  Allocates on read — fine at typical checkpoint counts (tens to
+   *  hundreds). For hot paths, walk `history` directly. */
+  const checkpointsOf = () => {
+    const out = [];
+    for (let i = 0; i < history.length; i++) {
+      if (history[i].op === 'checkpoint') out.push({ ...history[i], index: i });
+    }
+    return out;
+  };
+
   // --- Subscriptions ---
 
   /** Subscribe `fn` to one or more paths. Returns an unsubscribe.
@@ -454,7 +484,9 @@ export const createSpektrum = (opts = {}) => {
     let iterations = 0;
     while (Object.keys(appStateDelta).length > 0) {
       if (iterations++ > 1024) {
-        if (errorHandler) safeFire(errorHandler, 'onError', new Error('tick: max iterations exceeded'), null);
+        const err = new Error('tick: max iterations exceeded');
+        err.code = 'E_TICK_OVERFLOW';
+        if (errorHandler) safeFire(errorHandler, 'onError', err, null);
         else warn('tick: max iterations exceeded');
         clearObject(appStateDelta);
         return;
@@ -705,7 +737,8 @@ export const createSpektrum = (opts = {}) => {
   };
 
   /**
-   * data-each="arrayPath" data-as="varName" [data-key="expr"].
+   * data-each="arrayPath" data-as="varName" [data-key="expr"]
+   *                                         [data-stable-key].
    *
    * First child is captured as a template and detached. On change:
    *
@@ -716,9 +749,19 @@ export const createSpektrum = (opts = {}) => {
    *     evaluated per item with `varName` in scope (e.g.
    *     data-key="item.id"). Items whose key + index are unchanged
    *     are left in place — their bindings, listeners, focus, and
-   *     selection survive. Items at a new index re-bind (paths must
-   *     be rewritten to the new absolute index). Removed keys are
-   *     cleaned up.
+   *     selection survive. Items at a new index re-bind by default
+   *     (paths inside the clone were baked at clone time and need
+   *     re-baking for the new index). Removed keys are cleaned up.
+   *
+   *   - With data-key + data-stable-key (presence-flag): skip path
+   *     rewriting on the cloned subtree, and reuse the *same* clone
+   *     across reorder via insertBefore. Author opts in by promising
+   *     the row's bindings don't reference `varName.*` paths — e.g.
+   *     they read outer-scope state, or render pure presentation.
+   *     Bind-time scan warns if the template *does* reference the
+   *     loop variable (the foot-gun case). When the promise holds,
+   *     reorder is genuinely free of UX cost (focus, scroll, input
+   *     value, selection survive moves).
    *
    * Each clone gets `contain: layout style` for perf isolation.
    */
@@ -727,10 +770,20 @@ export const createSpektrum = (opts = {}) => {
     if (!arrayPath) return;
     const varName = el.dataset.as || 'item';
     const keyExpr = el.dataset.key;
+    const stableKey = el.hasAttribute('data-stable-key');
     const templateChild = el.firstElementChild;
     if (!templateChild) return;
     const template = templateChild.cloneNode(true);
     templateChild.remove();
+
+    // Bind-time foot-gun warn: data-stable-key is unsafe when the
+    // template references the loop variable, because we won't rewrite
+    // those paths to the new index. outerHTML covers text content +
+    // attribute values in one string — sufficient since varName is
+    // an identifier (it won't appear in tag/attribute *names*).
+    if (stableKey && new RegExp(`\\b${escapeRegex(varName)}\\b`).test(template.outerHTML)) {
+      warn(`data-stable-key but template references "${varName}"`);
+    }
 
     // Keyed cache: key -> { clone, cleanup, index }. Unkeyed mode keeps
     // a flat cleanups[] and rebuilds on every change.
@@ -740,7 +793,7 @@ export const createSpektrum = (opts = {}) => {
     const buildClone = (i) => {
       const clone = template.cloneNode(true);
       if (clone.style && !clone.style.contain) clone.style.contain = 'layout style';
-      rewriteScope(clone, varName, `${arrayPath}.${i}`);
+      if (!stableKey) rewriteScope(clone, varName, `${arrayPath}.${i}`);
       return { clone, cleanup: bindDOM(clone) };
     };
 
@@ -752,17 +805,38 @@ export const createSpektrum = (opts = {}) => {
       el.replaceChildren();
     };
 
+    // RFC §1 Option C: for the no-key path, track prior items so
+    // push/pop appends/removes only the tail. Identity match (===)
+    // over the shared prefix; interior change still rebuilds. Shared
+    // prefix is the 90% case (chat logs, append-only feeds).
+    let prev = [];
+    const appendFrom = (from, to) => {
+      for (let i = from; i < to; i++) {
+        const c = buildClone(i);
+        cleanups.push(c.cleanup);
+        el.appendChild(c.clone);
+      }
+    };
+
     return bindReactive([arrayPath], (state) => {
       const items = getPathObj(state, arrayPath);
-      if (!Array.isArray(items)) { wipeAll(); return; }
+      if (!Array.isArray(items)) { wipeAll(); prev = []; return; }
 
       if (!keyExpr) {
-        wipeAll();
-        items.forEach((_, i) => {
-          const { clone, cleanup } = buildClone(i);
-          cleanups.push(cleanup);
-          el.appendChild(clone);
-        });
+        const oldN = prev.length, newN = items.length;
+        let pre = 0;
+        while (pre < oldN && pre < newN && prev[pre] === items[pre]) pre++;
+        if (pre === oldN && newN > oldN) appendFrom(oldN, newN);
+        else if (pre === newN && newN < oldN) {
+          while (cleanups.length > newN) {
+            cleanups.pop()();
+            el.lastElementChild && el.lastElementChild.remove();
+          }
+        } else {
+          wipeAll();
+          appendFrom(0, newN);
+        }
+        prev = items.slice();
         return;
       }
 
@@ -776,19 +850,20 @@ export const createSpektrum = (opts = {}) => {
         const key = newKeys[i];
         seen.add(key);
         let entry = cache.get(key);
-        if (!entry || entry.index !== i) {
-          // Index changed (or first time): re-bind. Paths inside the
-          // template were baked at clone time, so a new index needs a
-          // fresh clone. This is the cost of static path rewriting —
-          // the win is that *unmoved* items pay zero.
-          if (entry) {
-            entry.cleanup();
-            entry.clone.remove(); // drop the stale DOM node before its cache slot is overwritten
-          }
+        // Default keyed mode bakes paths at clone time, so a moved
+        // index needs a fresh clone. data-stable-key promises the
+        // bindings don't depend on the index — the same clone is
+        // reused. Unmoved items always pay zero.
+        if (entry && !stableKey && entry.index !== i) {
+          entry.cleanup();
+          entry.clone.remove();
+          entry = null;
+        }
+        if (!entry) {
           entry = buildClone(i);
-          entry.index = i;
           cache.set(key, entry);
         }
+        entry.index = i;
         if (el.children[i] !== entry.clone) {
           el.insertBefore(entry.clone, el.children[i] || null);
         }
@@ -862,7 +937,7 @@ export const createSpektrum = (opts = {}) => {
         // without forcing every author to write a custom data-fn.
         const [eventName, ...modifiers] = action.split('.');
         for (const m of modifiers) {
-          if (!KNOWN_MODIFIERS.has(m)) warn('unknown data-action modifier .' + m);
+          if (!KNOWN_MODIFIERS.test(m)) warn('unknown data-action modifier .' + m);
         }
         const mods = new Set(modifiers);
         const listener = (ev) => {
@@ -883,6 +958,20 @@ export const createSpektrum = (opts = {}) => {
       // call them a second time.
       for (const u of unsubs) allCleanups.delete(u);
     };
+  };
+
+  /** Serialize a portable snapshot of the instance for SSR injection,
+   *  hydration, debug captures, or off-engine inspection. By default
+   *  includes `state`, `history`, and `cursor` so a fresh instance
+   *  can `loadHistory` it back to the same point. Pass
+   *  `{ includeHistory: false }` for a state-only snapshot;
+   *  `{ includeForks: true }` to also include preserved fork tails
+   *  (debug only — forks aren't replay-restored by loadHistory). */
+  const serialize = (opts = {}) => {
+    const out = { state: appState };
+    if (opts.includeHistory !== false) { out.history = history; out.cursor = cursor; }
+    if (opts.includeForks) out.forks = forks;
+    return JSON.stringify(out);
   };
 
   // --- Built-in fns (registered per instance) ---
@@ -910,9 +999,10 @@ export const createSpektrum = (opts = {}) => {
     appState, appStateDelta, history, snapshots, forks, refs,
     get cursor() { return cursor; },
     get replaying() { return replaying; },
-    trigger, setValue, computed,
+    get checkpoints() { return checkpointsOf(); },
+    trigger, setValue, checkpoint, computed,
     addSystem, removeSystem, defineFn, onError, onRecord, onFork,
-    bindDOM, run, tick, replay, reset, resetState,
+    bindDOM, run, tick, replay, reset, resetState, serialize,
   };
 };
 
@@ -924,7 +1014,7 @@ const _default = createSpektrum();
 export default _default;
 export const {
   appState, appStateDelta, history, snapshots, forks, refs,
-  trigger, setValue, computed,
+  trigger, setValue, checkpoint, computed,
   addSystem, removeSystem, defineFn, onError, onRecord, onFork,
-  bindDOM, run, tick, replay, reset, resetState,
+  bindDOM, run, tick, replay, reset, resetState, serialize,
 } = _default;

@@ -12,7 +12,7 @@
 A tiny templating engine with **time-travel built into the primitive**, deliberately auditable, drop-in, and CSP-safe.
 
 - **Time-travel.** Every mutation is recorded. `replay(n)` rebuilds any past state. Scrub a slider through it; ship undo without thinking. The optional `spektrum/devtools` panel renders the scrubber for you in dev.
-- **Auditable.** ~8 kB minified, ~600 lines of actual code, **zero runtime dependencies**, single file. Read it in an afternoon. The ecosystem keeps proving how fragile dependency sprawl is; Spektrum's design follows from that constraint.
+- **Auditable.** ~10 kB minified (4.5 kB gzipped), ~700 lines of actual code, **zero runtime dependencies**, single file. Read it in an afternoon. The ecosystem keeps proving how fragile dependency sprawl is; Spektrum's design follows from that constraint.
 - **Drop-in.** ESM from a `<script type="module">` tag — works in a plain HTML file, a WordPress theme, a browser extension, a CMS code block, an Electron renderer, anywhere you can write HTML. No bundler, no SPA framework, no `npm install` required. Pin a version: `https://unpkg.com/spektrum@0.3.5`.
 - **CSP-safe.** Out of the box, expressions compile via `new Function` (same caveat as Vue/Alpine). For deployments behind strict CSP that disable `unsafe-eval`, run `spektrum/compile` at build time — every template expression precompiles into a plain JS module, and the runtime never reaches the `Function` fallback.
 
@@ -130,6 +130,7 @@ Mutations write into an append-only `appStateDelta`. Each tick drains the delta 
 | `data-if="expression"` | Show element when truthy, `display: none` when falsy. Children stay bound. |
 | `data-each="path" data-as="name"` | Render the array at `path`, cloning the first child as a template per item. The path-rewriter is whole-word string replace — it rewrites both code positions and string literals (see [Known trade-offs](#rewritescope-rewrites-string-literals-too)). |
 | `data-each ... data-key="expr"` | Keyed reconciliation. Items at the same key + index keep their DOM, listeners, focus, and selection. Without a key, the list rebuilds on each change (legacy behavior). |
+| `data-each ... data-key="expr" data-stable-key` | Reuse the *same* clone across reorder. Skips path rewriting on the cloned subtree, so reorder is genuinely free of UX cost (focus, scroll, input value, selection survive moves). Author opts in by promising the row's bindings don't reference `varName.*` paths — the engine warns at bind time if they do (see [Known trade-offs](#data-each-re-clones-moved-items-default-keyed-mode)). |
 | `data-model="path"` | Two-way binding for `<input>` / `<select>` / checkboxes. State → element via `:value`/`:checked`, element → state on `input`/`change` event. |
 | `data-model="path.lazy"` | Same as `data-model="path"`, but commits element → state on `change` instead of `input`. Useful for search boxes / time-travel apps where per-keystroke writes flood history. The `.lazy` suffix is reserved; if your state genuinely has a `lazy` leaf, route through `data-action="input"` + `data-fn="setValue"` instead. |
 | `data-ref="name"` | Expose the element on `instance.refs.name` for imperative access (`spektrum.refs.email.focus()`). |
@@ -151,13 +152,13 @@ import spektrum, {
   // state (objects mutable; cursor/replaying are getters on the default instance)
   appState, appStateDelta, history, snapshots, forks, refs,
   // mutators
-  trigger, setValue,
+  trigger, setValue, checkpoint,
   // derived state
   computed,
   // subscriptions & hooks
   addSystem, removeSystem, defineFn, onError, onRecord, onFork,
   // lifecycle
-  bindDOM, run, tick, replay, reset, resetState,
+  bindDOM, run, tick, replay, reset, resetState, serialize,
   // utility
   getPathObj, setPathValue,
   // CSP-safe precompile registry
@@ -199,6 +200,26 @@ import { autoSave, loadHistory } from 'spektrum/persist';
 loadHistory(spektrum);
 autoSave(spektrum, { debounce: 200 });
 ```
+
+## Checkpoints
+
+A logically atomic event ("a search completed", "a form submitted", "wizard step 3 finished") is a *span* of `setValue` calls in Spektrum, not a single one. Replaying to the *end* of one of those spans used to require an app-side sentinel pattern (`setValue('_marker', …)` placed carefully as the last write). `checkpoint(name, metadata?)` is the first-class form:
+
+```js
+spektrum.checkpoint('search-done', { query: 'amsterdam' });
+```
+
+A checkpoint records a tagged history entry (`op: 'checkpoint'`) that has **no state effect** — `replay()` walks past it unchanged. It fires `onRecord` so `autoSave` catches it. The companion getter `spektrum.checkpoints` returns each checkpoint entry plus its position in `history`:
+
+```js
+// Replay to right after a named checkpoint:
+const cp = spektrum.checkpoints.find(c => c.id === 'search-done');
+spektrum.replay(cp.index + 1);
+```
+
+The `+1` lands at the position *after* the checkpoint — the checkpoint itself contributes no state, so `cp.index` and `cp.index + 1` represent the same state, but the +1 form is convention so the cursor sits past the marker.
+
+Persisted via `spektrum/persist` (`loadHistory` recognises `op: 'checkpoint'` and re-applies via the same `checkpoint()` API). The devtools panel renders checkpoint entries with a `◆` accent so they're scannable in the scrubber log.
 
 ## Forking history
 
@@ -262,6 +283,35 @@ spektrum.onError((err, systemFn) => {
 
 Without a handler, throwing systems fall through to `console.error`. The engine itself never crashes — one bad system doesn't abort the rest of the tick.
 
+**Structured engine errors.** Errors raised by the engine itself (not by user systems) carry a `code` discriminator so apps and agentic tooling can branch on root cause without pattern-matching the message:
+
+```js
+spektrum.onError((err, systemFn) => {
+  if (err.code === 'E_TICK_OVERFLOW') metrics.increment('spektrum.tick_overflow');
+  else if (systemFn) reportSystemFailure(systemFn.name, err);
+  else console.error('[spektrum]', err);
+});
+```
+
+Current codes: `E_TICK_OVERFLOW` (tick fan-out exceeded 1024 iterations; delta discarded). User-thrown errors from systems pass through unannotated — same identity as the throwing code produced.
+
+## Serializing state
+
+`serialize(opts?)` returns a portable JSON snapshot, useful for SSR injection, debug captures, or off-engine inspection:
+
+```js
+const json = spektrum.serialize();
+// { state, history, cursor }  — replay-able from a fresh instance via loadHistory
+
+const stateOnly = spektrum.serialize({ includeHistory: false });
+// { state }  — portable, no time-travel context
+
+const debugDump = spektrum.serialize({ includeForks: true });
+// { state, history, cursor, forks }  — for snapshots in error reports
+```
+
+Pairs with `spektrum/persist` — write the serialized output into a `<script type="application/json">` for SSR hydration, or hand it to your error reporter. Forks aren't replay-restored by `loadHistory` (they're a debug surface, not portable history); only include them when you need them.
+
 ## Lifecycle: `reset()` vs `resetState()`
 
 Two ways to wipe runtime state, with different scopes:
@@ -298,11 +348,19 @@ Templates compile to `new Function('state', 'with (state) { return (expr); }')`.
 
 Why we keep `with`: a `Proxy`-based sandbox costs ~150 minified bytes and a per-eval allocation while solving a non-problem inside the stated trust model. The same is true of every alternative we evaluated.
 
-### `data-each` re-clones moved items
+### `data-each` re-clones moved items (default keyed mode)
 
 Paths inside a `data-each` template are baked into each clone at clone time — `{{user.name}}` rewrites to `{{users.0.name}}` for index 0, `{{users.1.name}}` for index 1, etc. When an item changes index, its clone's bindings still read the old path, so the engine throws the clone away and builds a fresh one. UX cost: focus, scroll, selection, and any uncommitted input value in the *moved* row are lost. Items that stay put pay zero.
 
-Why we keep this: the rewrite is a regex one-pass instead of a tokenizer, and unmoved items (the common case) have zero cost. An opt-in `data-stable-key` and an append/pop fast-path are scheduled for 0.4.0.
+Why we keep this default: the rewrite is a regex one-pass instead of a tokenizer, and unmoved items (the common case) have zero cost.
+
+**Opt-out:** `data-stable-key` (presence flag) on a keyed `data-each` skips path rewriting and reuses the same clone across reorder. The contract is that the row's bindings don't reference `varName.*` paths — they read outer-scope state, or render pure presentation. The engine scans the template at bind time and warns if a binding references the loop variable while `data-stable-key` is set:
+
+```text
+[spektrum] data-stable-key but template references "user"
+```
+
+Use `data-stable-key` when the rows are pure presentation (display the same outer state) or when the per-row bindings come exclusively from outer scope. Reorder is then genuinely free.
 
 ### `data-each` without `data-key` rebuilds the whole list
 

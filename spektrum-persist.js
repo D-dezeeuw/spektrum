@@ -69,7 +69,15 @@ export const loadHistory = (spektrum, opts = {}) => {
   // detach them and warn loudly; we want neither.
   spektrum.resetState();
   for (const e of entries) {
-    if (!e || typeof e.path !== 'string') continue;
+    if (!e) continue;
+    // Checkpoints carry no path (op === 'checkpoint', path === ''),
+    // so the path-shape check is op-conditional. Other ops still
+    // require a non-empty string path.
+    if (e.op === 'checkpoint' && typeof e.id === 'string') {
+      spektrum.checkpoint(e.id, e.value);
+      continue;
+    }
+    if (typeof e.path !== 'string') continue;
     if (e.op === 'set') spektrum.setValue(e.path, e.value, e.id);
     else if (e.op === 'add' && Number.isFinite(e.value)) spektrum.trigger(e.id, e.path, e.value);
   }

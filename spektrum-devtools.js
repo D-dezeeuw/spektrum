@@ -99,11 +99,18 @@ export const mount = (spektrum, opts = {}) => {
         const idx = h.length - 1 - i;
         const at = idx < c;
         const dim = at ? '#888' : '#444';
-        const op = e.op === 'add' ? `+${e.value}` : `=${truncate(e.value)}`;
+        // Checkpoints are tagged markers, not state writes — show them
+        // with a diamond and the name in a distinct accent color so
+        // they're scannable in the scrubber log.
+        const isCp = e.op === 'checkpoint';
+        const op = isCp ? `◆ ${e.id}`
+                 : e.op === 'add' ? `+${e.value}`
+                 : `=${truncate(e.value)}`;
+        const pathCol = isCp ? (at ? '#fcd34d' : '#665a2c') : dim;
         return `<div style="color:${dim};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
           <span style="color:${at ? '#4ade80' : '#444'};">${idx}</span>
-          <span style="color:${dim};"> ${escapeHtml(e.path)}</span>
-          <span style="color:${dim};"> ${escapeHtml(op)}</span>
+          <span style="color:${pathCol};"> ${escapeHtml(isCp ? '' : e.path)}</span>
+          <span style="color:${pathCol};"> ${escapeHtml(op)}</span>
         </div>`;
       }).join('');
       lastLen = h.length;

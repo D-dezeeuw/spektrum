@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-05-06
+
+### Added
+
+- **`spektrum.checkpoint(name, metadata?)`** — first-class history marker (proposed-improvements #2). Records a tagged history entry (`op: 'checkpoint'`) with no state effect; `replay()` walks past it unchanged. Use to mark logically atomic boundaries (a search completes, a form submits, a multi-step wizard finishes a step) so the app can replay to the *end* of that span without inventing a sentinel pattern. Fires `onRecord` (so `autoSave` catches it). Companion `spektrum.checkpoints` getter returns each checkpoint entry augmented with its history index — replay-to-checkpoint is one line: `spektrum.replay(spektrum.checkpoints.find(c => c.id === name).index + 1)`. Persisted via `spektrum/persist` (`loadHistory` recognises and re-applies `op: 'checkpoint'`). The devtools panel renders checkpoints with a `◆` marker so they're scannable in the scrubber log.
+- **`data-stable-key` opt-in on keyed `data-each`** (RFC §1 Option B, F-6). Skips path rewriting on the cloned subtree and reuses the *same* clone across reorder via `insertBefore`. Reorder is then genuinely free of UX cost — focus, scroll, selection, and uncommitted input value survive moves. Author opts in by promising the row's bindings don't reference `varName.*` paths; the engine scans the template at bind time and warns if they do (`[spektrum] data-stable-key but template references "row"`). When the promise holds, the historical "moved row loses focus / input value / scroll" trade-off is gone for that list.
+- **Append/pop tail diff for non-keyed `data-each`** (RFC §1 Option C, F-8). When the array's prefix is identity-stable (same item references), push/pop now appends or removes only the tail instead of full rebuild. Covers the 90% case (chat logs, append-only feeds) at no API cost. Interior changes still trigger full rebuild — the same primitive that existed before. Heuristic is `===` over the shared prefix; deep-equal would be too expensive and most apps either reuse references (the fast path) or actively rebuild (the slow path) anyway.
+- **Structured `onError` payload** (audit-final RFC §2 Phase 1, agentic foundation). Engine-thrown errors now carry an `err.code` discriminator so apps and agentic tooling can branch on root cause without pattern-matching the message. Initial closed enum: `E_TICK_OVERFLOW` (the existing 1024-iter bail). User-thrown errors from system functions pass through unchanged (no `code`) — the engine never replaces a user error with a synthetic one. Future codes added per release with an explicit CHANGELOG entry.
+- **`spektrum.serialize(opts?)` method** (audit-final RFC §2 Phase 1). Returns a portable JSON snapshot for SSR injection, hydration, debug captures, or off-engine inspection. Default includes `state` + `history` + `cursor` (replay-able via `loadHistory`); pass `{ includeHistory: false }` for state-only, `{ includeForks: true }` to also include preserved fork tails (debug-only — `loadHistory` doesn't replay forks).
+
+### Changed
+
+- **Size budget bumped to 10240 raw / 4608 gzip** (was 9472 / 4224). The five 0.4.0 features collectively added ~890 B raw / ~390 B gzip — about 3× the conservative estimate for the list-rendering opt-ins (the prefix-scan loop, the dev-mode foot-gun warn, and clone-reuse bookkeeping cost more in real bytes than projected). Pre-bump trims (`RESERVED` set, `KNOWN_MODIFIERS` regex) recovered ~170 B; the rest required the cap raise. Bundle is now 10059 raw / 4566 gzip. Per the standing rule: trim before raising. Both were applied here.
+- **`RESERVED` identifier set further trimmed** to free byte budget. Already trimmed in 0.3.6; same behavior-neutral classification (audit-final F-12) — over-subscription to non-existent paths is harmless (extra ticks, not wrong output).
+- **`KNOWN_MODIFIERS` is now a regex** (`/^(prevent|stop|once)$/`) instead of a `Set`. ~15 B saved per minified output. Behavior identical.
+- **README size claim updated** from "~8 kB minified" to "~10 kB minified (4.5 kB gzipped), ~700 lines of actual code". Same posture (audit-it-in-an-afternoon), bigger surface.
+
 ## [0.3.6] — 2026-05-06
 
 ### Added

@@ -1,0 +1,45 @@
+# Tag-only npm publish with provenance attestation.
+#
+# Trigger: push of a tag matching `v*` (e.g. `v0.3.3`).
+# Auth:    NPM_TOKEN secret (granular access token scoped to this
+#          package, with 2FA bypass enabled for automation).
+# Signing: GitHub OIDC via `id-token: write` — independent of publish
+#          auth, attaches a verifiable build-provenance attestation
+#          to the tarball so consumers can confirm "this came from
+#          this commit on this repo."
+#
+# Manual workflow_dispatch is included so a botched run can be retried
+# without burning a version number on the next tag.
+#
+# This is the only CI workflow in the repo. Local dev still runs
+# `npm test`, `npm run lint`, `npm run build`, `npm run size` by hand.
+
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npm run size
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

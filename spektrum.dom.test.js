@@ -580,3 +580,57 @@ test(':src on iframe also neutralizes javascript:', () => {
   tick();
   assert.equal(document.body.querySelector('iframe').getAttribute('src'), '#');
 });
+
+// === reset() drains DOM listeners (F-5) ===
+
+test('reset() removes data-action click listener so rebind does not stack', () => {
+  // Regression: reset() previously cleared state but left DOM
+  // listeners attached. A subsequent bindDOM() on the same root
+  // attached a *second* listener, so a click fired the handler twice.
+  document.body.innerHTML = `
+    <button data-action="click" data-fn="trigger" data-id="x" data-value="1" data-name="hit">+</button>`;
+  setValue('x', 0);
+  bindDOM(document.body);
+  tick();
+  document.body.querySelector('button').click();
+  tick();
+  assert.equal(getPathObj(appState, 'x'), 1);
+
+  // reset + rebind without explicit destroy(). The audit's failure
+  // mode: the original listener stays attached, the second bindDOM
+  // attaches a duplicate, and one click fires both.
+  reset();
+  setValue('x', 0);
+  bindDOM(document.body);
+  tick();
+  document.body.querySelector('button').click();
+  tick();
+  assert.equal(getPathObj(appState, 'x'), 1, 'click must fire the handler exactly once');
+});
+
+test('reset() removes data-model input listener so rebind does not stack', () => {
+  document.body.innerHTML = '<input data-model="name">';
+  setValue('name', 'a');
+  bindDOM(document.body);
+  tick();
+
+  reset();
+  document.body.innerHTML = '<input data-model="name">';
+  setValue('name', 'a');
+  bindDOM(document.body);
+  tick();
+
+  // Mutate via the new input. If the old listener leaked, both old
+  // and new would fire — but the old listener now points to the prior
+  // appState (since reset() wiped it), and writing through it would
+  // produce undefined behavior. The cleanest assertion: history has
+  // exactly one mutation per input event.
+  const input = document.body.querySelector('input');
+  input.value = 'b';
+  input.dispatchEvent(new Event('input'));
+  tick();
+  assert.equal(getPathObj(appState, 'name'), 'b');
+  // Setup wrote one entry, the input event added exactly one more.
+  assert.equal(spektrum.history.length, 2,
+    'one record per logical mutation; no stacked listeners');
+});

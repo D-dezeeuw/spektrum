@@ -13,7 +13,7 @@ A tiny templating engine with **time-travel built into the primitive**, delibera
 
 - **Time-travel.** Every mutation is recorded. `replay(n)` rebuilds any past state. Scrub a slider through it; ship undo without thinking. The optional `spektrum/devtools` panel renders the scrubber for you in dev.
 - **Auditable.** ~8 kB minified, ~600 lines of actual code, **zero runtime dependencies**, single file. Read it in an afternoon. The ecosystem keeps proving how fragile dependency sprawl is; Spektrum's design follows from that constraint.
-- **Drop-in.** ESM from a `<script type="module">` tag — works in a plain HTML file, a WordPress theme, a browser extension, a CMS code block, an Electron renderer, anywhere you can write HTML. No bundler, no SPA framework, no `npm install` required. Pin a version: `https://unpkg.com/spektrum@0.3.2`.
+- **Drop-in.** ESM from a `<script type="module">` tag — works in a plain HTML file, a WordPress theme, a browser extension, a CMS code block, an Electron renderer, anywhere you can write HTML. No bundler, no SPA framework, no `npm install` required. Pin a version: `https://unpkg.com/spektrum@0.3.3`.
 - **CSP-safe.** Out of the box, expressions compile via `new Function` (same caveat as Vue/Alpine). For deployments behind strict CSP that disable `unsafe-eval`, run `spektrum/compile` at build time — every template expression precompiles into a plain JS module, and the runtime never reaches the `Function` fallback.
 
 The rest is consequences.
@@ -53,7 +53,7 @@ Or load straight from a CDN — no install, no build step:
 <script type="module">
   import { setValue, bindDOM, run } from 'https://unpkg.com/spektrum';
   // pin a specific minified build:
-  // import ... from 'https://unpkg.com/spektrum@0.3.2/spektrum.min.js';
+  // import ... from 'https://unpkg.com/spektrum@0.3.3/spektrum.min.js';
 </script>
 ```
 

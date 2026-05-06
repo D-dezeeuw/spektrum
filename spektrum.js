@@ -268,6 +268,9 @@ export const createSpektrum = (opts = {}) => {
   let recordHandler = null;
   let forkHandler = null;
   let boundRoots = new WeakSet(); // tracks bindDOM roots for idempotency
+  // All cleanup fns registered by bindDOM (DOM listeners, system unsubs).
+  // reset() drains this so listeners don't leak across reset+rebind.
+  const allCleanups = new Set();
 
   // --- Engine helpers (state-bound) ---
 
@@ -463,6 +466,13 @@ export const createSpektrum = (opts = {}) => {
    *  configuration, not state; clear them explicitly with
    *  onError(null) / onRecord(null) / onFork(null) if desired. */
   const reset = () => {
+    // Tear down DOM listeners and other registered cleanups first, so a
+    // subsequent bindDOM(sameRoot) doesn't stack listeners on top of
+    // the prior bind. Cleanups are idempotent (removeEventListener is
+    // a no-op for an already-removed handler), so even if a caller has
+    // already invoked destroy() the second pass is harmless.
+    for (const c of allCleanups) c();
+    allCleanups.clear();
     clearObject(appState);
     clearObject(appStateDelta);
     clearObject(refs);
@@ -773,7 +783,9 @@ export const createSpektrum = (opts = {}) => {
     if (boundRoots.has(root)) return () => {};
     boundRoots.add(root);
     const unsubs = [];
-    const collect = (u) => { if (u) unsubs.push(u); };
+    // Every cleanup goes into both the local list (for this destroy())
+    // and the instance-level allCleanups (for reset()'s drain).
+    const collect = (u) => { if (u) { unsubs.push(u); allCleanups.add(u); } };
 
     // contains() guard: skip data-each elements that were detached by
     // an outer bindEach earlier in this same loop iteration.
@@ -814,13 +826,16 @@ export const createSpektrum = (opts = {}) => {
           if (mods.has('once')) el.removeEventListener(eventName, listener);
         };
         el.addEventListener(eventName, listener);
-        unsubs.push(() => el.removeEventListener(eventName, listener));
+        collect(() => el.removeEventListener(eventName, listener));
       }
     }
 
     return () => {
       boundRoots.delete(root);
       callAll(unsubs);
+      // Drop fired cleanups from the instance set so reset() doesn't
+      // call them a second time.
+      for (const u of unsubs) allCleanups.delete(u);
     };
   };
 

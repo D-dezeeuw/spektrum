@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-05-06
+
+### Changed
+
+- **Node engine bumped to `>=22`** (from `>=20`). Node 20 reached end-of-life on 2026-04-30; the maintained LTS lines are now Node 22 (Active LTS) and Node 24 (current LTS). The engine code itself doesn't use any Node-22-only feature, so anyone on 20 can keep running it from source — but `npm install spektrum` will refuse below 22 from this version on.
+- **CI publish workflow runs on Node 24 LTS** and uses `actions/checkout@v6` + `actions/setup-node@v6` (both Node-24 native). Removes the "Node 20 actions deprecated" annotation that 0.3.3 emitted.
+
 ## [0.3.3] — 2026-05-06
 
 ### Fixed

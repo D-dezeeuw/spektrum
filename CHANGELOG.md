@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-05-06
+
+### Security
+
+- **Prototype-pollution defenses** (audit findings F-1 / F-2). Added a single `SAFE_KEY` predicate (`!== '__proto__' && !== 'prototype' && !== 'constructor'`) and applied it at four sites: `isPath`, `createNestedObjects`, `setPathValue` bail when any path segment is unsafe; `deepMerge`'s key loop skips unsafe keys. Closes both the path-walker sink (`setValue('__proto__.x', …)`) and the JSON-parsed sink (`setValue('p', JSON.parse('{"__proto__":…}'))`). No public-API change for legitimate paths.
+- **`spektrum-persist.js` shape validation** (F-3). `loadHistory` now skips entries with non-string `path`, requires numeric `value` for additive `trigger` ops, and caps replay at `opts.maxEntries ?? 100_000`. Defense-in-depth on top of F-1's engine guard, since persisted history is reachable via attacker-controlled storage (XSS, malicious extension).
+- **URL-attribute sanitization** (F-4). `:href`, `:src`, `:action`, `:formaction`, `:srcdoc`, `:background`, `:cite`, `:poster`, `:data` rewrite values starting with `javascript:` (case-insensitive, whitespace-tolerant) to `#`. Other schemes pass through unchanged. README documents the boundary.
+
+### Changed
+
+- Size budget bumped to 9 216 raw / 4 096 gzip (was 9 000 / 4 000) to absorb the security fixes. Bundle is now 8 780 raw / 4 017 gzip.
+
 ## [0.3.1] — 2026-05-05
 
 ### Changed

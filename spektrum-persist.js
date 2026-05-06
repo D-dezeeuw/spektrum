@@ -42,6 +42,14 @@ export const saveHistory = (spektrum, opts = {}) => {
  * replays the loaded entries through the public mutators (so the
  * cursor and any subscribed systems behave as if the user had typed
  * them again). Returns true if anything was loaded, false otherwise.
+ *
+ * Belt-and-braces validation: storage is attacker-reachable (XSS,
+ * malicious extension, third-party tooling). Each entry is checked
+ * for shape before being replayed, and replay is capped at
+ * `opts.maxEntries` (default 100_000) to bound work even if the
+ * stored array is enormous. The engine's path walker also rejects
+ * prototype-pollution segments (see SAFE_KEY in spektrum.js), so
+ * even an unfiltered entry cannot reach a prototype slot.
  */
 export const loadHistory = (spektrum, opts = {}) => {
   const key = opts.key || DEFAULT_KEY;
@@ -52,10 +60,13 @@ export const loadHistory = (spektrum, opts = {}) => {
   let entries;
   try { entries = JSON.parse(raw); } catch { return false; }
   if (!Array.isArray(entries) || entries.length === 0) return false;
+  const maxEntries = opts.maxEntries ?? 100_000;
+  if (entries.length > maxEntries) entries = entries.slice(0, maxEntries);
   spektrum.reset();
   for (const e of entries) {
-    if (e && e.op === 'set') spektrum.setValue(e.path, e.value, e.id);
-    else if (e && e.op === 'add') spektrum.trigger(e.id, e.path, e.value);
+    if (!e || typeof e.path !== 'string') continue;
+    if (e.op === 'set') spektrum.setValue(e.path, e.value, e.id);
+    else if (e.op === 'add' && typeof e.value === 'number') spektrum.trigger(e.id, e.path, e.value);
   }
   spektrum.tick();
   return true;

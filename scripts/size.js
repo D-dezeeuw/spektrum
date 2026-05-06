@@ -9,7 +9,8 @@
   transitive-dep tail dozens deep. zlib is built into Node.
 
   Tune the caps below as the surface area grows. Today the engine
-  prints around 7 kB raw / 3 kB gzipped.
+  prints around 8.5 kB raw / 4 kB gzipped; caps are bumped to 9216 / 4096
+  to absorb the audit-response security fixes (PRs 1–3).
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -21,7 +22,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js', raw: 9000, gz: 4000 },
+  { file: 'spektrum.min.js', raw: 9216, gz: 4096 },
 ];
 
 let failed = false;

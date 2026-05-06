@@ -561,3 +561,76 @@ test('precompile() does not throw and accepts arbitrary source/fn pairs', () => 
   tick();
   assert.equal(getPathObj(appState, '__precompile_smoke__'), 7);
 });
+
+// === Prototype-pollution defenses (F-1, F-2) ===
+
+test('setValue rejects a leading __proto__ segment', () => {
+  setValue('__proto__.polluted', 'X');
+  tick();
+  assert.equal(({}).polluted, undefined, 'Object.prototype must not gain a "polluted" key');
+  assert.equal(getPathObj(appState, '__proto__.polluted'), undefined);
+});
+
+test('setValue rejects __proto__ in the middle of a path', () => {
+  setValue('a.__proto__.polluted', 'X');
+  tick();
+  assert.equal(({}).polluted, undefined);
+});
+
+test('setValue rejects constructor and prototype segments', () => {
+  setValue('constructor.polluted', 'X');
+  setValue('a.prototype.polluted', 'X');
+  tick();
+  assert.equal(({}).polluted, undefined);
+});
+
+test('deepMerge skips __proto__ on JSON-parsed sources (V8 own-key edge case)', () => {
+  // JSON.parse produces an *own* enumerable __proto__ in V8, which a
+  // naive Object.keys walk would feed straight into the recursion.
+  setValue('p', JSON.parse('{"__proto__":{"polluted":"X"},"safe":1}'));
+  tick();
+  assert.equal(({}).polluted, undefined, 'prototype must not pick up the key');
+  assert.equal(getPathObj(appState, 'p.safe'), 1, 'safe sibling still merges');
+});
+
+// === Persist hardening (F-3) ===
+
+test('loadHistory ignores entries with non-string path', async () => {
+  const { loadHistory } = await import('./spektrum-persist.js');
+  const fake = {
+    getItem: () => JSON.stringify([
+      { op: 'set', path: 'good', value: 1, id: 'a' },
+      { op: 'set', path: 42, value: 'bad', id: 'b' },
+      { op: 'set', path: null, value: 'bad', id: 'c' },
+    ]),
+    setItem() {},
+  };
+  loadHistory(spektrum, { storage: fake });
+  assert.equal(getPathObj(appState, 'good'), 1);
+  assert.equal(history.length, 1, 'only the well-formed entry replays');
+});
+
+test('loadHistory rejects non-numeric value on additive trigger op', async () => {
+  const { loadHistory } = await import('./spektrum-persist.js');
+  const fake = {
+    getItem: () => JSON.stringify([
+      { op: 'set', path: 'count', value: 5, id: 'seed' },
+      { op: 'add', path: 'count', value: 'NaN-string', id: 'bad' },
+      { op: 'add', path: 'count', value: 3, id: 'good' },
+    ]),
+    setItem() {},
+  };
+  loadHistory(spektrum, { storage: fake });
+  assert.equal(getPathObj(appState, 'count'), 8, 'string value silently skipped, numeric still applies');
+});
+
+test('loadHistory caps replay at opts.maxEntries', async () => {
+  const { loadHistory } = await import('./spektrum-persist.js');
+  const big = Array.from({ length: 50 }, (_, i) => ({
+    op: 'set', path: 'n', value: i, id: `e${i}`,
+  }));
+  const fake = { getItem: () => JSON.stringify(big), setItem() {} };
+  loadHistory(spektrum, { storage: fake, maxEntries: 10 });
+  assert.equal(history.length, 10, 'replay capped at maxEntries');
+  assert.equal(getPathObj(appState, 'n'), 9, 'last replayed entry is index 9');
+});

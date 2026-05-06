@@ -553,3 +553,30 @@ test('destroy() removes listeners and releases the root for re-binding', () => {
   tick();
   assert.equal(getPathObj(appState, 'x'), 2, 'rebound listener should fire');
 });
+
+// === URL scheme guard (F-4) ===
+
+test(':href neutralizes javascript: scheme to "#"', () => {
+  document.body.innerHTML = '<a :href="link">go</a>';
+  setValue('link', 'javascript:alert(1)');
+  bindDOM(document.body);
+  tick();
+  const a = document.body.querySelector('a');
+  assert.equal(a.getAttribute('href'), '#', 'javascript: rewritten to # to block XSS');
+
+  setValue('link', 'https://example.com/safe');
+  tick();
+  assert.equal(a.getAttribute('href'), 'https://example.com/safe', 'https URL passes through');
+
+  setValue('link', '  JavaScript:alert(1)');
+  tick();
+  assert.equal(a.getAttribute('href'), '#', 'leading whitespace + mixed case still blocked');
+});
+
+test(':src on iframe also neutralizes javascript:', () => {
+  document.body.innerHTML = '<iframe :src="frame"></iframe>';
+  setValue('frame', 'javascript:void(0)');
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('iframe').getAttribute('src'), '#');
+});

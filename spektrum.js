@@ -15,22 +15,43 @@ const MUSTACHE = /\{\{\s*([^}]+?)\s*\}\}/g;
 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/**
+ * Reject path segments and JSON keys that would touch a prototype slot.
+ * Applied at every path-walk and merge site so attacker-controlled
+ * strings (paths from persisted state, JSON-parsed payloads) cannot
+ * mutate `Object.prototype`.
+ */
+const SAFE_KEY = (k) => k !== '__proto__' && k !== 'prototype' && k !== 'constructor';
+
+/**
+ * Property-write attributes that take a URL. When their bound
+ * expression evaluates to a string starting with `javascript:`, we
+ * rewrite to `#` so a stale path or attacker-influenced value can't
+ * smuggle script execution through `<a :href="…">` and friends.
+ */
+const URL_PROPS = /^(href|src|action|formaction|srcdoc|background|cite|poster|data)$/i;
+const JS_SCHEME = /^\s*javascript:/i;
+
 /** Walk a dotted path into `obj`. Returns the leaf value or undefined. */
 export const getPathObj = (obj, path) =>
   path.split('.').reduce((acc, k) => (acc == null ? acc : acc[k]), obj);
 
 /** True if every segment of `path` resolves on `obj`. */
 const isPath = (obj, path) =>
-  path.split('.').every(k => (obj = obj == null ? undefined : obj[k]) !== undefined);
+  path.split('.').every(k => SAFE_KEY(k) && (obj = obj == null ? undefined : obj[k]) !== undefined);
 
 /**
  * Materialise *intermediate* segments of `path` as `{}` on `obj`. The
  * leaf is left absent — earlier versions materialised it too, which
  * polluted appState with `{}` placeholders that bindings read back
  * pre-tick, producing `"[object Object]"` on `<input>.value`.
+ *
+ * Bails on any unsafe segment (`__proto__`, `prototype`, `constructor`)
+ * so a malicious path cannot reach a prototype slot.
  */
 const createNestedObjects = (obj, path) => {
   const keys = path.split('.');
+  if (!keys.every(SAFE_KEY)) return obj;
   keys.pop();
   keys.reduce((acc, k) => (acc[k] = acc[k] || {}), obj);
   return obj;
@@ -39,6 +60,7 @@ const createNestedObjects = (obj, path) => {
 /** Walk `path` (creating missing parents) and assign `value` at the leaf. */
 export const setPathValue = (obj, path, value) => {
   const keys = path.split('.');
+  if (!keys.every(SAFE_KEY)) return;
   const last = keys.pop();
   const target = keys.reduce((acc, k) => (acc[k] = acc[k] || {}), obj);
   target[last] = value;
@@ -63,6 +85,7 @@ const deepMerge = (target, source) => {
     the array directly into the delta and wins over the existing slot.
   */
   for (const k of Object.keys(source)) {
+    if (!SAFE_KEY(k)) continue;
     const v = source[k];
     if (v && typeof v === 'object' && !Array.isArray(v)) {
       if (target[k] == null || typeof target[k] !== 'object') {
@@ -539,10 +562,12 @@ export const createSpektrum = (opts = {}) => {
       const expr = attr.value;
       if (!expr) continue;
       const isClass = prop === 'class' || prop === 'className';
+      const isUrl = URL_PROPS.test(prop);
       unsubs.push(bindReactive(extractPaths(expr), (state) => {
-        const v = evalExpr(expr)(state);
-        if (isClass) applyClass(el, v);
-        else el[prop] = v;
+        let v = evalExpr(expr)(state);
+        if (isClass) { applyClass(el, v); return; }
+        if (isUrl && typeof v === 'string' && JS_SCHEME.test(v)) v = '#';
+        el[prop] = v;
       }));
     }
     return unsubs.length ? () => callAll(unsubs) : undefined;

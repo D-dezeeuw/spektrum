@@ -38,7 +38,9 @@ export const saveHistory = (spektrum, opts = {}) => {
 };
 
 /**
- * Restore history into `spektrum`. Resets the instance first, then
+ * Restore history into `spektrum`. Wipes runtime state first via
+ * `resetState()` — preserves systems, defineFn registrations, and
+ * hooks so the host app's subscriptions survive a reload. Then
  * replays the loaded entries through the public mutators (so the
  * cursor and any subscribed systems behave as if the user had typed
  * them again). Returns true if anything was loaded, false otherwise.
@@ -62,7 +64,10 @@ export const loadHistory = (spektrum, opts = {}) => {
   if (!Array.isArray(entries) || entries.length === 0) return false;
   const maxEntries = opts.maxEntries ?? 100_000;
   if (entries.length > maxEntries) entries = entries.slice(0, maxEntries);
-  spektrum.reset();
+  // resetState() — not reset() — so app-level systems registered
+  // before loadHistory() survive the load. reset() would silently
+  // detach them and warn loudly; we want neither.
+  spektrum.resetState();
   for (const e of entries) {
     if (!e || typeof e.path !== 'string') continue;
     if (e.op === 'set') spektrum.setValue(e.path, e.value, e.id);

@@ -13,16 +13,21 @@ import assert from 'node:assert/strict';
 import spektrum, {
   appState, appStateDelta, history, forks,
   setValue, trigger, addSystem, removeSystem, computed,
-  tick, replay, reset, onError, onRecord, onFork, defineFn,
+  tick, replay, reset, resetState, onError, onRecord, onFork, defineFn,
   getPathObj, setPathValue, precompile,
 } from './spektrum.js';
 import { createSpektrum } from './spektrum.js';
 
 // Hooks survive reset() (per the documented contract), so we clear
 // them between cases to keep tests self-isolating now that re-setting
-// emits a "handler overwritten" warning.
+// emits a "handler overwritten" warning. The "reset() detached N
+// system(s)" warn is also silenced during teardown — tests routinely
+// add systems without unsubscribing; that warn exists for production
+// code, not cross-test cleanup.
 beforeEach(() => {
-  reset();
+  const orig = console.warn;
+  console.warn = () => {};
+  try { reset(); } finally { console.warn = orig; }
   onError(null);
   onRecord(null);
   onFork(null);
@@ -678,4 +683,73 @@ test('defineFn warns when redefining an existing name', (t) => {
   assert.equal(warnings.length, 0, 'first definition is silent');
   defineFn('myFn', () => {});
   assert.ok(warnings.some(w => /defineFn myFn overwritten/.test(w)));
+});
+
+// === resetState / reset split ===
+
+test('resetState() preserves registered systems', () => {
+  let calls = 0;
+  addSystem(['x'], () => { calls++; });
+  setValue('x', 1);
+  tick();
+  assert.equal(calls, 1, 'system fired before resetState');
+
+  resetState();
+
+  // System should still be registered — fire it again post-resetState.
+  setValue('x', 2);
+  tick();
+  assert.equal(calls, 2, 'system survived resetState');
+});
+
+test('resetState() wipes state, history, snapshots, refs, forks', () => {
+  setValue('a', 1);
+  setValue('b', 2);
+  tick();
+  assert.equal(history.length, 2);
+
+  resetState();
+  assert.equal(history.length, 0, 'history cleared');
+  assert.deepEqual(Object.keys(appState), [], 'appState cleared');
+  assert.equal(spektrum.cursor, 0, 'cursor reset');
+});
+
+test('reset() warns when systems are present at call time', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+
+  addSystem(['p'], () => {});
+  addSystem(['q'], () => {});
+  reset();
+
+  assert.ok(
+    warnings.some(w => /reset\(\) dropped 2 system\(s\)/.test(w)),
+    `expected detach warn; got: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test('reset() does not warn when no systems are registered', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+
+  // No systems registered yet (beforeEach already cleared).
+  reset();
+  assert.equal(
+    warnings.filter(w => /reset\(\) detached/.test(w)).length, 0,
+    `unexpected detach warn; got: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test('reset() still clears systems after the warn', () => {
+  let calls = 0;
+  addSystem(['x'], () => { calls++; });
+
+  // Silence the expected warn so test output stays clean.
+  const orig = console.warn;
+  console.warn = () => {};
+  try { reset(); } finally { console.warn = orig; }
+
+  setValue('x', 1);
+  tick();
+  assert.equal(calls, 0, 'system cleared by reset()');
 });

@@ -194,13 +194,17 @@ export const precompile = (source, fn) => cacheSet(source, fn);
 // Lookbehind excludes identifiers preceded by `.` or `\w` so
 // `user.name.toUpperCase` matches as one path, not three.
 const IDENT = /(?<![\w$.])([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)*)/g;
+// Identifier-heads that are JS globals or keywords, not state paths.
+// Templates referencing anything dropped from this list still work
+// (with(state) falls through to globals) — they just over-subscribe to
+// a path that never fires. Trim is therefore behavior-neutral; entries
+// kept are the ones common in real templates. URI helpers, parseInt /
+// isNaN / isFinite, RegExp / Map / Set / Symbol / Error were dropped
+// in 0.3.6 to free byte budget.
 const RESERVED = new Set([
   'true', 'false', 'null', 'undefined', 'NaN', 'Infinity',
   'typeof', 'instanceof', 'in', 'new', 'delete', 'void', 'this',
-  'Math', 'JSON', 'Date', 'Number', 'String', 'Array', 'Object',
-  'Boolean', 'RegExp', 'Error', 'Map', 'Set', 'Symbol',
-  'parseInt', 'parseFloat', 'isNaN', 'isFinite',
-  'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI',
+  'Math', 'JSON', 'Date', 'Number', 'String', 'Array', 'Object', 'Boolean',
 ]);
 
 /** Pull subscription paths out of an expression. Reserved-word heads
@@ -472,12 +476,16 @@ export const createSpektrum = (opts = {}) => {
     requestAnimationFrame(run);
   };
 
-  /** Wipe runtime state. Built-in fns survive. Also resets refs,
-   *  snapshots, forks, and the bindDOM idempotency tracker. Hook
-   *  registrations (onError, onRecord, onFork) survive — they're
-   *  configuration, not state; clear them explicitly with
-   *  onError(null) / onRecord(null) / onFork(null) if desired. */
-  const reset = () => {
+  /** Wipe runtime state, refs, history, snapshots, forks, and the
+   *  bindDOM idempotency tracker. **Preserves** registered systems,
+   *  defineFn entries, and hook registrations (onError, onRecord,
+   *  onFork) — those are configuration, not state. Use this from
+   *  library code (e.g. spektrum/persist) that wants to load a fresh
+   *  history without nuking the host app's subscriptions.
+   *
+   *  Cleanups (DOM listeners, system unsubs registered by bindDOM)
+   *  are still drained — they're tied to the DOM that's now gone. */
+  const resetState = () => {
     // Tear down DOM listeners and other registered cleanups first, so a
     // subsequent bindDOM(sameRoot) doesn't stack listeners on top of
     // the prior bind. Cleanups are idempotent (removeEventListener is
@@ -491,10 +499,24 @@ export const createSpektrum = (opts = {}) => {
     history.length = 0;
     snapshots.length = 0;
     forks.length = 0;
-    systems.length = 0;
     boundRoots = new WeakSet();
     cursor = 0;
     replaying = false;
+  };
+
+  /** Same as `resetState()`, but also clears app-level systems
+   *  registered via `addSystem`. Built-in fns survive. Hook
+   *  registrations (onError, onRecord, onFork) survive — clear them
+   *  explicitly with onError(null) / onRecord(null) / onFork(null).
+   *
+   *  Warns if active systems are present at call time — silently
+   *  detaching subscriptions has bitten users who assumed reset()
+   *  was state-only. Call `resetState()` instead when you only want
+   *  to wipe state. */
+  const reset = () => {
+    if (systems.length) warn(`reset() dropped ${systems.length} system(s); see resetState`);
+    resetState();
+    systems.length = 0;
   };
 
   /**
@@ -616,12 +638,21 @@ export const createSpektrum = (opts = {}) => {
 
   /** data-model="path" — two-way input binding. Detects checkboxes
    *  (uses `change` + el.checked); everything else uses `input` +
-   *  el.value. Writes go through setValue → history. */
+   *  el.value. Writes go through setValue → history.
+   *
+   *  `.lazy` suffix (`data-model="path.lazy"`) commits on `change`
+   *  instead of `input` — useful for search boxes / time-travel apps
+   *  where per-keystroke writes flood history and fork it on every
+   *  edit. The suffix is reserved; if your state genuinely has a
+   *  `.lazy` leaf, route through `data-action="input"` + `setValue`
+   *  directly. */
   const bindModel = (el) => {
-    const path = el.dataset.model;
-    if (!path) return;
+    const raw = el.dataset.model;
+    if (!raw) return;
+    const lazy = raw.endsWith('.lazy');
+    const path = lazy ? raw.slice(0, -5) : raw;
     const isCheckbox = el.type === 'checkbox';
-    const eventName = isCheckbox ? 'change' : 'input';
+    const eventName = (lazy || isCheckbox) ? 'change' : 'input';
     const writeEl = (v) => {
       if (isCheckbox) el.checked = !!v;
       else el.value = v == null ? '' : v;
@@ -837,7 +868,7 @@ export const createSpektrum = (opts = {}) => {
         const listener = (ev) => {
           if (mods.has('prevent')) ev.preventDefault();
           if (mods.has('stop')) ev.stopPropagation();
-          handler(el, appState, appStateDelta, value);
+          handler(el, appState, appStateDelta, value, ev);
           if (mods.has('once')) el.removeEventListener(eventName, listener);
         };
         el.addEventListener(eventName, listener);
@@ -881,7 +912,7 @@ export const createSpektrum = (opts = {}) => {
     get replaying() { return replaying; },
     trigger, setValue, computed,
     addSystem, removeSystem, defineFn, onError, onRecord, onFork,
-    bindDOM, run, tick, replay, reset,
+    bindDOM, run, tick, replay, reset, resetState,
   };
 };
 
@@ -895,5 +926,5 @@ export const {
   appState, appStateDelta, history, snapshots, forks, refs,
   trigger, setValue, computed,
   addSystem, removeSystem, defineFn, onError, onRecord, onFork,
-  bindDOM, run, tick, replay, reset,
+  bindDOM, run, tick, replay, reset, resetState,
 } = _default;

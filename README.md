@@ -51,9 +51,9 @@ Or load straight from a CDN — no install, no build step:
 
 ```html
 <script type="module">
-  import { setValue, bindDOM, run } from 'https://unpkg.com/spektrum';
-  // pin a specific minified build:
-  // import ... from 'https://unpkg.com/spektrum@0.3.5/spektrum.min.js';
+  import { setValue, bindDOM, run } from 'https://unpkg.com/spektrum@latest/spektrum.min.js';
+  // pin a specific build:
+  // import ... from 'https://unpkg.com/spektrum@0.3.5/spektrum.js';
 </script>
 ```
 
@@ -128,14 +128,15 @@ Mutations write into an append-only `appStateDelta`. Each tick drains the delta 
 | `{{expression}}` in a text node | Interpolated text, auto-escaped. Full JS expression: `{{count + 1}}`, `{{user.name.toUpperCase()}}`. |
 | `:attr="expression"` on any element | Property write. Object form on `:class` toggles named classes: `:class="{active: x, error: y}"`. |
 | `data-if="expression"` | Show element when truthy, `display: none` when falsy. Children stay bound. |
-| `data-each="path" data-as="name"` | Render the array at `path`, cloning the first child as a template per item. |
+| `data-each="path" data-as="name"` | Render the array at `path`, cloning the first child as a template per item. The path-rewriter is whole-word string replace — it rewrites both code positions and string literals (see [Known trade-offs](#rewritescope-rewrites-string-literals-too)). |
 | `data-each ... data-key="expr"` | Keyed reconciliation. Items at the same key + index keep their DOM, listeners, focus, and selection. Without a key, the list rebuilds on each change (legacy behavior). |
 | `data-model="path"` | Two-way binding for `<input>` / `<select>` / checkboxes. State → element via `:value`/`:checked`, element → state on `input`/`change` event. |
+| `data-model="path.lazy"` | Same as `data-model="path"`, but commits element → state on `change` instead of `input`. Useful for search boxes / time-travel apps where per-keystroke writes flood history. The `.lazy` suffix is reserved; if your state genuinely has a `lazy` leaf, route through `data-action="input"` + `data-fn="setValue"` instead. |
 | `data-ref="name"` | Expose the element on `instance.refs.name` for imperative access (`spektrum.refs.email.focus()`). |
 | `data-action="cycle"` + `data-fn` + `data-id` | Subscribe a registered fn to a path. |
 | `data-action="event[.modifier]*"` + `data-fn` | DOM-event dispatch. Modifiers: `.prevent` (preventDefault), `.stop` (stopPropagation), `.once` (auto-detach). |
 
-Built-in `data-fn` handlers: `trigger`, `setValue`, `setText`, `setStyle`, `toggle`. Register your own with `defineFn(name, handler)`.
+Built-in `data-fn` handlers: `trigger`, `setValue`, `setText`, `setStyle`, `toggle`. Register your own with `defineFn(name, handler)`. Handler signature: `(el, state, delta, value, event?)`. The `event` argument is the DOM `Event` for `data-action="click"`-style bindings, or `undefined` for `data-action="cycle"` (subscription-driven, no event in scope).
 
 Derived state via `computed(path, deps, fn)` — re-runs when any `deps` change, writes the result into `path`. Returns an unsubscribe handle.
 
@@ -156,7 +157,7 @@ import spektrum, {
   // subscriptions & hooks
   addSystem, removeSystem, defineFn, onError, onRecord, onFork,
   // lifecycle
-  bindDOM, run, tick, replay, reset,
+  bindDOM, run, tick, replay, reset, resetState,
   // utility
   getPathObj, setPathValue,
   // CSP-safe precompile registry
@@ -248,6 +249,8 @@ Then load the generated module before `bindDOM()`:
 
 With every expression precompiled, the cache hits before the runtime ever reaches the `Function` fallback. The emitted module is plain ESM — no string-to-code conversion at runtime.
 
+> **Note on the trust model.** Precompile removes the *runtime* `new Function` requirement (the CSP-friendliness) — it does **not** change the trust requirement on templates. The emitted functions still use `with(state)`, so a template expression like `{{constructor.constructor("…")()}}` is still reachable. "We precompiled, so untrusted templates are fine" is wrong. Templates remain author-written, same caveat as Vue/Alpine.
+
 ## Error handling
 
 ```js
@@ -258,6 +261,15 @@ spektrum.onError((err, systemFn) => {
 ```
 
 Without a handler, throwing systems fall through to `console.error`. The engine itself never crashes — one bad system doesn't abort the rest of the tick.
+
+## Lifecycle: `reset()` vs `resetState()`
+
+Two ways to wipe runtime state, with different scopes:
+
+- **`resetState()`** clears `appState`, `appStateDelta`, `refs`, `history`, `snapshots`, `forks`, and the `bindDOM` idempotency tracker. **Preserves** registered systems, `defineFn` entries, and hook registrations (`onError`, `onRecord`, `onFork`). Use this when you're swapping the data set under a running app — `spektrum/persist`'s `loadHistory` calls it internally.
+- **`reset()`** does everything `resetState()` does *and* clears systems. Built-in fns and hook registrations still survive. Calling it with active systems emits a `[spektrum] reset() dropped N system(s); see resetState` warning — the warn is there because silent detachment has bitten users who assumed `reset()` was state-only. Use `resetState()` instead when you only want to wipe state.
+
+Built-in `data-fn` handlers (`trigger`, `setValue`, `setText`, `setStyle`, `toggle`) are re-registered on every `createSpektrum()`; they survive both reset paths.
 
 ## Commands
 
@@ -306,7 +318,17 @@ Workaround: write expressions that return values, not strings that mention bound
 
 A computed value lands in `appStateDelta` during the tick that recomputes it, and merges into `appState` when that tick commits. Mid-tick reads of the same path therefore see the *prior committed* value, not the value the current pass is producing. After `tick()` returns, both reads agree.
 
-Why we keep this: it matches the engine's commit-on-tick model. Anything reactive sees the new value via the delta on the next pass.
+```js
+computed('total', ['cart.items'], (s) => s.cart.items.reduce((a, x) => a + x.price, 0));
+setValue('cart.items', [{price: 10}, {price: 5}]);
+// During the tick this triggered, a system reading appState.total still
+// sees the previous value (or undefined). After tick() returns, both
+// appState.total and (a stateSnapshot read) return 15.
+```
+
+Read computed values from the snapshot/state passed to your subscriber, or after `tick()` has returned to the caller. Anything reactive sees the new value via the delta on the next pass — that's the design, not a bug.
+
+Why we keep this: it matches the engine's commit-on-tick model. Treating the delta as the single write target keeps the `appState ⊕ appStateDelta` invariant simple to reason about.
 
 ### `history.splice(0, n)` on `historyLimit` overflow is O(n)
 

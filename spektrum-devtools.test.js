@@ -15,7 +15,10 @@ import spektrum, { setValue, tick, reset } from './spektrum.js';
 import { mount } from './spektrum-devtools.js';
 
 beforeEach(() => {
-  reset();
+  // Silence the "reset() detached N system(s)" warn during cleanup.
+  const orig = console.warn;
+  console.warn = () => {};
+  try { reset(); } finally { console.warn = orig; }
   document.body.innerHTML = '';
 });
 

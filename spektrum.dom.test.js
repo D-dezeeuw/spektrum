@@ -20,7 +20,12 @@ import spektrum, {
 import { extractExpressions, emitPrecompileSource } from './spektrum-compile.js';
 
 beforeEach(() => {
-  reset();
+  // Silence the "reset() detached N system(s)" warn during cleanup —
+  // bindDOM-driven tests register many systems and don't unsubscribe;
+  // the warn exists for production code, not test teardown.
+  const orig = console.warn;
+  console.warn = () => {};
+  try { reset(); } finally { console.warn = orig; }
   document.body.innerHTML = '';
 });
 
@@ -278,6 +283,54 @@ test('data-model checkbox uses `change` and `el.checked`', () => {
   assert.equal(getPathObj(appState, 'agreed'), true);
 });
 
+test('data-model="path.lazy" does NOT write on input event', () => {
+  document.body.innerHTML = '<input data-model="query.lazy">';
+  setValue('query', '');
+  bindDOM(document.body);
+  tick();
+  const input = document.body.querySelector('input');
+
+  input.value = 'partial';
+  input.dispatchEvent(new Event('input'));
+  tick();
+  // Lazy binding ignores input events — state is still empty.
+  assert.equal(getPathObj(appState, 'query'), '');
+});
+
+test('data-model="path.lazy" writes on change event (blur / Enter)', () => {
+  document.body.innerHTML = '<input data-model="query.lazy">';
+  setValue('query', '');
+  bindDOM(document.body);
+  tick();
+  const input = document.body.querySelector('input');
+
+  input.value = 'committed';
+  input.dispatchEvent(new Event('change'));
+  tick();
+  assert.equal(getPathObj(appState, 'query'), 'committed');
+});
+
+test('data-model="path.lazy" still receives state → element updates', () => {
+  document.body.innerHTML = '<input data-model="query.lazy">';
+  bindDOM(document.body);
+  setValue('query', 'from-state');
+  tick();
+  assert.equal(document.body.querySelector('input').value, 'from-state');
+});
+
+test('data-model="path" without .lazy still fires on input (regression)', () => {
+  document.body.innerHTML = '<input data-model="title">';
+  setValue('title', '');
+  bindDOM(document.body);
+  tick();
+  const input = document.body.querySelector('input');
+
+  input.value = 'live';
+  input.dispatchEvent(new Event('input'));
+  tick();
+  assert.equal(getPathObj(appState, 'title'), 'live');
+});
+
 // === data-ref ===
 
 test('data-ref exposes the element on instance.refs', () => {
@@ -499,6 +552,52 @@ test('data-action="click.once" runs only once', () => {
   btn.click();
   tick();
   assert.equal(getPathObj(appState, 'n'), 1);
+});
+
+// === data-fn handler signature: event as 5th arg ===
+
+test('event-driven data-fn receives the DOM event as the 5th argument', () => {
+  document.body.innerHTML = `
+    <button data-action="click" data-fn="capture" data-id="x">go</button>`;
+  let captured = null;
+  spektrum.defineFn('capture', (el, _s, _d, _v, ev) => { captured = ev; });
+  bindDOM(document.body);
+  tick();
+
+  document.body.querySelector('button').click();
+  assert.ok(captured, 'event arg present');
+  assert.equal(captured.type, 'click');
+  assert.equal(captured.target.tagName, 'BUTTON');
+});
+
+test('cycle data-fn receives undefined as the 5th argument (no DOM event)', () => {
+  document.body.innerHTML = `
+    <span data-action="cycle" data-fn="cycleCheck" data-id="t"></span>`;
+  let argCount = -1;
+  let fifth = 'sentinel';
+  spektrum.defineFn('cycleCheck', function (el, _s, _d, _v, ev) {
+    argCount = arguments.length;
+    fifth = ev;
+  });
+  bindDOM(document.body);
+  setValue('t', 1);
+  tick();
+
+  // cycle handlers are addSystem-driven — no DOM event in scope.
+  assert.equal(fifth, undefined, 'no event arg for cycle action');
+  assert.ok(argCount >= 4, 'first 4 args still passed');
+});
+
+test('event.preventDefault interplay: handler can read defaultPrevented after .prevent runs', () => {
+  document.body.innerHTML = `
+    <a href="#nope" data-action="click.prevent" data-fn="seeEvent" data-id="x">go</a>`;
+  let seen = null;
+  spektrum.defineFn('seeEvent', (_el, _s, _d, _v, ev) => { seen = ev.defaultPrevented; });
+  bindDOM(document.body);
+  tick();
+
+  document.body.querySelector('a').click();
+  assert.equal(seen, true, 'modifier ran before handler; handler observed defaultPrevented');
 });
 
 // === Precompile end-to-end ===

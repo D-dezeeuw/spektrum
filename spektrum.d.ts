@@ -40,7 +40,13 @@ export type BoundFn = (
   el: HTMLElement,
   state: State,
   delta: State,
-  value: any
+  value: any,
+  /**
+   * The DOM event that triggered the handler, when applicable.
+   * Available for `data-action="event[.modifier]*"` bindings;
+   * `undefined` for `data-action="cycle"` (subscription-driven, no event).
+   */
+  event?: Event
 ) => void;
 
 export interface SpektrumOptions {
@@ -138,7 +144,20 @@ export interface Spektrum {
 
   /** Reset state and re-apply the first `n` recorded entries. O(K) when snapshotEvery is set. */
   replay(n: number): void;
-  /** Wipe runtime state, snapshots, refs, and the error handler. Built-in fns survive. */
+  /**
+   * Wipe runtime state, refs, history, snapshots, forks. **Preserves**
+   * registered systems, defineFn entries, and hooks (onError, onRecord,
+   * onFork). Use this from library code that wants to clear state
+   * without nuking the host app's subscriptions.
+   */
+  resetState(): void;
+  /**
+   * Same as `resetState()`, but also clears systems registered via
+   * `addSystem`. Built-in fns and hook registrations survive. Warns
+   * when active systems are present at call time — silent detachment
+   * has bitten users; call `resetState()` instead when you only want
+   * to wipe state.
+   */
   reset(): void;
 }
 
@@ -186,3 +205,4 @@ export const run: Spektrum['run'];
 export const tick: Spektrum['tick'];
 export const replay: Spektrum['replay'];
 export const reset: Spektrum['reset'];
+export const resetState: Spektrum['resetState'];

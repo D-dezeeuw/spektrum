@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-05-06
+
+### Added
+
+- **`event` as the 5th argument to `data-fn` handlers** (proposed-improvements #4). Event-driven `data-action="click"`-style bindings now pass the DOM `Event` to handlers as `(el, state, delta, value, event)`. `data-action="cycle"` passes `undefined` for the 5th arg (no event in scope). Backward-compatible — existing 4-arg handlers ignore the extra parameter. Unlocks `event.target`/`event.submitter`/`event.key`/etc. in `defineFn` handlers without dropping to manual `addEventListener`. Type updated; bundle size unchanged.
+- **`data-model="path.lazy"` modifier** (proposed-improvements #1). Commits element → state on the `change` event instead of `input`. Useful for search boxes and time-travel apps where per-keystroke writes flood `history` and fork it on every edit. State → element direction is unchanged (still updates each tick). Bare `data-model="path"` keeps current behavior. The `.lazy` suffix is reserved; if your state genuinely has a `lazy` leaf, route through `data-action="input"` + `data-fn="setValue"` instead.
+- **`resetState()` method** (proposed-improvements #5). Wipes runtime state — `appState`, `appStateDelta`, `refs`, `history`, `snapshots`, `forks`, the `bindDOM` idempotency tracker — but **preserves** registered systems, `defineFn` entries, and hook registrations. `spektrum/persist`'s `loadHistory` now uses `resetState()` internally (was `reset()`), so app-level systems registered before `loadHistory` survive the load. Fixes a real bug a downstream user hit (hourly-weather): systems silently detached on every reload.
+
+### Changed
+
+- **`reset()` now warns when called with active systems** (proposed-improvements #5). The detach is intentional (`reset()` clears systems by design), but silent detachment had bitten users who assumed it was state-only — most visibly via `loadHistory`. The warn message (`reset() dropped N system(s); see resetState`) points at `resetState()` as the alternative. Suppress in test cleanup by mocking `console.warn` around the call.
+- **`RESERVED` identifier set trimmed** to free ~150B raw / ~70B gzip for the 0.3.6 additions while staying within the 9472/4224 size budget. Dropped: `RegExp`, `Error`, `Map`, `Set`, `Symbol`, `parseInt`, `parseFloat`, `isNaN`, `isFinite`, `encodeURIComponent`, `decodeURIComponent`, `encodeURI`, `decodeURI`. Behavior change is benign: templates referencing these globals still work (`with(state)` falls through to the global scope), they just register a never-firing subscription to a path like `parseInt.something` — the audit's F-12 explicitly classifies this kind of over-subscription as harmless (extra ticks, not wrong output). If a path-extractor over-subscription bites you, register the global on `appState` directly.
+
+### Fixed
+
+- **README sharpened on three documented trade-offs.**
+  - Precompile wording (I-2): added a callout that `precompile()` removes the *runtime* `new Function` requirement (CSP-friendliness) but does **not** change the trust model — `with(state)` and the `constructor.constructor` escape are still reachable in author-written templates.
+  - `data-each` table row (F-15): forward-references the "rewriteScope rewrites string literals" trade-off so authors hit the foot-gun warning at the directive table, not just in the trade-offs section.
+  - `computed` semantics (F-14): added a concrete code example showing the "prior committed value" claim, plus explicit guidance to read computed values from the subscriber's state argument or after `tick()` returns.
+
 ## [0.3.5] — 2026-05-06
 
 ### Changed

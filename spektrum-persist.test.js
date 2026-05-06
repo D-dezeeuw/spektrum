@@ -16,7 +16,12 @@ import spektrum, {
 } from './spektrum.js';
 import { saveHistory, loadHistory, autoSave } from './spektrum-persist.js';
 
-beforeEach(() => reset());
+beforeEach(() => {
+  // Silence the "reset() detached N system(s)" warn during cleanup.
+  const orig = console.warn;
+  console.warn = () => {};
+  try { reset(); } finally { console.warn = orig; }
+});
 
 const fakeStorage = () => {
   const data = new Map();
@@ -79,12 +84,43 @@ test('loadHistory replays a saved history (round-trip)', () => {
   tick();
   const storage = fakeStorage();
   saveHistory(spektrum, { storage });
-  reset();
+
+  // Silence the expected reset-warn here since this test pre-dates
+  // the warn and a non-test caller wouldn't see it.
+  const orig = console.warn;
+  console.warn = () => {};
+  try { reset(); } finally { console.warn = orig; }
   assert.equal(history.length, 0);
 
   loadHistory(spektrum, { storage });
   assert.equal(getPathObj(appState, 'count'), 6);
   assert.equal(history.length, 2);
+});
+
+test('loadHistory preserves systems registered before the load (regression)', () => {
+  // Hourly-weather hit this: addSystem before loadHistory, the system
+  // silently detached on every reload because loadHistory called
+  // reset() which clears systems. Now loadHistory uses resetState().
+  let calls = 0;
+  spektrum.addSystem(['watched'], () => { calls++; });
+
+  // Seed storage with something to load.
+  setValue('watched', 'before-save');
+  tick();
+  const storage = fakeStorage();
+  saveHistory(spektrum, { storage });
+
+  // The user's pre-load system should still fire after loadHistory
+  // replays its entries — that's the whole point of the fix.
+  const beforeLoad = calls;
+  loadHistory(spektrum, { storage });
+  assert.ok(calls > beforeLoad, 'system fired during loadHistory replay');
+
+  // And it should keep firing on subsequent mutations.
+  const afterLoad = calls;
+  setValue('watched', 'post-load');
+  tick();
+  assert.ok(calls > afterLoad, 'system survived loadHistory and still fires');
 });
 
 test('loadHistory returns false when storage is empty / missing', () => {

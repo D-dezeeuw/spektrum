@@ -28,8 +28,17 @@ const SAFE_KEY = (k) => k !== '__proto__' && k !== 'prototype' && k !== 'constru
  * expression evaluates to a string starting with `javascript:`, we
  * rewrite to `#` so a stale path or attacker-influenced value can't
  * smuggle script execution through `<a :href="…">` and friends.
+ *
+ * `srcdoc` is deliberately NOT included — its value is parsed as HTML,
+ * not a URL, so a `javascript:` scheme check would give false
+ * confidence. README documents that `:srcdoc` with untrusted input is
+ * unsafe (same trust caveat as templates).
+ *
+ * `xlink:href` is also out of scope: the engine writes via property
+ * (`el[prop] = v`), not `setAttribute`, and SVG navigation exposes no
+ * `xlink:href` JS property — the binding is effectively dead-letter.
  */
-const URL_PROPS = /^(href|src|action|formaction|srcdoc|background|cite|poster|data)$/i;
+const URL_PROPS = /^(href|src|action|formaction|background|cite|poster|data)$/;
 const JS_SCHEME = /^\s*javascript:/i;
 
 /** Walk a dotted path into `obj`. Returns the leaf value or undefined. */

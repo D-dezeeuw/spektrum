@@ -624,6 +624,28 @@ test('loadHistory rejects non-numeric value on additive trigger op', async () =>
   assert.equal(getPathObj(appState, 'count'), 8, 'string value silently skipped, numeric still applies');
 });
 
+test('loadHistory rejects Infinity on additive trigger op', async () => {
+  // `JSON.parse('1e1000')` overflows to Infinity. An earlier
+  // `typeof === 'number'` check let it through (typeof Infinity is
+  // 'number'); once Infinity lands in an additive sequence it sticks
+  // (Infinity + N = Infinity), so a single poisoned entry corrupts
+  // every subsequent op on that path. Number.isFinite catches it.
+  const { loadHistory } = await import('./spektrum-persist.js');
+  // Build the persisted blob as raw text so we can include 1e1000,
+  // which JSON.parse promotes to Infinity at parse time.
+  const raw = '['
+    + '{"op":"set","path":"count","value":0,"id":"seed"},'
+    + '{"op":"add","path":"count","value":1e1000,"id":"bad-overflow"},'
+    + '{"op":"add","path":"count","value":7,"id":"good"}'
+    + ']';
+  const fake = { getItem: () => raw, setItem() {} };
+  loadHistory(spektrum, { storage: fake });
+  assert.equal(getPathObj(appState, 'count'), 7,
+    'overflow-to-Infinity rejected; finite add still applies');
+  assert.ok(Number.isFinite(getPathObj(appState, 'count')),
+    'count must remain finite after replay');
+});
+
 test('loadHistory caps replay at opts.maxEntries', async () => {
   const { loadHistory } = await import('./spektrum-persist.js');
   const big = Array.from({ length: 50 }, (_, i) => ({

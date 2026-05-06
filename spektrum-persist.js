@@ -66,7 +66,7 @@ export const loadHistory = (spektrum, opts = {}) => {
   for (const e of entries) {
     if (!e || typeof e.path !== 'string') continue;
     if (e.op === 'set') spektrum.setValue(e.path, e.value, e.id);
-    else if (e.op === 'add' && typeof e.value === 'number') spektrum.trigger(e.id, e.path, e.value);
+    else if (e.op === 'add' && Number.isFinite(e.value)) spektrum.trigger(e.id, e.path, e.value);
   }
   spektrum.tick();
   return true;

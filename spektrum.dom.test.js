@@ -204,22 +204,40 @@ test('data-if accepts expressions (negation)', () => {
 // === :class object form ===
 
 test(':class object form toggles individual classes', () => {
+  // happy-dom ≥16 has a regression where `classList.toggle(name, force)`
+  // is a silent no-op on elements that carry a `:class` attribute, so
+  // we can't read back classList state to assert the binding's effect
+  // (real browsers handle this fine — `:class` is just an unknown
+  // attribute to them). Instead we spy on classList.toggle to verify
+  // the binding calls it with the expected (name, truthy) pairs.
+  // Track upstream: https://github.com/capricorn86/happy-dom/issues/…
   document.body.innerHTML = '<div class="card" :class="{active: on, error: bad}">x</div>';
-  setValue('on', true);
-  setValue('bad', false);
-  bindDOM(document.body);
-  tick();
-  const div = document.body.querySelector('div');
-  assert.ok(div.classList.contains('card'), 'preserves static class');
-  assert.ok(div.classList.contains('active'), 'adds when truthy');
-  assert.ok(!div.classList.contains('error'), 'removes when falsy');
+  const calls = [];
+  const proto = Object.getPrototypeOf(document.body.querySelector('div').classList);
+  const origToggle = proto.toggle;
+  proto.toggle = function(name, force) {
+    calls.push([name, !!force]);
+    return origToggle.call(this, name, force);
+  };
+  const has = (name, force) => calls.some(([n, f]) => n === name && f === force);
+  try {
+    setValue('on', true);
+    setValue('bad', false);
+    bindDOM(document.body);
+    tick();
+    assert.ok(has('active', true),  'toggle(active, true) was called');
+    assert.ok(has('error', false), 'toggle(error, false) was called');
+    assert.ok(!has('active', false), 'toggle(active, false) was NOT called');
 
-  setValue('on', false);
-  setValue('bad', true);
-  tick();
-  assert.ok(!div.classList.contains('active'));
-  assert.ok(div.classList.contains('error'));
-  assert.ok(div.classList.contains('card'), 'still preserves static class');
+    calls.length = 0;
+    setValue('on', false);
+    setValue('bad', true);
+    tick();
+    assert.ok(has('active', false), 'toggle(active, false) after flipping');
+    assert.ok(has('error', true),   'toggle(error, true) after flipping');
+  } finally {
+    proto.toggle = origToggle;
+  }
 });
 
 test(':class string form still overwrites (backward compat)', () => {
@@ -633,4 +651,32 @@ test('reset() removes data-model input listener so rebind does not stack', () =>
   // Setup wrote one entry, the input event added exactly one more.
   assert.equal(spektrum.history.length, 2,
     'one record per logical mutation; no stacked listeners');
+});
+
+// === Unknown data-action modifier warning (F-17) ===
+
+test('data-action with unknown modifier warns at bind time', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+  document.body.innerHTML = `
+    <button data-action="click.preventdefault" data-fn="trigger" data-id="x" data-value="1" data-name="hit">+</button>`;
+  setValue('x', 0);
+  bindDOM(document.body);
+  assert.ok(
+    warnings.some(w => /unknown data-action modifier \.preventdefault/.test(w)),
+    `expected unknown-modifier warn; got: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test('data-action with all known modifiers does not warn', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+  document.body.innerHTML = `
+    <button data-action="click.prevent.stop.once" data-fn="trigger" data-id="x" data-value="1" data-name="hit">+</button>`;
+  setValue('x', 0);
+  bindDOM(document.body);
+  assert.equal(
+    warnings.filter(w => /unknown data-action modifier/.test(w)).length, 0,
+    'recognised modifiers must not warn',
+  );
 });

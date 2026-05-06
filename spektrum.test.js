@@ -13,12 +13,20 @@ import assert from 'node:assert/strict';
 import spektrum, {
   appState, appStateDelta, history, forks,
   setValue, trigger, addSystem, removeSystem, computed,
-  tick, replay, reset, onError, onRecord, onFork,
-  getPathObj, precompile,
+  tick, replay, reset, onError, onRecord, onFork, defineFn,
+  getPathObj, setPathValue, precompile,
 } from './spektrum.js';
 import { createSpektrum } from './spektrum.js';
 
-beforeEach(() => reset());
+// Hooks survive reset() (per the documented contract), so we clear
+// them between cases to keep tests self-isolating now that re-setting
+// emits a "handler overwritten" warning.
+beforeEach(() => {
+  reset();
+  onError(null);
+  onRecord(null);
+  onFork(null);
+});
 
 // === Core engine ===
 
@@ -596,3 +604,78 @@ test('deepMerge skips __proto__ on JSON-parsed sources (V8 own-key edge case)', 
 // Persist-module tests live in spektrum-persist.test.js. The F-3 path
 // validation defenses are exercised there alongside saveHistory and
 // autoSave coverage.
+
+// === Tick-overflow routes through onError (F-9) ===
+
+test('tick max-iterations sends an Error to onError when set', (t) => {
+  const seen = [];
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+  onError((err, sysFn) => seen.push({ msg: err.message, sysFn }));
+  // Runaway: every tick the system re-writes its own subscribed path,
+  // so the delta never settles and tick() bails after 1024 iterations.
+  addSystem(['x'], (state, delta) => {
+    setPathValue(delta, 'x', (state.x ?? 0) + 1);
+  });
+  setValue('x', 0);
+  tick();
+  assert.equal(seen.length, 1, 'onError fired exactly once');
+  assert.match(seen[0].msg, /max iterations/);
+  assert.equal(seen[0].sysFn, null, 'sysFn arg is null for tick-overflow');
+  assert.equal(warnings.length, 0, 'no console.warn fallback when handler is set');
+});
+
+test('tick max-iterations falls back to console.warn when no onError', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+  addSystem(['x'], (state, delta) => {
+    setPathValue(delta, 'x', (state.x ?? 0) + 1);
+  });
+  setValue('x', 0);
+  tick();
+  assert.ok(
+    warnings.some(w => /max iterations/.test(w)),
+    `expected warn about max iterations; got: ${JSON.stringify(warnings)}`,
+  );
+});
+
+// === Hook-overwrite warnings (F-16) ===
+
+test('onError warns when overwriting an existing handler', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+  onError(() => {});
+  assert.equal(warnings.length, 0, 'first set is silent');
+  onError(() => {});
+  assert.ok(warnings.some(w => /onError overwritten/.test(w)));
+});
+
+test('onRecord warns when overwriting; onFork too', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+  onRecord(() => {});
+  onRecord(() => {});
+  onFork(() => {});
+  onFork(() => {});
+  assert.ok(warnings.some(w => /onRecord overwritten/.test(w)));
+  assert.ok(warnings.some(w => /onFork overwritten/.test(w)));
+});
+
+test('passing null to clear a hook does not warn', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+  onError(() => {});
+  onError(null);
+  onError(() => {});  // setting after explicit clear: silent
+  assert.equal(warnings.length, 0,
+    `expected no warn after null-clear; got: ${JSON.stringify(warnings)}`);
+});
+
+test('defineFn warns when redefining an existing name', (t) => {
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+  defineFn('myFn', () => {});
+  assert.equal(warnings.length, 0, 'first definition is silent');
+  defineFn('myFn', () => {});
+  assert.ok(warnings.some(w => /defineFn myFn overwritten/.test(w)));
+});

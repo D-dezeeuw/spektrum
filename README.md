@@ -13,7 +13,7 @@ A tiny templating engine with **time-travel built into the primitive**, delibera
 
 - **Time-travel.** Every mutation is recorded. `replay(n)` rebuilds any past state. Scrub a slider through it; ship undo without thinking. The optional `spektrum/devtools` panel renders the scrubber for you in dev.
 - **Auditable.** ~8 kB minified, ~600 lines of actual code, **zero runtime dependencies**, single file. Read it in an afternoon. The ecosystem keeps proving how fragile dependency sprawl is; Spektrum's design follows from that constraint.
-- **Drop-in.** ESM from a `<script type="module">` tag — works in a plain HTML file, a WordPress theme, a browser extension, a CMS code block, an Electron renderer, anywhere you can write HTML. No bundler, no SPA framework, no `npm install` required. Pin a version: `https://unpkg.com/spektrum@0.3.4`.
+- **Drop-in.** ESM from a `<script type="module">` tag — works in a plain HTML file, a WordPress theme, a browser extension, a CMS code block, an Electron renderer, anywhere you can write HTML. No bundler, no SPA framework, no `npm install` required. Pin a version: `https://unpkg.com/spektrum@0.3.5`.
 - **CSP-safe.** Out of the box, expressions compile via `new Function` (same caveat as Vue/Alpine). For deployments behind strict CSP that disable `unsafe-eval`, run `spektrum/compile` at build time — every template expression precompiles into a plain JS module, and the runtime never reaches the `Function` fallback.
 
 The rest is consequences.
@@ -53,7 +53,7 @@ Or load straight from a CDN — no install, no build step:
 <script type="module">
   import { setValue, bindDOM, run } from 'https://unpkg.com/spektrum';
   // pin a specific minified build:
-  // import ... from 'https://unpkg.com/spektrum@0.3.4/spektrum.min.js';
+  // import ... from 'https://unpkg.com/spektrum@0.3.5/spektrum.min.js';
 </script>
 ```
 
@@ -321,5 +321,5 @@ Realistic templates do not approach JS engine stack depth. A pathological templa
 - `replay` without `snapshotEvery` is O(n) per scrub; with snapshots, O(n mod K).
 - `bindDOM` walks every text node for `{{...}}`. One-shot at boot, not a hot path.
 - `tick()` filter is O(systems × paths-per-system) per pass. Fine at small scale; build a path-index if you have hundreds of systems.
-- Tick fan-out is bounded to 1024 iterations; deeper feedback loops log a warning and bail. (Routing this through `onError` is on the roadmap.)
+- Tick fan-out is bounded to 1024 iterations; deeper feedback loops route through `onError` (with `null` for the system arg) and bail. Without an `onError` handler, the fallback is `console.warn`.
 - `historyLimit` caps memory at the cost of unbounded scrubback — replay below the surviving window is undefined.

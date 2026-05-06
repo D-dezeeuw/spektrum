@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] — 2026-05-06
+
+### Changed
+
+- **Tick fan-out overflow now routes through `onError`** (audit finding F-9). When a tick exceeds 1024 iterations (runaway feedback cycle), Spektrum builds an `Error('tick: max iterations exceeded')` and fires it via `onError(err, null)` — the second arg is `null` because there's no specific system to point at. Without a handler, the fallback is still `console.warn`. Lets apps surface the bail to telemetry / dev overlays instead of losing the signal in the console.
+- **Single-handler hooks now warn on overwrite** (audit finding F-16). `onError`, `onRecord`, `onFork`, and `defineFn` previously replaced existing handlers silently — which let `autoSave` quietly steal `onRecord` from the host app. Calling them with a non-null value when the slot is already non-null now logs `[spektrum] <name> overwritten`. Pass `null` first to clear without warning.
+- **Unknown `data-action` modifiers now warn at bind time** (audit finding F-17). `data-action="click.preventdefault"` (typo for `.prevent`) used to fall through silently as a plain click. The bind-time scan now logs `[spektrum] unknown data-action modifier .preventdefault`. Recognised modifiers: `.prevent`, `.stop`, `.once`.
+- **Internal `console.warn` calls factored through a tiny `warn(msg)` helper** that prepends the `[spektrum]` namespace. Cosmetic — removes the duplicated prefix and saves bytes after minification.
+- **Size budget bumped to 9472 raw / 4224 gzip** (was 9216 / 4096) to absorb the four PR3 features cleanly. Bundle is now 9145 raw / 4158 gzip.
+
+### Security
+
+- **Dev dependency bumps** (audit finding F-11). `@happy-dom/global-registrator` `^15.0.0` → `^20.9.0` (closes the VM-context-escape RCE plus two more critical advisories: cookie-origin leak in fetch credentials, ECMAScript module compiler eval injection). `esbuild` `^0.24.0` → `^0.25.0`. `npm audit` now reports zero vulnerabilities. Note: the `:class object form toggles individual classes` test was rewritten to spy on `classList.toggle` calls instead of reading classList state, because happy-dom ≥ 16 has a regression where `classList.toggle(name, force)` is a silent no-op on elements carrying a `:class` attribute (real browsers handle the unknown attribute fine).
+
 ## [0.3.4] — 2026-05-06
 
 ### Changed

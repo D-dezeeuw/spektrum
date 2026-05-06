@@ -15,6 +15,10 @@ const MUSTACHE = /\{\{\s*([^}]+?)\s*\}\}/g;
 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** Namespaced console.warn — every internal warning prefixes
+ *  `[spektrum]`, factoring it out shaves bytes after minification. */
+const warn = (msg) => console.warn('[spektrum] ' + msg);
+
 /**
  * Reject path segments and JSON keys that would touch a prototype slot.
  * Applied at every path-walk and merge site so attacker-controlled
@@ -40,6 +44,11 @@ const SAFE_KEY = (k) => k !== '__proto__' && k !== 'prototype' && k !== 'constru
  */
 const URL_PROPS = /^(href|src|action|formaction|background|cite|poster|data)$/;
 const JS_SCHEME = /^\s*javascript:/i;
+
+/** Recognised data-action modifiers. `data-action="click.preventdefault"`
+ *  was a frequent typo that silently fell off the modifier path; we now
+ *  warn at bind time. Mirrors the inline check in the listener factory. */
+const KNOWN_MODIFIERS = new Set(['prevent', 'stop', 'once']);
 
 /** Walk a dotted path into `obj`. Returns the leaf value or undefined. */
 export const getPathObj = (obj, path) =>
@@ -166,7 +175,7 @@ const evalExpr = (expr) => {
   } catch (err) {
     // CSP that disables `unsafe-eval` lands here. Without a precompiled
     // entry, the binding renders as undefined.
-    console.warn(`[spektrum] invalid expression: "${expr}"`, err);
+    warn('invalid expression: "' + expr + '" ' + err);
     fn = () => undefined;
   }
   cacheSet(expr, fn);
@@ -359,22 +368,21 @@ export const createSpektrum = (opts = {}) => {
     safeFire(recordHandler, 'onRecord', entry);
   };
 
-  /** Install an error handler. Receives (err, systemFn) when a
-   *  subscribed system throws inside tick(). One handler per instance;
-   *  later calls replace earlier. Pass `null` to clear. */
-  const onError = (fn) => { errorHandler = fn; };
-
-  /** Install a post-record hook. Called as `(entry)` after every
-   *  recorded mutation has been applied, snapshotted, and trimmed.
-   *  One handler per instance. Pass `null` to clear. */
-  const onRecord = (fn) => { recordHandler = fn; };
-
-  /** Install a fork hook. Fires when a record() truncates entries
-   *  (mutate-while-scrubbed-back). Receives the just-saved fork
-   *  record `{ entries, forkedAt, ts }`. Descriptive — the truncate
-   *  has already happened by the time this fires; throwing here
-   *  cannot roll it back. One handler per instance. */
-  const onFork = (fn) => { forkHandler = fn; };
+  /** Setters warn when replacing an existing non-null handler — prior
+   *  versions overwrote silently, which let `autoSave` steal `onRecord`
+   *  from the host app. Pass `null` first to clear without warning. */
+  const onError = (fn) => {
+    if (fn != null && errorHandler) warn('onError overwritten');
+    errorHandler = fn;
+  };
+  const onRecord = (fn) => {
+    if (fn != null && recordHandler) warn('onRecord overwritten');
+    recordHandler = fn;
+  };
+  const onFork = (fn) => {
+    if (fn != null && forkHandler) warn('onFork overwritten');
+    forkHandler = fn;
+  };
 
   /** Run one system, routing exceptions through the error handler. */
   const runSystem = (sys) => {
@@ -420,7 +428,10 @@ export const createSpektrum = (opts = {}) => {
   };
 
   /** Register a named handler callable from `data-fn` attributes. */
-  const defineFn = (name, fn) => { fns[name] = fn; };
+  const defineFn = (name, fn) => {
+    if (fns[name]) warn('defineFn ' + name + ' overwritten');
+    fns[name] = fn;
+  };
 
   // --- Tick / lifecycle ---
 
@@ -439,7 +450,8 @@ export const createSpektrum = (opts = {}) => {
     let iterations = 0;
     while (Object.keys(appStateDelta).length > 0) {
       if (iterations++ > 1024) {
-        console.warn('[spektrum] tick: max iterations exceeded, possible feedback cycle');
+        if (errorHandler) safeFire(errorHandler, 'onError', new Error('tick: max iterations exceeded'), null);
+        else warn('tick: max iterations exceeded');
         clearObject(appStateDelta);
         return;
       }
@@ -818,6 +830,9 @@ export const createSpektrum = (opts = {}) => {
         // (preventing form submits, stopping propagation, fire-once)
         // without forcing every author to write a custom data-fn.
         const [eventName, ...modifiers] = action.split('.');
+        for (const m of modifiers) {
+          if (!KNOWN_MODIFIERS.has(m)) warn('unknown data-action modifier .' + m);
+        }
         const mods = new Set(modifiers);
         const listener = (ev) => {
           if (mods.has('prevent')) ev.preventDefault();

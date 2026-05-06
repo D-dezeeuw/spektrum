@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.3] — 2026-05-06
 
+This release bundles the security work originally drafted as 0.3.2 (see below) with the reset-leak fix, the new publish workflow, and the persist/devtools test-coverage push. 0.3.2 has its own CHANGELOG entry below for reference; no tarball was published with that version — its commits flowed into 0.3.3 directly.
+
 ### Fixed
 
 - **`reset()` now drains DOM listeners before clearing state** (audit finding F-5). Previously, `reset()` cleared `appState`, `history`, `systems`, and the `boundRoots` idempotency tracker — but the `input`/`change` listener attached by `data-model` and the click listener attached by `data-action` stayed bound to their elements. A subsequent `bindDOM()` on the same root attached a *second* listener, so one click fired the handler twice; load-bearing for any flow that exercises time-travel or fork-replay. Cleanups now register into an instance-level `Set` that `reset()` drains before wiping state. Calling cleanups twice is safe (`removeEventListener` is idempotent), so existing destroy() callers keep working unchanged.
@@ -37,8 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Tag-only npm publish workflow with `--provenance`** (audit finding F-7). `.github/workflows/publish.yml` triggers on a `v*` tag push, runs `lint` / `test` / `build` / `size` against a clean `npm ci` install, then publishes with `--provenance --access public`. Auth via `NPM_TOKEN` secret; OIDC `id-token: write` enables the provenance attestation independent of publish auth. Restores the supply-chain signal that 0.3.1's "drop CI" change traded away. Manual local checks remain the dev workflow; CI is publish-only.
+- **Test coverage on the optional subpath modules** (audit finding F-10). New `spektrum-persist.test.js` (14 tests covering `saveHistory` / `loadHistory` / `autoSave` round-trip, shape validation, debounce, stop-detach) and `spektrum-devtools.test.js` (11 tests covering `mount`, scrubber → `replay`, live → head, **HTML-escape XSS regression**, truncation, unmount). Coverage on these files went from 78% / 0% line, 33% / 0% function → **100% line and 100% function on both**, with branch coverage ≥ 92%. The 82% per-file coverage bar is now met everywhere.
+- All four security fixes originally drafted as 0.3.2 — see the 0.3.2 entry below for F-1 / F-2 / F-3 / F-4 details. They shipped in this tarball.
 
-## [0.3.2] — 2026-05-06
+## [0.3.2] — 2026-05-06 *(superseded by 0.3.3 — never published as a tarball)*
+
+This entry exists for record-keeping. The audit's plan was to ship security fixes as a focused 0.3.2 patch, then reset-leak + provenance as 0.3.3. We bundled both into 0.3.3 (Path A from the release plan) once we had a working publish workflow, so no `spektrum@0.3.2` tarball ever reached npm. The version skip is intentional and consistent with semver — patch numbers are not required to be contiguous.
 
 ### Security
 

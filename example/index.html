@@ -339,7 +339,7 @@
       -->
       <aside class="forks" data-if="forkSummary && forkSummary.length > 0">
         <h3>discarded futures</h3>
-        <ul data-each="forkSummary" data-as="f">
+        <ul data-each="forkSummary" data-as="f" data-key="f.ts">
           <li>
             <span>{{f.count}} edit{{f.count === 1 ? '' : 's'}} forked</span>
             <button data-action="click" data-fn="restoreFork" data-id="f">restore</button>
@@ -387,7 +387,7 @@
 
       <aside class="forks" data-if="forkSummary && forkSummary.length > 0">
         <h3>discarded futures</h3>
-        <ul data-each="forkSummary" data-as="f">
+        <ul data-each="forkSummary" data-as="f" data-key="f.ts">
           <li>
             <span>{{f.count}} edit{{f.count === 1 ? '' : 's'}} forked</span>
             <button data-action="click" data-fn="restoreFork" data-id="f">restore</button>

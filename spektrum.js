@@ -84,31 +84,17 @@ export const setPathValue = (obj, path, value) => {
   target[last] = value;
 };
 
+// Recursive in-place merge: plain values overwrite, nested objects
+// descend. Sub-path edits on arrays (`setValue('items.1.note', 'x')`)
+// produce sources like `{items: {1: {…}}}`; we merge into the existing
+// array in place rather than replacing it. Whole-array replacement
+// still works because Array sources hit the else branch and overwrite.
 const deepMerge = (target, source) => {
-  /*
-    Recursive in-place merge: plain values overwrite, nested objects
-    descend.
-
-    Sub-path edits on arrays produce a source like `{items: {0: {note:
-    'x'}}}` — the path walker creates plain-object intermediates, even
-    when the target slot is an array. We must merge into the existing
-    array (writing index 0's properties) rather than replacing it.
-    Arrays accept numeric-string property writes the same way objects
-    do, so the recursion is safe; we only reset the slot when the
-    target is a non-object that can't be descended into (primitive or
-    null), which would otherwise throw on property write.
-
-    Whole-array replacement still happens via the else branch when
-    `source[k]` is itself an Array — `setValue('items', newArr)` lays
-    the array directly into the delta and wins over the existing slot.
-  */
   for (const k of Object.keys(source)) {
     if (!SAFE_KEY(k)) continue;
     const v = source[k];
     if (v && typeof v === 'object' && !Array.isArray(v)) {
-      if (target[k] == null || typeof target[k] !== 'object') {
-        target[k] = {};
-      }
+      if (target[k] == null || typeof target[k] !== 'object') target[k] = {};
       deepMerge(target[k], v);
     } else {
       target[k] = v;
@@ -141,20 +127,17 @@ const histId = (el) => el.dataset.name || `${el.dataset.fn}@${el.dataset.id}`;
 const fnVal  = (el, v) => v ?? parseValue(el.value);
 
 // === Expression engine ===
-// Compile-on-first-use, cached by source string. Templates are
-// author-written, so `new Function` is acceptable (same caveat as
-// Vue and Alpine — don't accept untrusted templates). For CSP
-// deployments that disable `unsafe-eval`, pre-register every
-// expression via `precompile()` from a build step — `new Function`
-// then never runs (the cache hits first).
+// Compile-on-first-use, cached by source string. Templates are author-
+// written (same trust model as Vue/Alpine). For strict CSP, register
+// every expression via `precompile()` at build time — `new Function`
+// is then never reached.
 
 const EVAL_CACHE_LIMIT = 500;
 const evalCache = new Map();
 
+// FIFO eviction (Map preserves insertion order) bounds memory for
+// long-running pages that mint many distinct expressions.
 const cacheSet = (k, v) => {
-  // FIFO eviction — Map preserves insertion order. Bounds memory for
-  // long-running pages that mint many distinct expressions (e.g.
-  // dynamic per-row strings inside a frequently rebuilt data-each).
   if (evalCache.size >= EVAL_CACHE_LIMIT) {
     evalCache.delete(evalCache.keys().next().value);
   }
@@ -165,16 +148,14 @@ const evalExpr = (expr) => {
   let fn = evalCache.get(expr);
   if (fn) return fn;
   try {
-    // Dotted-numeric segments (e.g. `users.0.name`, the form bindEach
-    // produces) → bracket notation (`users[0].name`) so JS can parse.
+    // Dotted-numeric segments (`users.0.name` from bindEach) → bracket
+    // notation so JS can parse. Inner try/catch so paths not yet in
+    // state render as undefined instead of throwing.
     const normalized = expr.replace(/([a-zA-Z_$][\w$]*)\.(\d+)/g, '$1[$2]');
     const compiled = new Function('state', `with (state) { return (${normalized}); }`);
-    // Runtime try/catch so references to paths not yet in state (e.g.
-    // before the first tick) render as undefined instead of throwing.
     fn = (state) => { try { return compiled(state); } catch { return undefined; } };
   } catch (err) {
-    // CSP that disables `unsafe-eval` lands here. Without a precompiled
-    // entry, the binding renders as undefined.
+    // Strict CSP without a precompiled entry, or malformed expression.
     warn('invalid expression: "' + expr + '" ' + err);
     fn = () => undefined;
   }
@@ -182,13 +163,9 @@ const evalExpr = (expr) => {
   return fn;
 };
 
-/**
- * Register a precompiled expression function. Build-time tooling
- * walks templates, emits one `precompile(source, fn)` call per unique
- * expression, and ships those calls in a sibling module loaded
- * before `bindDOM`. With every expression precompiled, the runtime
- * never reaches the `new Function` fallback — safe under strict CSP.
- */
+/** Register a precompiled expression function. Build-time tooling
+ *  emits one call per unique expression so the runtime cache hits
+ *  before `new Function` runs (CSP-friendly). */
 export const precompile = (source, fn) => cacheSet(source, fn);
 
 // Lookbehind excludes identifiers preceded by `.` or `\w` so
@@ -208,12 +185,16 @@ const RESERVED = new Set([
 ]);
 
 /** Pull subscription paths out of an expression. Reserved-word heads
- *  (Math, JSON, true, ...) are filtered. False positives from string
- *  literals or bracket access are harmless (subscriptions to
- *  non-existent paths just never fire). */
+ *  (Math, JSON, true, ...) are filtered. String literals are stripped
+ *  before scanning so identifiers inside quotes (e.g. `kind === 'foo'`)
+ *  don't leak into the path set as spurious subscriptions. The strip
+ *  regex is crude: it doesn't honour `\"` escapes — at worst the
+ *  prior over-subscription behavior returns, which is benign (extra
+ *  ticks, never wrong output). */
 const extractPaths = (expr) => {
   const paths = new Set();
-  for (const m of expr.matchAll(IDENT)) {
+  const stripped = expr.replace(/"[^"]*"|'[^']*'|`[^`]*`/g, '""');
+  for (const m of stripped.matchAll(IDENT)) {
     const id = m[1];
     if (RESERVED.has(id.split('.')[0])) continue;
     paths.add(id);
@@ -234,12 +215,16 @@ const applyClass = (el, v) => {
 
 // Hand-written walker — happy-dom's TreeWalker silently returns no
 // nodes for SHOW_TEXT filters even when text descendants exist.
+// Iterative (explicit stack) so pathological depths can't blow the
+// JS engine call stack. Push in reverse so visit() order matches the
+// recursive form (left-to-right depth-first).
 const walkTextNodes = (root, visit) => {
-  if (root.nodeType === 3) {
-    visit(root);
-    return;
+  const stack = [root];
+  while (stack.length) {
+    const n = stack.pop();
+    if (n.nodeType === 3) visit(n);
+    else for (let i = n.childNodes.length; i--;) stack.push(n.childNodes[i]);
   }
-  for (const child of root.childNodes) walkTextNodes(child, visit);
 };
 
 // === Factory ===
@@ -313,20 +298,16 @@ export const createSpektrum = (opts = {}) => {
     if (!isPath(appState, path)) createNestedObjects(appState, path);
   };
 
-  /** Dispatch a recorded entry into the delta. Checkpoints are
-   *  pure markers — no state effect, no fan-out — so replay walks
-   *  past them unchanged. */
+  /** Dispatch a recorded entry into the delta. Checkpoints are pure
+   *  markers — no state effect, no fan-out — so replay walks past
+   *  them unchanged. Add-ops accumulate on top of the most-recent
+   *  numeric value (delta first, then state, else 0). */
   const applyEntry = (e) => {
     if (e.op === 'checkpoint') return;
     checkPath(e.path);
-    if (e.op === 'set') {
-      setPathValue(appStateDelta, e.path, e.value);
-    } else {
-      const dC = getPathObj(appStateDelta, e.path);
-      const sC = getPathObj(appState, e.path);
-      const base = typeof dC === 'number' ? dC : (typeof sC === 'number' ? sC : 0);
-      setPathValue(appStateDelta, e.path, base + e.value);
-    }
+    if (e.op === 'set') return setPathValue(appStateDelta, e.path, e.value);
+    const cur = getPathObj(appStateDelta, e.path) ?? getPathObj(appState, e.path);
+    setPathValue(appStateDelta, e.path, (typeof cur === 'number' ? cur : 0) + e.value);
   };
 
   /** Apply an entry, push to history, advance cursor. Truncates the
@@ -334,14 +315,11 @@ export const createSpektrum = (opts = {}) => {
    *  `forks` so apps can warn or restore. */
   const record = (entry) => {
     if (cursor < history.length) {
-      // Capture the about-to-be-discarded tail before mutating
-      // history. Each fork is a plain HistoryEntry[] (no new types),
-      // tagged with the cursor it forked from and a wall-clock ts so
-      // a UI can show "X future edits discarded N seconds ago".
+      // Mutate-while-scrubbed-back: capture the dropped tail on `forks`
+      // so apps can warn or restore. Snapshots ahead of cursor are
+      // invalid (state was derived from entries we just truncated).
       const dropped = history.slice(cursor);
       history.length = cursor;
-      // Snapshots ahead of cursor are now invalid (their state was
-      // post-truncated entries that no longer exist).
       while (snapshots.length && snapshots[snapshots.length - 1].index > cursor) {
         snapshots.pop();
       }
@@ -356,22 +334,22 @@ export const createSpektrum = (opts = {}) => {
     history.push(entry);
     cursor = history.length;
     if (snapshotEvery && history.length % snapshotEvery === 0) {
-      // Snapshot AFTER tick would be cleaner but record() is pre-tick;
-      // capture state ⊕ delta so the snapshot reflects what replay()
-      // will land on at this index.
+      // record() is pre-tick; capture state ⊕ delta so the snapshot
+      // reflects what replay() will land on at this index.
       snapshots.push({ index: history.length, state: stateSnapshot() });
     }
     if (historyLimit && history.length > historyLimit) {
-      const drop = history.length - historyLimit;
+      // Amortize splice cost: drop chunk = max(1, limit/16) at a time,
+      // so length oscillates within a chunk-sized window. Caps ≤16 keep
+      // chunk = 1 (trim to exact limit; pre-F-13 behavior).
+      const chunk = Math.max(1, historyLimit >>> 4);
+      const drop = history.length - historyLimit + chunk - 1;
       history.splice(0, drop);
       cursor = Math.max(0, cursor - drop);
       while (snapshots.length && snapshots[0].index <= drop) snapshots.shift();
       for (const s of snapshots) s.index -= drop;
     }
-    // After-record hook for cross-cutting concerns (persistence,
-    // telemetry, devtools). Fires synchronously, after trim, with the
-    // full entry. Does NOT fire during replay() — replay re-applies
-    // entries without re-recording them.
+    // Does NOT fire during replay() — replay re-applies without re-recording.
     safeFire(recordHandler, 'onRecord', entry);
   };
 
@@ -412,25 +390,15 @@ export const createSpektrum = (opts = {}) => {
     record({ id: id || `set:${path}`, path, value, op: 'set' });
   };
 
-  /** Record a tagged checkpoint into history. Pure marker — replay
-   *  walks past it without touching state. Use to mark "logically
-   *  atomic" boundaries (a search completes, a form submits, a
-   *  multi-step wizard finishes a step) so the app can replay to
-   *  the *end* of that span without inventing a sentinel pattern.
-   *
-   *  `name` becomes the entry's `id`; `metadata` becomes its `value`.
-   *  Fires `onRecord` (so `autoSave` catches it). The companion
-   *  `checkpoints` getter returns each checkpoint entry augmented
-   *  with its `index` in history, so replay-to-checkpoint is one line:
-   *    spektrum.replay(spektrum.checkpoints.find(c => c.id === name).index + 1)
-   *  (the +1 lands at the position *after* the checkpoint). */
+  /** Tagged history marker. No state effect on replay; fires onRecord
+   *  so autoSave catches it. See README "Checkpoints" for the replay
+   *  recipe. */
   const checkpoint = (name, metadata) => {
     record({ id: name, path: '', value: metadata, op: 'checkpoint' });
   };
 
-  /** Filtered view: every checkpoint entry plus its history index.
-   *  Allocates on read — fine at typical checkpoint counts (tens to
-   *  hundreds). For hot paths, walk `history` directly. */
+  /** Filtered view of `history`: checkpoint entries plus their index.
+   *  Allocates on read — fine at typical counts. */
   const checkpointsOf = () => {
     const out = [];
     for (let i = 0; i < history.length; i++) {
@@ -509,20 +477,10 @@ export const createSpektrum = (opts = {}) => {
   };
 
   /** Wipe runtime state, refs, history, snapshots, forks, and the
-   *  bindDOM idempotency tracker. **Preserves** registered systems,
-   *  defineFn entries, and hook registrations (onError, onRecord,
-   *  onFork) — those are configuration, not state. Use this from
-   *  library code (e.g. spektrum/persist) that wants to load a fresh
-   *  history without nuking the host app's subscriptions.
-   *
-   *  Cleanups (DOM listeners, system unsubs registered by bindDOM)
-   *  are still drained — they're tied to the DOM that's now gone. */
+   *  bindDOM idempotency tracker. **Preserves** systems, defineFn
+   *  entries, and hooks — those are configuration. Cleanups are
+   *  drained first so re-binding the same root doesn't stack listeners. */
   const resetState = () => {
-    // Tear down DOM listeners and other registered cleanups first, so a
-    // subsequent bindDOM(sameRoot) doesn't stack listeners on top of
-    // the prior bind. Cleanups are idempotent (removeEventListener is
-    // a no-op for an already-removed handler), so even if a caller has
-    // already invoked destroy() the second pass is harmless.
     for (const c of allCleanups) c();
     allCleanups.clear();
     clearObject(appState);
@@ -536,33 +494,19 @@ export const createSpektrum = (opts = {}) => {
     replaying = false;
   };
 
-  /** Same as `resetState()`, but also clears app-level systems
-   *  registered via `addSystem`. Built-in fns survive. Hook
-   *  registrations (onError, onRecord, onFork) survive — clear them
-   *  explicitly with onError(null) / onRecord(null) / onFork(null).
-   *
-   *  Warns if active systems are present at call time — silently
-   *  detaching subscriptions has bitten users who assumed reset()
-   *  was state-only. Call `resetState()` instead when you only want
-   *  to wipe state. */
+  /** Like `resetState()` but also clears systems. Hooks and built-in
+   *  fns survive. Warns when active systems are present — silent
+   *  detach has bitten users; call `resetState()` for state-only. */
   const reset = () => {
     if (systems.length) warn(`reset() dropped ${systems.length} system(s); see resetState`);
     resetState();
     systems.length = 0;
   };
 
-  /**
-   * Reset state and re-apply the first `n` recorded entries. O(n).
-   * History is preserved — scrub forward and back at will. A new
-   * trigger while scrubbed truncates the future.
-   *
-   * For step-back undo, drive from `cursor` (the live playback
-   * position), NOT `history.length`. history doesn't shrink on
-   * replay, so `replay(history.length - 1)` lands at the same spot
-   * every time. Correct pattern:
-   *
-   *     defineFn('undo', () => replay(Math.max(seedCount, cursor - 1)));
-   */
+  /** Reset state and re-apply the first `n` recorded entries. O(n)
+   *  without snapshots, O(n mod K) with `snapshotEvery: K`. For
+   *  step-back undo, drive from `cursor` (live position), not
+   *  `history.length` — replay doesn't shrink history. */
   const replay = (n) => {
     n = Math.max(0, Math.min(n, history.length));
     replaying = true;
@@ -570,9 +514,7 @@ export const createSpektrum = (opts = {}) => {
     clearObject(appState);
     clearObject(appStateDelta);
 
-    // Skip ahead to the latest snapshot ≤ n, if any. Snapshots are
-    // captured every `snapshotEvery` entries, so this turns O(n)
-    // replay into O(n mod K) for long histories.
+    // Skip ahead to the latest snapshot ≤ n.
     let startIdx = 0;
     for (let i = snapshots.length - 1; i >= 0; i--) {
       if (snapshots[i].index <= n) {
@@ -589,16 +531,11 @@ export const createSpektrum = (opts = {}) => {
       tick();
     }
 
-    // Replay-completion refresh: re-fire every system once against
-    // the final state. Without this, a path that *was* in state
-    // before the scrub but is *absent* afterward (because no replayed
-    // entry touches it) leaves its bound systems stuck rendering
-    // stale data — most visibly, scrubbing back past a `data-each`
-    // populate leaves the rendered rows in the DOM, with their
-    // `data-model` listeners still wired. Force-firing here puts
-    // every binding in sync with the new state. The `replaying` flag
-    // stays true so user systems can opt out of replay-time side
-    // effects (e.g. analytics, network calls).
+    // Re-fire every system against the final state. Without this,
+    // paths that left state during the scrub leave their bindings
+    // rendering stale data (e.g. data-each rows lingering in the DOM
+    // after replay back past a populate). `replaying` stays true so
+    // user systems can opt out of replay-time side effects.
     for (const sys of systems) runSystem(sys);
 
     replaying = false;
@@ -736,35 +673,10 @@ export const createSpektrum = (opts = {}) => {
     }
   };
 
-  /**
-   * data-each="arrayPath" data-as="varName" [data-key="expr"]
-   *                                         [data-stable-key].
-   *
-   * First child is captured as a template and detached. On change:
-   *
-   *   - Without data-key: full rebuild (every clone is destroyed and
-   *     re-bound). Backward-compatible, fine for ~100 read-only items.
-   *
-   *   - With data-key: keyed reconciliation. The key expression is
-   *     evaluated per item with `varName` in scope (e.g.
-   *     data-key="item.id"). Items whose key + index are unchanged
-   *     are left in place — their bindings, listeners, focus, and
-   *     selection survive. Items at a new index re-bind by default
-   *     (paths inside the clone were baked at clone time and need
-   *     re-baking for the new index). Removed keys are cleaned up.
-   *
-   *   - With data-key + data-stable-key (presence-flag): skip path
-   *     rewriting on the cloned subtree, and reuse the *same* clone
-   *     across reorder via insertBefore. Author opts in by promising
-   *     the row's bindings don't reference `varName.*` paths — e.g.
-   *     they read outer-scope state, or render pure presentation.
-   *     Bind-time scan warns if the template *does* reference the
-   *     loop variable (the foot-gun case). When the promise holds,
-   *     reorder is genuinely free of UX cost (focus, scroll, input
-   *     value, selection survive moves).
-   *
-   * Each clone gets `contain: layout style` for perf isolation.
-   */
+  /** data-each list rendering. Three modes (no-key / keyed / keyed +
+   *  stable-key) are documented in the README directive table and the
+   *  "Known trade-offs" section. Per-clone `contain: layout style` is
+   *  set for perf isolation. */
   const bindEach = (el) => {
     const arrayPath = el.dataset.each;
     if (!arrayPath) return;
@@ -960,13 +872,8 @@ export const createSpektrum = (opts = {}) => {
     };
   };
 
-  /** Serialize a portable snapshot of the instance for SSR injection,
-   *  hydration, debug captures, or off-engine inspection. By default
-   *  includes `state`, `history`, and `cursor` so a fresh instance
-   *  can `loadHistory` it back to the same point. Pass
-   *  `{ includeHistory: false }` for a state-only snapshot;
-   *  `{ includeForks: true }` to also include preserved fork tails
-   *  (debug only — forks aren't replay-restored by loadHistory). */
+  /** Portable JSON snapshot. Default: state + history + cursor (replay-
+   *  able via loadHistory). See README "Serializing state" for opts. */
   const serialize = (opts = {}) => {
     const out = { state: appState };
     if (opts.includeHistory !== false) { out.history = history; out.cursor = cursor; }

@@ -526,6 +526,37 @@ test('historyLimit caps history.length and shifts cursor', () => {
   assert.equal(getPathObj(a.appState, 'x'), 5);
 });
 
+test('historyLimit amortizes trim with a chunk for caps > 16', () => {
+  // F-13: chunk = max(1, historyLimit >>> 4). For historyLimit=64,
+  // chunk=4. After overflow, length drops to historyLimit - chunk + 1
+  // (= 61) instead of exactly historyLimit. The next chunk pushes
+  // grow it back; trim fires once per chunk pushes instead of once
+  // per push. Per-record cost amortizes to O(historyLimit / chunk).
+  // Observable: history.length stays in [historyLimit - chunk + 1,
+  // historyLimit] across heavy mutation.
+  const a = createSpektrum({ historyLimit: 64 });
+  for (let i = 0; i < 200; i++) a.setValue('x', i);
+  a.tick();
+  assert.ok(a.history.length >= 61,
+    `expected length ≥ 61 (= 64 - chunk + 1), got ${a.history.length}`);
+  assert.ok(a.history.length <= 64,
+    `expected length ≤ 64, got ${a.history.length}`);
+  // Latest write still applied.
+  assert.equal(getPathObj(a.appState, 'x'), 199);
+  // Cursor follows the trim — replay(cursor) is the live state.
+  assert.equal(a.cursor, a.history.length);
+});
+
+test('historyLimit ≤ 16 keeps the trim-on-every-overflow behavior (chunk=1)', () => {
+  // For caps where historyLimit >>> 4 === 0, chunk = max(1, 0) = 1,
+  // so behavior is identical to pre-F-13 — trim down to exactly the
+  // limit on every overflow. Documents the boundary.
+  const a = createSpektrum({ historyLimit: 8 });
+  for (let i = 0; i < 20; i++) a.setValue('x', i);
+  a.tick();
+  assert.equal(a.history.length, 8, 'small caps still trim to exact limit');
+});
+
 test('snapshotEvery captures snapshots for fast replay', () => {
   const a = createSpektrum({ snapshotEvery: 5 });
   for (let i = 1; i <= 12; i++) a.setValue('x', i);

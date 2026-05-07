@@ -947,6 +947,62 @@ test('data-action with all known modifiers does not warn', (t) => {
   );
 });
 
+// === Path extraction (F-12) ===
+
+test('identifiers inside string literals are not registered as dependencies', () => {
+  // Before F-12: `kind === 'foo' ? 'a' : 'b'` would subscribe to
+  // `kind`, `foo`, `a`, AND `b` — extra ticks for any setValue on those
+  // names. After F-12: only `kind` is a real dep. We use `:class` so
+  // the sentinel-overwrite trick works (text-node bindings replace
+  // textContent which detaches the bound node).
+  document.body.innerHTML = `<div :class="kind === 'foo' ? 'a' : 'b'"></div>`;
+  setValue('kind', 'bar');
+  bindDOM(document.body);
+  tick();
+  const div = document.body.querySelector('div');
+  assert.equal(div.className, 'b', 'initial render');
+
+  // Mutate `foo` (a string literal in the expression). If F-12 stripped
+  // the literal, `foo` is NOT a subscribed dep and no re-evaluation
+  // fires. Sentinel survives.
+  div.className = 'sentinel';
+  setValue('foo', 'something');
+  tick();
+  assert.equal(div.className, 'sentinel',
+    'binding did not re-fire — `foo` is a literal, not a subscribed dep');
+
+  setValue('a', 'something-else');
+  tick();
+  assert.equal(div.className, 'sentinel',
+    'binding did not re-fire — `a` is a literal, not a subscribed dep');
+
+  // The real dep DOES retrigger.
+  setValue('kind', 'foo');
+  tick();
+  assert.equal(div.className, 'a', 'binding re-fires on real dep change');
+});
+
+// === walkTextNodes iterative walker (F-18) ===
+
+test('walkTextNodes handles deeply-nested templates without stack overflow', () => {
+  // Build 500-deep nested DOM with an interpolation at every level.
+  // Recursive walker would consume 500+ stack frames; iterative walker
+  // uses an explicit Array stack and handles arbitrary depth. 500 is
+  // well past anything realistic but cheap for happy-dom to construct.
+  const depth = 500;
+  let html = '';
+  for (let i = 0; i < depth; i++) html += '<div>{{n}}';
+  for (let i = 0; i < depth; i++) html += '</div>';
+  document.body.innerHTML = html;
+  setValue('n', 42);
+  // Should not throw — exercise the iterative walk.
+  bindDOM(document.body);
+  tick();
+  // Every nested level should have rendered the interpolated value.
+  const matches = document.body.textContent.match(/42/g);
+  assert.equal(matches.length, depth, 'every nested level rendered');
+});
+
 // === Built-in data-fn handlers (setText, setStyle, toggle) ===
 
 test('built-in data-fn "setValue" sets state from element value on event', () => {

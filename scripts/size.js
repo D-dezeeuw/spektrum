@@ -9,16 +9,17 @@
   transitive-dep tail dozens deep. zlib is built into Node.
 
   Tune the caps below as the surface area grows. Today the engine
-  prints around 9.8 kB raw / 4.5 kB gzipped; caps were bumped to
-  10240 / 4608 in 0.4.0 to absorb checkpoint() + checkpoints, the
-  data-stable-key opt-in for keyed data-each, the append/pop tail
-  diff for non-keyed data-each, structured onError (err.code), and
-  serialize(). RESERVED set + KNOWN_MODIFIERS were trimmed beforehand
-  to soak up ~170 B raw before the bump landed. The two list-rendering
-  features (data-stable-key, append/pop diff) cost ~3× their planned
-  estimate — the prefix-scan + dev-mode foot-gun warn + clone-reuse
-  bookkeeping are real. Adjust caps deliberately — every bump invites
-  complacency. Trim before raising.
+  prints around 9.9 kB raw / 4.5 kB gzipped; caps were bumped to
+  10240 / 4672 across 0.4.0 + 0.4.1: 0.4.0 added checkpoint() +
+  checkpoints, data-stable-key, append/pop tail diff, structured
+  onError, and serialize() (raw 10240, gz 4608). 0.4.1's audit-Low
+  cleanups (F-12 literal-stripping in extractPaths, F-13 amortized
+  history trim, F-18 iterative walkTextNodes) needed +64 B gzip
+  on top — three small additions whose collective cost crossed the
+  4608 ceiling by ~30 B. Trims tried first: walkTextNodes inlined
+  childNodes access, F-12 regex inlined into extractPaths. Adjust
+  caps deliberately — every bump invites complacency. Trim before
+  raising.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -30,7 +31,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js', raw: 10240, gz: 4608 },
+  { file: 'spektrum.min.js', raw: 10240, gz: 4672 },
 ];
 
 let failed = false;

@@ -225,6 +225,41 @@
     padding: 6px 12px;
   }
 
+  .forks {
+    margin-top: 12px;
+    padding: 8px 12px;
+    border: 1px dashed var(--line);
+    border-radius: 4px;
+    background: rgba(252, 211, 77, 0.04);
+  }
+  .forks h3 {
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    color: #a16207;
+    margin: 0 0 6px;
+    font-weight: normal;
+    text-transform: uppercase;
+  }
+  .forks ul { list-style: none; padding: 0; margin: 0; }
+  .forks li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 3px 0;
+  }
+  .forks li button {
+    width: auto;
+    font-size: 10px;
+    padding: 3px 10px;
+    color: #a16207;
+    border-color: rgba(252, 211, 77, 0.3);
+  }
+  .forks li button:hover:not(:disabled) {
+    background: rgba(252, 211, 77, 0.15);
+  }
+
   footer {
     padding: 16px 24px 32px;
     text-align: center;
@@ -289,12 +324,28 @@
         <button data-action="click" data-fn="trigger" data-id="count" data-value="10" data-name="inc10">+10</button>
       </div>
 
-      <input class="set" type="number" step="1" data-model="count"
-             aria-label="set count directly" placeholder="set directly">
+      <input class="set" type="number" step="1" data-model="count.lazy"
+             aria-label="set count directly" placeholder="set directly (commits on blur)">
 
       <button class="undo"
               data-action="click" data-fn="undo"
               :disabled="atSeed">↶ undo</button>
+
+      <!--
+        Forks: when you scrub back and then mutate, the future-tail
+        gets dropped onto spektrum.forks. The onFork hook mirrors a
+        compact summary into delta so this list re-renders reactively.
+        Click "restore" to re-apply the dropped entries.
+      -->
+      <aside class="forks" data-if="forkSummary && forkSummary.length > 0">
+        <h3>discarded futures</h3>
+        <ul data-each="forkSummary" data-as="f">
+          <li>
+            <span>{{f.count}} edit{{f.count === 1 ? '' : 's'}} forked</span>
+            <button data-action="click" data-fn="restoreFork" data-id="f">restore</button>
+          </li>
+        </ul>
+      </aside>
     </section>
 
     <section id="basket" class="panel">
@@ -319,7 +370,7 @@
       <ul class="items" data-each="items" data-as="item" data-key="item.id">
         <li data-if="!filter || item.label.includes(filter)">
           <span class="label">{{item.label}}</span>
-          <input class="note" type="text" data-model="item.note" placeholder="note…">
+          <input class="note" type="text" data-model="item.note.lazy" placeholder="note…">
           <button class="remove" data-action="click.stop" data-fn="removeAt" data-id="item"
                   aria-label="remove" title="remove">×</button>
         </li>
@@ -333,6 +384,16 @@
                 data-action="click" data-fn="undo"
                 :disabled="atSeed">↶ undo</button>
       </div>
+
+      <aside class="forks" data-if="forkSummary && forkSummary.length > 0">
+        <h3>discarded futures</h3>
+        <ul data-each="forkSummary" data-as="f">
+          <li>
+            <span>{{f.count}} edit{{f.count === 1 ? '' : 's'}} forked</span>
+            <button data-action="click" data-fn="restoreFork" data-id="f">restore</button>
+          </li>
+        </ul>
+      </aside>
     </section>
   </main>
 

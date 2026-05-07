@@ -39,25 +39,62 @@ loadHistory(counter, { key: counterKey });
 
 // Defaults are *state*, not actions — they describe the world before
 // any user input. Direct-mutating appState writes them without going
-// through record(), so they don't pollute history. Without this the
-// devtools scrubber would show "set count to 0" as the first
-// scrubbable point even though the user never took that action.
+// through record(), so they don't pollute history. The same function
+// runs as a system below so replay() (which clears appState) re-applies
+// the defaults — scrubbing all the way back lands at "count: 0".
 //
-// The same function runs as a system below so replay() (which clears
-// appState) re-applies the defaults — scrubbing all the way back
-// lands at "count: 0" rather than blank state. The replay-completion
-// refresh fires every system regardless of delta, which is what makes
-// this work.
-const seedCounter = (state) => {
+// `atSeed` is reactive (depends on cursor), so it goes through the
+// DELTA — direct-mutating it would bypass fan-out and the bindings on
+// `:disabled="atSeed"` would never re-evaluate on a normal click.
+// Replay refreshes every system regardless of delta, which is why
+// scrubbing covers up that mistake — but a click between two replay
+// boundaries wouldn't, hence the delta write here.
+const seedCounter = (state, delta) => {
   state.count ??= 0;
-  state.atSeed = counter.cursor === 0;
+  delta.atSeed = counter.cursor === 0;
 };
-seedCounter(counter.appState);
+seedCounter(counter.appState, counter.appStateDelta);
 counter.addSystem(['count'], seedCounter);
 
 counter.defineFn('undo', () => {
   counter.replay(Math.max(0, counter.cursor - 1));
 });
+
+// Forks visualization. The onFork hook mirrors a compact summary into
+// the delta so the data-each binding fans out and re-renders. We don't
+// store the forks themselves in state — they live on instance.forks
+// (engine-managed, NOT serialized by saveHistory) and we look them up
+// by index when restoring.
+const mirrorForks = (instance) => {
+  instance.appStateDelta.forkSummary = instance.forks.map(f => ({
+    count: f.entries.length,
+    ts: f.ts,
+  }));
+};
+counter.onFork(() => mirrorForks(counter));
+
+// restoreFork: rewind to where the fork was discarded, then re-apply
+// its entries. Any diverging history past forkedAt becomes a NEW fork,
+// so the user's "wrong turn" gets preserved exactly once and the
+// original future is back. data-id="f" is rewritten by data-each to
+// "forkSummary.<i>" per row — the index is the last segment.
+const restoreFork = (instance) => (el) => {
+  const idx = Number(el.dataset.id.split('.').pop());
+  const fork = instance.forks[idx];
+  if (!fork) return;
+  instance.replay(fork.forkedAt);
+  for (const e of fork.entries) {
+    if (e.op === 'set') instance.setValue(e.path, e.value, e.id);
+    else if (e.op === 'add') instance.trigger(e.id, e.path, e.value);
+    else if (e.op === 'checkpoint') instance.checkpoint(e.id, e.value);
+  }
+  // Consumed: drop from the engine's forks array AND update the delta
+  // mirror so the restored row disappears immediately. (The new fork
+  // captured from the diverging tail stays — user can restore it later.)
+  instance.forks.splice(idx, 1);
+  mirrorForks(instance);
+};
+counter.defineFn('restoreFork', restoreFork(counter));
 
 counter.bindDOM(document.getElementById('counter'));
 counter.run();
@@ -80,15 +117,14 @@ for (const it of basket.appState.items || []) {
   if (it && it.id >= nextId) nextId = it.id + 1;
 }
 
-// Same pattern as counter: direct-mutate defaults so they don't
-// record, and re-apply via addSystem so replay() lands somewhere
-// sensible.
-const seedBasket = (state) => {
+// Same pattern as counter: direct-mutate defaults (no history), but
+// route the reactive `atSeed` through the delta so bindings fan out.
+const seedBasket = (state, delta) => {
   state.items ??= [];
   state.filter ??= '';
-  state.atSeed = basket.cursor === 0;
+  delta.atSeed = basket.cursor === 0;
 };
-seedBasket(basket.appState);
+seedBasket(basket.appState, basket.appStateDelta);
 basket.addSystem(['items', 'filter'], seedBasket);
 
 // addKind: append a new {id, label, note}. Reads delta first (in
@@ -123,6 +159,9 @@ basket.defineFn('removeAt', (el, state, delta) => {
 basket.defineFn('undo', () => {
   basket.replay(Math.max(0, basket.cursor - 1));
 });
+
+basket.onFork(() => mirrorForks(basket));
+basket.defineFn('restoreFork', restoreFork(basket));
 
 // resetAll: footer link uses data-action="click.prevent" so the
 // `<a href="#">` doesn't navigate. Clear both stores and reload —

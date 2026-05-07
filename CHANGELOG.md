@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-05-06
+
+### Changed
+
+- **`extractPaths` strips string literals before identifier scanning** (audit finding F-12). An expression like `kind === 'foo' ? 'a' : 'b'` previously registered `kind`, `foo`, `a`, AND `b` as watched dependencies — harmless (extra ticks, never wrong output) but noisy on subscriber-counting telemetry. Now only `kind` is registered. The strip is a single regex pass over double-quoted, single-quoted, and template-literal contents (replaced with empty string literals before identifier matching). Crude: `\"` escapes inside a literal aren't honored — at worst, prior over-subscription returns for pathological input. Both modes are benign.
+- **`history` trim is now amortized** via a chunk-based drop step (audit finding F-13). When `historyLimit` is set and overflow happens, we drop `chunk = max(1, historyLimit >>> 4)` entries at a time instead of trimming exactly to `historyLimit`. Per-record overflow cost amortizes from `O(historyLimit)` to `O(historyLimit / chunk)`. **Behavior unchanged for `historyLimit ≤ 16`** (chunk = 1 → trim to exact limit on every overflow). For larger caps, `history.length` lands at `historyLimit - chunk + 1` after each trim and grows back to `historyLimit` over `chunk` pushes — the exact length now oscillates within a `chunk`-sized window. Cursor and snapshot indices follow the trim. The cap remains a hard ceiling: `history.length` never exceeds `historyLimit`.
+- **`walkTextNodes` is now iterative** with an explicit `Array` stack (audit finding F-18). Pathological template depths can no longer blow the JS engine call stack. Realistic templates never approach the limit; this is defensive only. Visit order unchanged (left-to-right depth-first).
+- **Size budget gzip cap bumped to 4672** (was 4608). The three Low-priority audit cleanups above collectively crossed the prior gzip ceiling by ~30 B. Trims tried first: `walkTextNodes` inlined `childNodes` access, F-12 regex inlined into `extractPaths`. Raw cap unchanged at 10240 — bundle is now 10151 raw / 4633 gzip.
+- **Source-line tightening across the engine.** `applyEntry`'s add-branch now uses an `??` chain (one fewer local, three fewer lines, ~16 B raw saved). JSDoc preambles trimmed across `bindEach`, `serialize`, `checkpoint`, `record`, `replay`, `resetState`/`reset`, `evalExpr`, and `deepMerge` — long-form narration that duplicated the README moved out, the WHY notes that explain non-obvious decisions stayed. Total: 107 fewer source lines (1035 → 927) with no behavior change. The README "lines of actual code" claim now reads "under 1000 lines (engine source)".
+
+### Fixed
+
+- **Demo: undo button no longer stuck disabled** after clicks. `seedCounter` and `seedBasket` were direct-mutating `appState.atSeed`, which bypasses delta fan-out — the `:disabled="atSeed"` binding only refreshed when `replay()`'s force-refresh ran (i.e. on scrub or reload). They now write `atSeed` through the delta, so a normal click fans out correctly. Engine behavior unchanged; this was an example-app misuse of the system signature. Comment updated to flag the gotcha for future readers.
+
+### Added (example)
+
+- **Demo: `data-model="path.lazy"` on the count input and the per-item note input.** Free-form typing no longer floods history with per-keystroke entries — commits land on blur/Enter. The basket filter input stays eager (live filtering is the desired UX). Demonstrates the 0.3.6 modifier on its home turf (a time-travel app).
+- **Demo: visual "discarded futures" panel** below each panel. When the user scrubs back and mutates, the dropped tail is captured on `spektrum.forks` and rendered as a compact list ("3 edits forked · restore"). The `restore` button rewinds to `fork.forkedAt` and re-applies the dropped entries; the diverging tail becomes a *new* fork (every divergence preserved exactly once). Wired via the `onFork` hook mirroring a summary into `appStateDelta` so the `data-each="forkSummary"` binding fans out reactively. ~30 lines of glue in `example/app.js`, no engine change.
+
 ## [0.4.0] — 2026-05-06
 
 ### Added

@@ -863,6 +863,14 @@ export const createSpektrum = (opts = {}) => {
       }
     }
 
+    // Strip data-cloak last so author-controlled pre-paint hiding via
+    // a `[data-cloak] { display: none }` rule releases atomically once
+    // every binding has rendered against state. Mirrors v-cloak / x-cloak.
+    // Optional chain protects the case where root === document (which
+    // has no removeAttribute method — Document doesn't extend Element).
+    [root, ...root.querySelectorAll('[data-cloak]')]
+      .forEach(el => el.removeAttribute?.('data-cloak'));
+
     return () => {
       boundRoots.delete(root);
       callAll(unsubs);

@@ -31,7 +31,9 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js', raw: 10240, gz: 4672 },
+  { file: 'spektrum.min.js',          raw: 10240, gz: 4672 },
+  { file: 'spektrum-persist.min.js',  raw:  1024, gz:  576 },
+  { file: 'spektrum-devtools.min.js', raw:  3072, gz: 1536 },
 ];
 
 let failed = false;

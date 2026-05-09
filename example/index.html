@@ -71,6 +71,13 @@
     display: flex;
     flex-direction: column;
   }
+  /*
+    data-cloak: prevent the FOUC where {{count}} renders literally for
+    one paint before bindDOM strips the attribute. Author convention,
+    not engine state — Spektrum just removes the attribute when binding
+    completes; the CSS rule does the actual hiding. Mirrors v-cloak / x-cloak.
+  */
+  [data-cloak] { visibility: hidden; }
   .panel h2 {
     margin: 0 0 16px;
     font-size: 11px;
@@ -312,7 +319,7 @@
   </header>
 
   <main>
-    <section id="counter" class="panel">
+    <section id="counter" class="panel" data-cloak>
       <h2>COUNTER</h2>
 
       <div class="readout" :class="{positive: count > 0, negative: count < 0}">{{count}}</div>
@@ -348,7 +355,7 @@
       </aside>
     </section>
 
-    <section id="basket" class="panel">
+    <section id="basket" class="panel" data-cloak>
       <h2>BASKET</h2>
 
       <div class="kinds">
@@ -370,7 +377,8 @@
       <ul class="items" data-each="items" data-as="item" data-key="item.id">
         <li data-if="!filter || item.label.includes(filter)">
           <span class="label">{{item.label}}</span>
-          <input class="note" type="text" data-model="item.note.lazy" placeholder="note…">
+          <input class="note" type="text" data-model="item.note.lazy"
+                 aria-label="note" placeholder="note…">
           <button class="remove" data-action="click.stop" data-fn="removeAt" data-id="item"
                   aria-label="remove" title="remove">×</button>
         </li>

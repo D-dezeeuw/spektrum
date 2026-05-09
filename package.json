@@ -5,6 +5,8 @@
   "type": "module",
   "main": "./spektrum.js",
   "types": "./spektrum.d.ts",
+  "unpkg": "./spektrum.min.js",
+  "jsdelivr": "./spektrum.min.js",
   "exports": {
     ".": {
       "types": "./spektrum.d.ts",
@@ -26,14 +28,16 @@
     "spektrum.d.ts",
     "spektrum-compile.js",
     "spektrum-devtools.js",
-    "spektrum-persist.js"
+    "spektrum-devtools.min.js",
+    "spektrum-persist.js",
+    "spektrum-persist.min.js"
   ],
   "scripts": {
     "start": "python3 -m http.server 8088",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage",
     "lint": "eslint .",
-    "build": "esbuild spektrum.js --minify --format=esm --outfile=spektrum.min.js --legal-comments=none",
+    "build": "esbuild spektrum.js spektrum-persist.js spektrum-devtools.js --minify --format=esm --outdir=. --out-extension:.js=.min.js --legal-comments=none",
     "size": "node scripts/size.js"
   },
   "keywords": [

@@ -1003,6 +1003,48 @@ test('walkTextNodes handles deeply-nested templates without stack overflow', () 
   assert.equal(matches.length, depth, 'every nested level rendered');
 });
 
+// === data-cloak (Vue/Alpine-style FOUC suppression) ===
+
+test('bindDOM strips data-cloak from descendants once binding completes', () => {
+  document.body.innerHTML = `
+    <div id="app" data-cloak>
+      <p data-cloak>{{count}}</p>
+      <span>{{count}}</span>
+    </div>`;
+  setValue('count', 42);
+  bindDOM(document.body);
+  tick();
+
+  // Both root-marked and descendant-marked elements have the attribute removed.
+  assert.equal(document.body.querySelector('#app').hasAttribute('data-cloak'), false);
+  assert.equal(document.body.querySelector('p').hasAttribute('data-cloak'), false);
+  // Initial render landed; cloak strip happened after bindings rendered.
+  assert.equal(document.body.querySelector('p').textContent, '42');
+});
+
+test('bindDOM strips data-cloak on the bound root itself when present', () => {
+  // Author calls bindDOM(specificRoot) with cloak on the root. The root
+  // is included in the strip pass — without this the author's CSS rule
+  // would keep the whole tree hidden after binding completes.
+  const root = document.createElement('section');
+  root.setAttribute('data-cloak', '');
+  root.innerHTML = `<p>{{count}}</p>`;
+  document.body.appendChild(root);
+  setValue('count', 7);
+  bindDOM(root);
+  tick();
+  assert.equal(root.hasAttribute('data-cloak'), false,
+    'cloak on the bound root is stripped');
+});
+
+test('bindDOM is a no-op for elements without data-cloak', () => {
+  // Sanity: no false positives. Elements that never had cloak are
+  // unaffected.
+  document.body.innerHTML = `<p data-marker>plain</p>`;
+  bindDOM(document.body);
+  assert.equal(document.body.querySelector('p').hasAttribute('data-marker'), true);
+});
+
 // === Built-in data-fn handlers (setText, setStyle, toggle) ===
 
 test('built-in data-fn "setValue" sets state from element value on event', () => {

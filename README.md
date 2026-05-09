@@ -47,15 +47,66 @@ The rest is consequences.
 npm install spektrum
 ```
 
-Or load straight from a CDN — no install, no build step:
+Or load straight from a CDN — no install, no build step. Spektrum ships minified `.min.js` builds for the engine and both runtime helpers (`devtools`, `persist`); the `compile` module ships only un-minified since it's read by your build script.
+
+### From a CDN
+
+unpkg (and jsDelivr, which uses the same conventions) serve the minified entry by default:
 
 ```html
 <script type="module">
-  import { setValue, bindDOM, run } from 'https://unpkg.com/spektrum@latest/spektrum.min.js';
-  // pin a specific build:
-  // import ... from 'https://unpkg.com/spektrum@0.3.5/spektrum.js';
+  import { setValue, bindDOM, run } from 'https://unpkg.com/spektrum';
+  // ...
 </script>
 ```
+
+For the helpers, reference the `.min.js` siblings explicitly:
+
+```html
+<script type="module">
+  import { setValue, bindDOM } from 'https://unpkg.com/spektrum';
+  import { mount }             from 'https://unpkg.com/spektrum/spektrum-devtools.min.js';
+  import { autoSave }          from 'https://unpkg.com/spektrum/spektrum-persist.min.js';
+</script>
+```
+
+### With an importmap (named specifiers, no build)
+
+The cleanest no-build form — every spektrum import keeps its bare-specifier form, and you can swap CDNs by editing one block:
+
+```html
+<script type="importmap">
+{
+  "imports": {
+    "spektrum":          "https://unpkg.com/spektrum",
+    "spektrum/devtools": "https://unpkg.com/spektrum/spektrum-devtools.min.js",
+    "spektrum/persist":  "https://unpkg.com/spektrum/spektrum-persist.min.js"
+  }
+}
+</script>
+<script type="module">
+  import { setValue, bindDOM } from 'spektrum';
+  import { mount }             from 'spektrum/devtools';
+</script>
+```
+
+### Pinning a version
+
+For anything beyond a quick experiment, **pin to a known version** so a future spektrum release can't change behavior under you. unpkg accepts any npm-resolvable specifier:
+
+```html
+<script type="module">
+  // Replace <version> with a concrete version, e.g. 0.4.1.
+  // Find the latest at https://www.npmjs.com/package/spektrum.
+  import { setValue, bindDOM } from 'https://unpkg.com/spektrum@<version>';
+</script>
+```
+
+For extra defense against package compromise, hit `https://unpkg.com/spektrum@<version>?meta` to see the resolved file paths and cite a specific path with subresource integrity (`<script integrity="sha384-…">`) if your threat model needs it. Provenance is already attached to every published tarball ([npmjs.com/package/spektrum](https://www.npmjs.com/package/spektrum)).
+
+### `.min.js` vs `.js`
+
+Both ship in the package. The `.min.js` versions are what production bundles want — typically ~50% smaller transfer for the engine and helpers. The un-minified `.js` files are kept around for the "audit it in an afternoon" pitch — clone or `npm view` and read the source as-shipped. Bundlers (Webpack, Vite, Rollup, esbuild) reach the un-minified entry by default and minify it themselves; that's fine.
 
 ## Quick start
 
@@ -144,6 +195,30 @@ Derived state via `computed(path, deps, fn)` — re-runs when any `deps` change,
 > **URL-attribute safety.** When `:href`, `:src`, `:action`, `:formaction`, `:background`, `:cite`, `:poster`, or `:data` evaluates to a string starting with `javascript:` (case-insensitive, leading whitespace ignored), Spektrum rewrites the value to `#`. This blocks the common XSS shape where an attacker-influenced value lands in an `<a :href>`. Other schemes (`https:`, `data:`, `mailto:`, etc.) pass through unchanged — review your own data sources if your threat model needs broader filtering.
 >
 > **Not covered:** `:srcdoc` (the value is parsed as HTML, not as a URL — same trust requirement as templates; don't bind untrusted content). The guard runs on JavaScript property writes, so attributes Spektrum doesn't expose as DOM properties (e.g. SVG `xlink:href`) are out of scope.
+
+## `data-cloak` — suppressing the bind-time flash
+
+Without help, the browser paints `{{count}}` literally in the DOM for one frame before `bindDOM()` runs and replaces it. To eliminate the flash, mark the affected element with `data-cloak` and pair it with a CSS rule that hides it:
+
+```html
+<style>
+  [data-cloak] { visibility: hidden; }
+</style>
+
+<div id="app" data-cloak>
+  <p>{{count}}</p>
+</div>
+
+<script type="module">
+  import { setValue, bindDOM } from 'spektrum';
+  setValue('count', 42);
+  bindDOM(document.getElementById('app'));
+  // bindDOM strips data-cloak after every binding has rendered, so the
+  // CSS rule no longer matches and the content reveals.
+</script>
+```
+
+`bindDOM` strips `data-cloak` from the bound root *and all descendants* once binding completes. The convention mirrors Vue's `v-cloak` and Alpine's `x-cloak`. Use `visibility: hidden` (preserves layout, no shift) or `display: none` (removes from layout, may cause shift on reveal) depending on your tolerance for reflow. The engine just removes the attribute — it doesn't read the property — so any pre-paint hiding strategy works.
 
 ## Public API
 

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`data-cloak` attribute** for FOUC suppression (Vue's `v-cloak` / Alpine's `x-cloak` shape). `bindDOM` strips `data-cloak` from the bound root and all descendants once every binding has rendered. Pair with a CSS rule (`[data-cloak] { visibility: hidden }` or `display: none`) to hide elements that would otherwise paint `{{count}}` literally for one frame before binding kicks in. Author convention — the engine just removes the attribute; the CSS does the actual hiding. ~80 B raw / ~25 B gzip; documented in README and exercised by the example. 3 new tests.
+- **Minified builds for the runtime helpers.** `npm run build` now emits `spektrum-persist.min.js` (~970 B raw / ~510 B gzip) and `spektrum-devtools.min.js` (~2.9 KB raw / ~1.5 KB gzip) alongside the existing `spektrum.min.js`. The build-time-only `spektrum-compile.js` stays un-minified — it's read by developers writing their own build scripts. `scripts/size.js` now budgets all three files independently (caps: `1024/576`, `3072/1536`, plus the existing `10240/4672`).
+- **`unpkg` and `jsdelivr` package fields** point at `spektrum.min.js`. `https://unpkg.com/spektrum` and `https://cdn.jsdelivr.net/npm/spektrum` now serve the minified entry by default — no path needed for casual `<script type="module">` imports. Old explicit paths still work.
+- **README CDN section rewritten** with three concrete patterns: direct `<script type="module">` imports, importmap-with-named-specifiers (the cleanest no-build form), and version-pinning + provenance for production. Examples use unversioned `https://unpkg.com/spektrum` for casual demos and `@<version>` placeholders for the pinning recipe (don't bake stale numbers into the docs).
+
+### Fixed (example, post-0.4.1)
+
+- **Demo: forks now survive scrubbing the timeline.** The previous wiring used the `onFork` hook to mirror `instance.forks` into `appStateDelta.forkSummary` — but `replay()` clears `appState`, and `onFork` only fires on `record()`, never on `replay`. Mirror moved into the seed system, which runs both on every relevant state change AND on replay's force-refresh. `data-key="f.ts"` added to the forks list so keyed reconciliation reuses rows across re-mirrors. Engine untouched; example-only fix shipped to `main` after `0.4.1`.
+
 ## [0.4.1] — 2026-05-06
 
 ### Changed

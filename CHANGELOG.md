@@ -5,9 +5,13 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 1.0-credibility track
+## [Unreleased]
 
-This block consolidates the work that addresses the external 1.0-readiness review's blockers and high-leverage should-haves. The engineering side is now considered ready for a `0.5.0`/`1.0.0` ship; the next release will draw a line under this batch.
+## [0.5.0] — 2026-05-10
+
+**Feature-complete pre-1.0.** This release closes the engineering side of the external 1.0-readiness review — every blocker addressed, every high-leverage should-have shipped. The remaining items in the [RFC](.claude/references/RFC.md) (Phase 2: `data-intent`, `data-schema`, optional `test()` harness) are explicitly deferred until usage data shapes them. Engine source crossed under the **1000-line marker** (999 lines including comments) — the "audit it in an afternoon" pitch is honest. 1.0 is now a relabel-and-marketing-moment away.
+
+The five commits since `0.4.1` are all consolidated below.
 
 ### Fixed
 

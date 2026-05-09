@@ -12,9 +12,11 @@
 A tiny templating engine with **time-travel built into the primitive**, deliberately auditable, drop-in, and CSP-safe.
 
 - **Time-travel.** Every mutation is recorded. `replay(n)` rebuilds any past state. Scrub a slider through it; ship undo without thinking. The optional `spektrum/devtools` panel renders the scrubber for you in dev.
-- **Auditable.** ~10 kB minified (4.5 kB gzipped), under 1000 lines (engine source), **zero runtime dependencies**, single file. Read it in an afternoon. The ecosystem keeps proving how fragile dependency sprawl is; Spektrum's design follows from that constraint.
-- **Drop-in.** ESM from a `<script type="module">` tag — works in a plain HTML file, a WordPress theme, a browser extension, a CMS code block, an Electron renderer, anywhere you can write HTML. No bundler, no SPA framework, no `npm install` required. Pin a version: `https://unpkg.com/spektrum@0.3.5`.
+- **Auditable.** ~11 kB minified (5 kB gzipped), under 1000 lines of engine source, **zero runtime dependencies**, single file. Read it in an afternoon. The ecosystem keeps proving how fragile dependency sprawl is; Spektrum's design follows from that constraint.
+- **Drop-in.** ESM from a `<script type="module">` tag — works in a plain HTML file, a WordPress theme, a browser extension, a CMS code block, an Electron renderer, anywhere you can write HTML. No bundler, no SPA framework, no `npm install` required. Pin a version: `https://unpkg.com/spektrum@<version>`.
 - **CSP-safe.** Out of the box, expressions compile via `new Function` (same caveat as Vue/Alpine). For deployments behind strict CSP that disable `unsafe-eval`, run `spektrum/compile` at build time — every template expression precompiles into a plain JS module, and the runtime never reaches the `Function` fallback.
+
+> **Feature-complete pre-1.0.** As of `0.5.0`, every engineering blocker and high-leverage should-have from the external 1.0-readiness review has shipped: time-travel primitives (`checkpoint()`, fork preservation), eager + read-through `computed`, async resources (`addAsync`), Vue-shaped `data-model` modifiers (`.lazy`/`.number`/`.trim`), full event-modifier set (`.self`/`.capture`/`.passive` + key gates `.enter`/`.esc`/`.tab`/`.shift`/`.cmd`), `data-cloak` for FOUC suppression, `serialize()` for SSR injection, structured `onError`, and CDN-ready minified subpath bundles. The Phase 2 design pass (`data-intent`, `data-schema`, `test()` harness) is the only deferred surface — gated on real-world `0.5.x` usage. **1.0 is now a relabel and a marketing moment away, not engineering work.**
 
 The rest is consequences.
 

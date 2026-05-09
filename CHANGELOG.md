@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`computed` now primes synchronously from current state on registration.** The previous behavior was a silent no-op when `computed` registered after its deps were already populated (e.g. after `loadHistory` had restored them) — the derivation only kicked in when one of the deps next appeared in the delta, which would never happen if state was already settled. Real-world bug surfaced in a downstream app: refresh-after-save left `selectedHours`/`hoursAM`/`hoursPM` undefined because the load had already drained the deps before the bindings registered. Now `computed` derives the initial value at registration time and writes it into the delta; the `addSystem` re-derivation path is unchanged. The eager prime is wrapped in try/catch so registering before deps exist (where `fn(state)` would throw on missing nested paths) still works — the system stays registered and derives normally once a dep arrives.
+
+### Changed
+
+- **`RESERVED` identifier set further trimmed.** Dropped the keyword/operator forms (`typeof`, `instanceof`, `in`, `new`, `delete`, `void`, `this`) — they're unlikely path heads in real templates, and audit F-12 explicitly classifies the over-subscription this would now allow as benign (extra never-firing subscriptions, not wrong output). Net: ~56 B raw / ~26 B gzip recovered to absorb the eager-`computed` change without bumping the size budget. Bundle now 10221 raw / 4647 gzip.
+
 ### Added
 
 - **`data-cloak` attribute** for FOUC suppression (Vue's `v-cloak` / Alpine's `x-cloak` shape). `bindDOM` strips `data-cloak` from the bound root and all descendants once every binding has rendered. Pair with a CSS rule (`[data-cloak] { visibility: hidden }` or `display: none`) to hide elements that would otherwise paint `{{count}}` literally for one frame before binding kicks in. Author convention — the engine just removes the attribute; the CSS does the actual hiding. ~80 B raw / ~25 B gzip; documented in README and exercised by the example. 3 new tests.

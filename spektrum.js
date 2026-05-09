@@ -174,13 +174,13 @@ const IDENT = /(?<![\w$.])([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)*)/g;
 // Identifier-heads that are JS globals or keywords, not state paths.
 // Templates referencing anything dropped from this list still work
 // (with(state) falls through to globals) — they just over-subscribe to
-// a path that never fires. Trim is therefore behavior-neutral; entries
-// kept are the ones common in real templates. URI helpers, parseInt /
-// isNaN / isFinite, RegExp / Map / Set / Symbol / Error were dropped
-// in 0.3.6 to free byte budget.
+// a never-firing path. Trim is behavior-neutral (audit F-12); kept
+// entries are common in real templates. Keyword/operator forms
+// (typeof / instanceof / in / new / delete / void / this) were dropped
+// in 0.5.x — they're unlikely path heads anyway and the regex match
+// for them was wasted bytes.
 const RESERVED = new Set([
   'true', 'false', 'null', 'undefined', 'NaN', 'Infinity',
-  'typeof', 'instanceof', 'in', 'new', 'delete', 'void', 'this',
   'Math', 'JSON', 'Date', 'Number', 'String', 'Array', 'Object', 'Boolean',
 ]);
 
@@ -645,13 +645,16 @@ export const createSpektrum = (opts = {}) => {
     return () => { delete refs[name]; };
   };
 
-  /** Derived state. Re-computes when any `deps` path changes; writes
-   *  result into delta.path so subscribers fire next pass.
-   *  Equivalent to addSystem(deps, (s, d) => setPathValue(d, path, fn(s))). */
+  /** Derived state. Primes synchronously from current state on
+   *  registration (so registering after deps are already populated —
+   *  e.g. after loadHistory — lands the initial value on the next
+   *  tick), then re-derives whenever any `deps` change. The try/catch
+   *  protects deps that aren't yet in state; the addSystem path takes
+   *  over normally once a dep arrives. */
   const computed = (path, deps, fn) => {
-    return addSystem(deps, (state, delta) => {
-      setPathValue(delta, path, fn(state));
-    });
+    const derive = (s, d) => setPathValue(d, path, fn(s));
+    try { derive(stateSnapshot(), appStateDelta); } catch {}
+    return addSystem(deps, derive);
   };
 
   /** Replace whole-word occurrences of `varName` with `prefix` in every

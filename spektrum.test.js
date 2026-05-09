@@ -428,6 +428,52 @@ test('computed returns an unsubscribe', () => {
   assert.equal(getPathObj(appState, 'y'), 101);
 });
 
+test('computed primes synchronously from current state on registration', () => {
+  // Regression: registering computed AFTER state is already populated
+  // (e.g. after loadHistory) used to silently no-op until one of the
+  // deps next changed — values stayed undefined when bindDOM wired up.
+  // Now the eager prime derives the initial value immediately.
+  setValue('count', 5);
+  tick();
+  // State has count=5; nothing else has touched it. Register computed.
+  computed('doubled', ['count'], (state) => state.count * 2);
+  tick();
+  assert.equal(getPathObj(appState, 'doubled'), 10,
+    'computed value derived without needing a fresh dep mutation');
+});
+
+test('computed registration with missing deps does not throw', () => {
+  // The eager prime catches user-fn throws (e.g. accessing a path
+  // that isn't in state yet). The system stays registered and
+  // derives normally once a dep arrives.
+  assert.doesNotThrow(() => {
+    computed('greet', ['user'], (state) => `hi, ${state.user.name}`);
+  }, 'eager prime swallows the deps-not-ready throw');
+
+  // Once user.name lands, derivation kicks in.
+  setValue('user', { name: 'alice' });
+  tick();
+  assert.equal(getPathObj(appState, 'greet'), 'hi, alice');
+});
+
+test('computed re-derives on dep change after eager prime (regression)', () => {
+  // After eager prime, the addSystem path still wires up correctly.
+  setValue('a', 1);
+  setValue('b', 2);
+  tick();
+  computed('sum', ['a', 'b'], (state) => state.a + state.b);
+  tick();
+  assert.equal(getPathObj(appState, 'sum'), 3, 'eager prime');
+
+  setValue('a', 10);
+  tick();
+  assert.equal(getPathObj(appState, 'sum'), 12, 're-derives on a change');
+
+  setValue('b', 20);
+  tick();
+  assert.equal(getPathObj(appState, 'sum'), 30, 're-derives on b change');
+});
+
 // === onError hook ===
 
 test('onError catches throwing systems and skips console.error', () => {

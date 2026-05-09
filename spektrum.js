@@ -45,10 +45,15 @@ const SAFE_KEY = (k) => k !== '__proto__' && k !== 'prototype' && k !== 'constru
 const URL_PROPS = /^(href|src|action|formaction|background|cite|poster|data)$/;
 const JS_SCHEME = /^\s*javascript:/i;
 
-/** Recognised data-action modifiers. `data-action="click.preventdefault"`
- *  was a frequent typo that silently fell off the modifier path; we now
- *  warn at bind time. Regex is ~15 B cheaper than `new Set([…]).has()`. */
-const KNOWN_MODIFIERS = /^(prevent|stop|once)$/;
+/** Recognised data-action modifiers. Three flavors:
+ *    behavioral: prevent / stop / once / self
+ *    listener:   capture / passive
+ *    key match:  enter / esc / tab / shift / cmd
+ *  data-action="click.preventdefault" used to silently fall off the
+ *  modifier path; we now warn at bind time. */
+const KNOWN_MODIFIERS = /^(prevent|stop|once|self|capture|passive|enter|esc|tab|shift|cmd)$/;
+const KEY_MATCH = { enter: 'Enter', esc: 'Escape', tab: 'Tab' };
+const SYS_KEY  = { shift: 'shiftKey', cmd: 'metaKey' };
 
 /** Walk a dotted path into `obj`. Returns the leaf value or undefined. */
 export const getPathObj = (obj, path) =>
@@ -421,6 +426,10 @@ export const createSpektrum = (opts = {}) => {
     };
   };
 
+  /** Alias for `addSystem` with the conventional reactive-library
+   *  name. Same signature: `(deps, (state, delta) => void)`. */
+  const watch = (deps, fn) => addSystem(deps, fn);
+
   /** Detach the first system registered with `fn`. Returns true if removed. */
   const removeSystem = (fn) => {
     const i = systems.findIndex(s => s.fn === fn);
@@ -433,6 +442,29 @@ export const createSpektrum = (opts = {}) => {
   const defineFn = (name, fn) => {
     if (fns[name]) warn('defineFn ' + name + ' overwritten');
     fns[name] = fn;
+  };
+
+  /** Async resource primitive. Sets `${path}.loading` / `${path}.error`
+   *  / `${path}.data` as the promise progresses. Returns the run
+   *  function so callers can refetch on demand. Each phase records
+   *  through setValue so the round-trip lands in history (replay-safe;
+   *  no actual fetch re-issues — the values just re-apply). */
+  const addAsync = (path, fn) => {
+    const id = `addAsync:${path}`;
+    const run = async () => {
+      setValue(`${path}.loading`, true, id);
+      try {
+        const data = await fn();
+        setValue(`${path}.data`, data, id);
+        setValue(`${path}.error`, null, id);
+      } catch (err) {
+        setValue(`${path}.error`, err && err.message || String(err), id);
+      } finally {
+        setValue(`${path}.loading`, false, id);
+      }
+    };
+    run();
+    return run;
   };
 
   // --- Tick / lifecycle ---
@@ -609,24 +641,39 @@ export const createSpektrum = (opts = {}) => {
    *  (uses `change` + el.checked); everything else uses `input` +
    *  el.value. Writes go through setValue → history.
    *
-   *  `.lazy` suffix (`data-model="path.lazy"`) commits on `change`
-   *  instead of `input` — useful for search boxes / time-travel apps
-   *  where per-keystroke writes flood history and fork it on every
-   *  edit. The suffix is reserved; if your state genuinely has a
-   *  `.lazy` leaf, route through `data-action="input"` + `setValue`
-   *  directly. */
+   *  Trailing dot-separated modifiers (Vue-style):
+   *    .lazy    commit on `change` instead of `input`
+   *    .number  coerce element value via parseFloat (NaN → string)
+   *    .trim    trim whitespace before write
+   *  Chainable: `data-model="query.trim.lazy"`. The modifier names are
+   *  reserved suffixes — if your state has a leaf literally named
+   *  `lazy`/`number`/`trim`, route through `data-action="input"` +
+   *  `setValue` directly. */
   const bindModel = (el) => {
     const raw = el.dataset.model;
     if (!raw) return;
-    const lazy = raw.endsWith('.lazy');
-    const path = lazy ? raw.slice(0, -5) : raw;
+    const parts = raw.split('.');
+    const mods = new Set();
+    while (parts.length && /^(lazy|number|trim)$/.test(parts[parts.length - 1])) {
+      mods.add(parts.pop());
+    }
+    const path = parts.join('.');
+    if (!path) return;
     const isCheckbox = el.type === 'checkbox';
-    const eventName = (lazy || isCheckbox) ? 'change' : 'input';
+    const eventName = (mods.has('lazy') || isCheckbox) ? 'change' : 'input';
     const writeEl = (v) => {
       if (isCheckbox) el.checked = !!v;
       else el.value = v == null ? '' : v;
     };
-    const readEl = () => isCheckbox ? el.checked : parseValue(el.value);
+    const readEl = () => {
+      if (isCheckbox) return el.checked;
+      const v = mods.has('trim') ? el.value.trim() : el.value;
+      if (mods.has('number')) {
+        const n = parseFloat(v);
+        return isNaN(n) ? v : n;
+      }
+      return parseValue(v);
+    };
 
     const unsubs = [];
     unsubs.push(bindReactive([path], (state) => writeEl(getPathObj(state, path))));
@@ -648,11 +695,20 @@ export const createSpektrum = (opts = {}) => {
   /** Derived state. Primes synchronously from current state on
    *  registration (so registering after deps are already populated —
    *  e.g. after loadHistory — lands the initial value on the next
-   *  tick), then re-derives whenever any `deps` change. The try/catch
-   *  protects deps that aren't yet in state; the addSystem path takes
-   *  over normally once a dep arrives. */
+   *  tick), then re-derives whenever any `deps` change. Writes the
+   *  result to BOTH appState and the delta: the appState write makes
+   *  mid-tick reads see fresh values (a sibling system reading
+   *  `state.derived` in the same pass gets the just-computed value);
+   *  the delta write keeps fan-out working so dependents in later
+   *  passes still fire. The try/catch protects deps that aren't yet
+   *  in state; the addSystem path takes over normally once a dep
+   *  arrives. */
   const computed = (path, deps, fn) => {
-    const derive = (s, d) => setPathValue(d, path, fn(s));
+    const derive = (s, d) => {
+      const v = fn(s);
+      setPathValue(d, path, v);
+      setPathValue(appState, path, v);
+    };
     try { derive(stateSnapshot(), appStateDelta); } catch {}
     return addSystem(deps, derive);
   };
@@ -847,22 +903,31 @@ export const createSpektrum = (opts = {}) => {
       } else {
         // Modifier syntax: data-action="click.prevent.stop.once".
         // First segment is the event name; rest are flags. Mirrors
-        // Vue's v-on modifiers — covers the common footguns
-        // (preventing form submits, stopping propagation, fire-once)
-        // without forcing every author to write a custom data-fn.
+        // Vue's v-on modifiers across three families: behavior
+        // (prevent/stop/once/self), listener options (capture/passive),
+        // and key gates (enter/esc/tab/shift/cmd).
         const [eventName, ...modifiers] = action.split('.');
         for (const m of modifiers) {
           if (!KNOWN_MODIFIERS.test(m)) warn('unknown data-action modifier .' + m);
         }
         const mods = new Set(modifiers);
         const listener = (ev) => {
+          // Key gates (return early if any required key didn't match).
+          for (const m of mods) {
+            if (KEY_MATCH[m] && ev.key !== KEY_MATCH[m]) return;
+            if (SYS_KEY[m] && !ev[SYS_KEY[m]]) return;
+          }
+          if (mods.has('self') && ev.target !== el) return;
           if (mods.has('prevent')) ev.preventDefault();
           if (mods.has('stop')) ev.stopPropagation();
           handler(el, appState, appStateDelta, value, ev);
-          if (mods.has('once')) el.removeEventListener(eventName, listener);
+          if (mods.has('once')) el.removeEventListener(eventName, listener, opts);
         };
-        el.addEventListener(eventName, listener);
-        collect(() => el.removeEventListener(eventName, listener));
+        const opts = mods.has('capture') || mods.has('passive')
+          ? { capture: mods.has('capture'), passive: mods.has('passive') }
+          : false;
+        el.addEventListener(eventName, listener, opts);
+        collect(() => el.removeEventListener(eventName, listener, opts));
       }
     }
 
@@ -918,8 +983,8 @@ export const createSpektrum = (opts = {}) => {
     get cursor() { return cursor; },
     get replaying() { return replaying; },
     get checkpoints() { return checkpointsOf(); },
-    trigger, setValue, checkpoint, computed,
-    addSystem, removeSystem, defineFn, onError, onRecord, onFork,
+    trigger, setValue, checkpoint, computed, addAsync,
+    addSystem, watch, removeSystem, defineFn, onError, onRecord, onFork,
     bindDOM, run, tick, replay, reset, resetState, serialize,
   };
 };
@@ -932,7 +997,7 @@ const _default = createSpektrum();
 export default _default;
 export const {
   appState, appStateDelta, history, snapshots, forks, refs,
-  trigger, setValue, checkpoint, computed,
-  addSystem, removeSystem, defineFn, onError, onRecord, onFork,
+  trigger, setValue, checkpoint, computed, addAsync,
+  addSystem, watch, removeSystem, defineFn, onError, onRecord, onFork,
   bindDOM, run, tick, replay, reset, resetState, serialize,
 } = _default;

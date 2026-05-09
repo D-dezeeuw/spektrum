@@ -5,11 +5,27 @@ All notable changes to this project will be documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [Unreleased] — 1.0-credibility track
+
+This block consolidates the work that addresses the external 1.0-readiness review's blockers and high-leverage should-haves. The engineering side is now considered ready for a `0.5.0`/`1.0.0` ship; the next release will draw a line under this batch.
 
 ### Fixed
 
-- **`computed` now primes synchronously from current state on registration.** The previous behavior was a silent no-op when `computed` registered after its deps were already populated (e.g. after `loadHistory` had restored them) — the derivation only kicked in when one of the deps next appeared in the delta, which would never happen if state was already settled. Real-world bug surfaced in a downstream app: refresh-after-save left `selectedHours`/`hoursAM`/`hoursPM` undefined because the load had already drained the deps before the bindings registered. Now `computed` derives the initial value at registration time and writes it into the delta; the `addSystem` re-derivation path is unchanged. The eager prime is wrapped in try/catch so registering before deps exist (where `fn(state)` would throw on missing nested paths) still works — the system stays registered and derives normally once a dep arrives.
+- **`computed` now writes to both state and delta** (mid-tick read-through). Pre-fix: a sibling system reading `state.derived` in the same tick pass that another system was computing it saw the prior committed value — fan-out worked across passes, but the SAME-pass read was stale. Real footgun in chained `computed` graphs and in any consumer that mixed plain systems with computed values. Now `computed`'s derivation writes to `appState` directly (mid-pass reads see fresh) AND to `appStateDelta` (downstream subscribers still fan out as before). Documented as a non-trade-off; the README's "Known trade-offs" entry on this is gone.
+- **`computed` primes synchronously from current state on registration.** The previous behavior was a silent no-op when `computed` registered after its deps were already populated (e.g. after `loadHistory` had restored them) — the derivation only kicked in when one of the deps next appeared in the delta, which would never happen if state was already settled. Real-world bug surfaced in a downstream app: refresh-after-save left derived state undefined because the load had already drained the deps before the bindings registered. Now `computed` derives the initial value at registration time and writes it into the delta; the `addSystem` re-derivation path is unchanged. The eager prime is wrapped in try/catch so registering before deps exist still works — the system stays registered and derives normally once a dep arrives.
+
+### Added
+
+- **`addAsync(path, fn)` async resource primitive.** Sets `${path}.loading` / `${path}.error` / `${path}.data` as the Promise progresses, returns a refetch handle. Each phase records through `setValue`, so the round-trip lands in history (replay re-applies the values; no actual fetch re-issues). Pattern matches Solid's `createResource` and Vue's `useFetch` shape — `data-if="user.loading"`, `{{user.error}}`, `{{user.data.name}}` work out of the box. The single highest-leverage feature feedback identified for 1.0 credibility.
+- **`watch(deps, fn)` as a public alias for `addSystem(deps, fn)`.** Same signature, conventional reactive-library name. One-line export — every consumer was wrapping `addSystem` to get this name; no longer needed.
+- **`data-model` modifier suffixes: `.number` and `.trim`** (Vue-shaped). `.number` coerces via `parseFloat` (NaN → original string); `.trim` trims whitespace before write. Chainable with the existing `.lazy`: `data-model="query.trim.lazy"`. Form-input boilerplate (manual coercion in `defineFn`) is now unnecessary in 80%+ of cases.
+- **`data-action` event modifiers: `.self`, `.capture`, `.passive`.** `.self` fires only when `event.target` is the bound element (skips bubbled events); `.capture` and `.passive` map directly to `addEventListener` options. Capture/passive flags are matched at `removeEventListener` time so cleanup works cleanly.
+- **`data-action` key modifiers: `.enter` / `.esc` / `.tab` / `.shift` / `.cmd`.** Key-match modifiers (`.enter` → `ev.key === 'Enter'`; same for `Escape`, `Tab`) and system-modifier-key gates (`.shift` → `ev.shiftKey`; `.cmd` → `ev.metaKey`). Chainable: `keydown.shift.enter` fires only on Shift+Enter. Forms and modal dialogs no longer need a custom `defineFn` for "submit on Enter" / "cancel on Esc".
+
+### Changed
+
+- **README "What it doesn't do" rewritten as "explicit non-goals".** Per the 1.0 review's "be louder" point: SSR, components, transitions, router, store all get one-line bullets calling out the deliberate stance. The intent: orgs that need any of these rule Spektrum out fast instead of discovering the limitation late.
+- **Size budget bumped to 11264 raw / 5184 gzip** (was 10240 / 4672) to absorb the 1.0-credibility batch. The five additions collectively cost ~860 B raw / ~360 B gzip — substantial but proportionate to the user-facing surface they unlock. Pre-bump trims (RESERVED keyword/operator entries removed earlier) had already been applied. Bundle now 11103 raw / 5031 gzip.
 
 ### Changed
 

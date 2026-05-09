@@ -337,6 +337,60 @@ test('data-model="path" without .lazy still fires on input (regression)', () => 
   assert.equal(getPathObj(appState, 'title'), 'live');
 });
 
+// --- model modifiers: .number / .trim / chained ---
+
+test('data-model="path.number" coerces input to a Number via parseFloat', () => {
+  document.body.innerHTML = '<input data-model="age.number">';
+  bindDOM(document.body);
+  tick();
+  const input = document.body.querySelector('input');
+  input.value = '42';
+  input.dispatchEvent(new Event('input'));
+  tick();
+  assert.strictEqual(getPathObj(appState, 'age'), 42);
+
+  input.value = '5.5';
+  input.dispatchEvent(new Event('input'));
+  tick();
+  assert.strictEqual(getPathObj(appState, 'age'), 5.5);
+});
+
+test('data-model="path.number" returns the original string when not numeric', () => {
+  document.body.innerHTML = '<input data-model="age.number">';
+  bindDOM(document.body);
+  tick();
+  const input = document.body.querySelector('input');
+  input.value = 'abc';
+  input.dispatchEvent(new Event('input'));
+  tick();
+  assert.strictEqual(getPathObj(appState, 'age'), 'abc');
+});
+
+test('data-model="path.trim" trims whitespace before write', () => {
+  document.body.innerHTML = '<input data-model="title.trim">';
+  bindDOM(document.body);
+  tick();
+  const input = document.body.querySelector('input');
+  input.value = '   hello world   ';
+  input.dispatchEvent(new Event('input'));
+  tick();
+  assert.strictEqual(getPathObj(appState, 'title'), 'hello world');
+});
+
+test('data-model modifiers chain: ".trim.lazy" trims and commits on change', () => {
+  document.body.innerHTML = '<input data-model="q.trim.lazy">';
+  bindDOM(document.body);
+  tick();
+  const input = document.body.querySelector('input');
+  input.value = '  apple  ';
+  input.dispatchEvent(new Event('input'));
+  tick();
+  assert.equal(getPathObj(appState, 'q'), undefined, 'lazy ignores input');
+  input.dispatchEvent(new Event('change'));
+  tick();
+  assert.equal(getPathObj(appState, 'q'), 'apple', 'trim ran on commit');
+});
+
 // === data-ref ===
 
 test('data-ref exposes the element on instance.refs', () => {
@@ -719,6 +773,72 @@ test('data-action="click.once" runs only once', () => {
   btn.click();
   tick();
   assert.equal(getPathObj(appState, 'n'), 1);
+});
+
+// --- data-action key modifiers ---
+
+test('data-action="keydown.enter" only fires on Enter', () => {
+  document.body.innerHTML = `<input data-action="keydown.enter" data-fn="commit" data-id="x">`;
+  let fires = 0;
+  spektrum.defineFn('commit', () => fires++);
+  bindDOM(document.body);
+  tick();
+
+  const input = document.body.querySelector('input');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+  assert.equal(fires, 0, 'non-Enter ignored');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+  assert.equal(fires, 1, 'Enter fires');
+});
+
+test('data-action="keydown.esc" only fires on Escape', () => {
+  document.body.innerHTML = `<input data-action="keydown.esc" data-fn="cancel" data-id="x">`;
+  let fires = 0;
+  spektrum.defineFn('cancel', () => fires++);
+  bindDOM(document.body);
+  tick();
+  const input = document.body.querySelector('input');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+  assert.equal(fires, 0);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.equal(fires, 1);
+});
+
+test('data-action key modifiers compose: .shift.enter requires shift+Enter', () => {
+  document.body.innerHTML = `<input data-action="keydown.shift.enter" data-fn="hit" data-id="x">`;
+  let fires = 0;
+  spektrum.defineFn('hit', () => fires++);
+  bindDOM(document.body);
+  tick();
+
+  const input = document.body.querySelector('input');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+  assert.equal(fires, 0, 'plain Enter skipped (shift not held)');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', shiftKey: true }));
+  assert.equal(fires, 0, 'shift held but wrong key');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
+  assert.equal(fires, 1, 'shift+Enter fires');
+});
+
+// --- data-action .self ---
+
+test('data-action="click.self" only fires when ev.target is the bound element', () => {
+  document.body.innerHTML = `
+    <div data-action="click.self" data-fn="hit" data-id="x">
+      <button>inner</button>
+    </div>`;
+  let fires = 0;
+  spektrum.defineFn('hit', () => fires++);
+  bindDOM(document.body);
+  tick();
+
+  // Click on inner button bubbles up; ev.target is the button, not the div.
+  document.body.querySelector('button').click();
+  assert.equal(fires, 0, 'bubbled click skipped');
+
+  // Direct click on the div.
+  document.body.querySelector('div').click();
+  assert.equal(fires, 1);
 });
 
 // === data-fn handler signature: event as 5th arg ===

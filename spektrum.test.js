@@ -12,7 +12,8 @@ import assert from 'node:assert/strict';
 
 import spektrum, {
   appState, appStateDelta, history, forks,
-  setValue, trigger, checkpoint, addSystem, removeSystem, computed,
+  setValue, trigger, checkpoint, addSystem, watch, removeSystem,
+  computed, addAsync,
   tick, replay, reset, resetState, serialize,
   onError, onRecord, onFork, defineFn,
   getPathObj, setPathValue, precompile,
@@ -472,6 +473,76 @@ test('computed re-derives on dep change after eager prime (regression)', () => {
   setValue('b', 20);
   tick();
   assert.equal(getPathObj(appState, 'sum'), 30, 're-derives on b change');
+});
+
+test('computed mid-tick read-through: sibling system sees fresh value (regression)', () => {
+  // Pre-fix: `doubled` system wrote to delta only, so a sibling system
+  // running in the SAME pass that read state.doubled saw the prior
+  // value (delta hadn't been merged yet for THIS pass — it had been
+  // merged-then-cleared BEFORE the systems ran). Now computed writes
+  // to both state and delta, so mid-pass reads see the fresh value.
+  let observed;
+  computed('doubled', ['count'], (s) => s.count * 2);
+  addSystem(['count'], (s) => { observed = s.doubled; });
+  setValue('count', 7);
+  tick();
+  assert.equal(observed, 14, 'sibling read sees the just-computed value');
+});
+
+// === watch (public alias for addSystem) ===
+
+test('watch is a 1:1 alias of addSystem', () => {
+  let calls = 0;
+  const unsub = watch(['x'], () => { calls++; });
+  setValue('x', 1);
+  tick();
+  assert.equal(calls, 1);
+
+  unsub();
+  setValue('x', 2);
+  tick();
+  assert.equal(calls, 1, 'unsub returned by watch detaches');
+});
+
+// === addAsync ===
+
+test('addAsync resolves: writes loading → data, clears error', async () => {
+  const refetch = addAsync('user', async () => ({ name: 'alice' }));
+  // Loading is true synchronously after registration (setValue records).
+  tick();
+  assert.equal(getPathObj(appState, 'user.loading'), true);
+
+  // Wait for the promise + the resulting setValues to flow.
+  await refetch();
+  tick();
+  assert.deepEqual(getPathObj(appState, 'user.data'), { name: 'alice' });
+  assert.equal(getPathObj(appState, 'user.error'), null);
+  assert.equal(getPathObj(appState, 'user.loading'), false);
+});
+
+test('addAsync rejects: writes error, clears loading, leaves data intact', async () => {
+  const refetch = addAsync('thing', async () => { throw new Error('boom'); });
+  await refetch();
+  tick();
+  assert.equal(getPathObj(appState, 'thing.error'), 'boom');
+  assert.equal(getPathObj(appState, 'thing.loading'), false);
+  // No `data` write on error.
+});
+
+test('addAsync returns a refetch handle that re-executes the user fn', async () => {
+  // addAsync auto-runs once on registration (Solid createResource /
+  // Vue useFetch convention). The returned handle re-runs on demand.
+  let calls = 0;
+  const refetch = addAsync('x', async () => ++calls);
+  await refetch();  // wait for the eager run + the refetch to settle
+  await new Promise(r => setTimeout(r, 0));  // drain the trailing microtask
+  tick();
+  assert.ok(calls >= 2, `expected ≥2 invocations (eager + refetch); got ${calls}`);
+  const before = calls;
+  await refetch();
+  await new Promise(r => setTimeout(r, 0));
+  tick();
+  assert.equal(calls, before + 1, 'refetch increments by exactly one');
 });
 
 // === onError hook ===

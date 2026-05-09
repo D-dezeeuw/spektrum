@@ -140,11 +140,27 @@ export interface Spektrum {
    *   spektrum.replay(spektrum.checkpoints.find(c => c.id === name).index + 1)
    */
   checkpoint(name: string, metadata?: any): void;
-  /** First-class derived value: re-computed when any `deps` path changes. */
+  /**
+   * First-class derived value. Primes synchronously from current state
+   * on registration (so registering after deps are populated still
+   * lands the initial value), then re-computes when any `deps` path
+   * changes. Writes to both state and delta so mid-tick reads see
+   * fresh values.
+   */
   computed(path: string, deps: string[], fn: (state: State) => any): () => void;
+  /**
+   * Async resource. Sets `${path}.loading` / `${path}.error` /
+   * `${path}.data` as the promise progresses. Each phase records
+   * through setValue (so the round-trip lands in history; replay
+   * re-applies the values without re-issuing the fetch). Returns the
+   * run function for refetching.
+   */
+  addAsync<T = any>(path: string, fn: () => Promise<T>): () => Promise<void>;
 
   /** Subscribe a system to one or more paths. Returns an unsubscribe function. */
   addSystem(paths: string[], fn: SystemFn): () => void;
+  /** Conventional alias for `addSystem`. Same signature. */
+  watch(deps: string[], fn: SystemFn): () => void;
   /** Detach the first system registered with `fn`. Returns true if removed. */
   removeSystem(fn: SystemFn): boolean;
   /** Register a named handler callable from `data-fn` attributes. */
@@ -246,7 +262,9 @@ export const trigger: Spektrum['trigger'];
 export const setValue: Spektrum['setValue'];
 export const checkpoint: Spektrum['checkpoint'];
 export const computed: Spektrum['computed'];
+export const addAsync: Spektrum['addAsync'];
 export const addSystem: Spektrum['addSystem'];
+export const watch: Spektrum['watch'];
 export const removeSystem: Spektrum['removeSystem'];
 export const defineFn: Spektrum['defineFn'];
 export const onError: Spektrum['onError'];

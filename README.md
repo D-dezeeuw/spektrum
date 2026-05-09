@@ -35,11 +35,17 @@ The rest is consequences.
 - Multiple isolated instances via `createSpektrum()`.
 - TypeScript declarations included.
 
-## What it doesn't do
+## What it doesn't do — explicit non-goals
 
-- No SSR or hydration. Client-only.
-- No router, store layer, or animation system. It's an engine, not a framework.
-- Templates are author-written. Expressions execute via `new Function` unless precompiled (same caveat as Vue/Alpine — don't accept untrusted templates).
+If any of these are deal-breakers for your project, **rule Spektrum out now** rather than discover it late:
+
+- **No SSR or hydration.** Client-only. The engine assumes a real DOM at bind time. Some orgs need server-rendered initial state for SEO or first-paint — Spektrum won't deliver that.
+- **No components or slots.** Compose via JS factories (`createSpektrum()`, plain functions that return DOM templates) — this is a deliberate stance, like Alpine. If you want `<MyButton>`-style template authoring, reach for Vue or Lit.
+- **No transitions system.** Use CSS classes + `:class="…"` for state-driven transitions; Spektrum gives you the binding, the browser does the animation.
+- **No router or store layer.** Engine, not framework. Bring your own routing (or use the `data-model`/`computed` primitives to roll a hash-based one in ~20 lines). State is just `appState` — no stores, no slices.
+- **Templates are author-written.** Expressions execute via `new Function` unless precompiled (same caveat as Vue/Alpine — don't accept untrusted templates).
+
+What's *coming* (1.x track): the parked Phase 2 items in the [RFC](.claude/references/RFC.md) — `data-intent`, `data-schema`, optional `test()` harness. Deferred until usage data shapes them.
 
 ## Install
 
@@ -183,14 +189,20 @@ Mutations write into an append-only `appStateDelta`. Each tick drains the delta 
 | `data-each ... data-key="expr"` | Keyed reconciliation. Items at the same key + index keep their DOM, listeners, focus, and selection. Without a key, the list rebuilds on each change (legacy behavior). |
 | `data-each ... data-key="expr" data-stable-key` | Reuse the *same* clone across reorder. Skips path rewriting on the cloned subtree, so reorder is genuinely free of UX cost (focus, scroll, input value, selection survive moves). Author opts in by promising the row's bindings don't reference `varName.*` paths — the engine warns at bind time if they do (see [Known trade-offs](#data-each-re-clones-moved-items-default-keyed-mode)). |
 | `data-model="path"` | Two-way binding for `<input>` / `<select>` / checkboxes. State → element via `:value`/`:checked`, element → state on `input`/`change` event. |
-| `data-model="path.lazy"` | Same as `data-model="path"`, but commits element → state on `change` instead of `input`. Useful for search boxes / time-travel apps where per-keystroke writes flood history. The `.lazy` suffix is reserved; if your state genuinely has a `lazy` leaf, route through `data-action="input"` + `data-fn="setValue"` instead. |
+| `data-model="path.<modifiers>"` | Trailing dot-separated modifiers, chainable (Vue-style). `.lazy` commits on `change` instead of `input`; `.number` coerces via `parseFloat` (NaN → original string); `.trim` trims whitespace before write. Example: `data-model="query.trim.lazy"`. The names are reserved suffixes — see footnote below. |
 | `data-ref="name"` | Expose the element on `instance.refs.name` for imperative access (`spektrum.refs.email.focus()`). |
 | `data-action="cycle"` + `data-fn` + `data-id` | Subscribe a registered fn to a path. |
-| `data-action="event[.modifier]*"` + `data-fn` | DOM-event dispatch. Modifiers: `.prevent` (preventDefault), `.stop` (stopPropagation), `.once` (auto-detach). |
+| `data-action="event[.modifier]*"` + `data-fn` | DOM-event dispatch. **Behavior:** `.prevent` / `.stop` / `.once` / `.self` (only when `event.target` is the bound element). **Listener options:** `.capture` / `.passive`. **Key gates:** `.enter` / `.esc` / `.tab` (key-match) and `.shift` / `.cmd` (system modifiers — Vue's `cmd` maps to `metaKey`). Chainable: `keydown.shift.enter` fires only on Shift+Enter. |
 
 Built-in `data-fn` handlers: `trigger`, `setValue`, `setText`, `setStyle`, `toggle`. Register your own with `defineFn(name, handler)`. Handler signature: `(el, state, delta, value, event?)`. The `event` argument is the DOM `Event` for `data-action="click"`-style bindings, or `undefined` for `data-action="cycle"` (subscription-driven, no event in scope).
 
-Derived state via `computed(path, deps, fn)` — primes synchronously from current state on registration (so registering after deps are already populated, e.g. after `loadHistory`, lands the initial value on the next tick), then re-runs when any `deps` change. Writes the result into `path`. Returns an unsubscribe handle.
+Derived state via `computed(path, deps, fn)` — primes synchronously from current state on registration (so registering after deps are already populated, e.g. after `loadHistory`, lands the initial value on the next tick), then re-derives whenever any `deps` change. Writes to both state and the delta so mid-tick reads see fresh values (a sibling system reading `state.derived` in the same pass gets the just-computed value, not the prior one). Returns an unsubscribe handle.
+
+Async resources via `addAsync(path, fn)` — sets `${path}.loading` / `${path}.error` / `${path}.data` as the Promise progresses. Each phase records through `setValue`, so the round-trip lands in history (replay re-applies the values; no actual fetch re-issues). Returns a refetch handle. Example: `const refetch = spektrum.addAsync('user', () => fetch('/api/user').then(r => r.json()))`. Bind with `data-if="user.loading"`, `{{user.error}}`, `{{user.data.name}}`.
+
+`watch(deps, fn)` is a public alias for `addSystem(deps, fn)` — same signature, conventional name.
+
+**Footnote on `data-model` reserved suffixes.** Modifier names (`lazy`, `number`, `trim`) are stripped from the right of the path string. If your state genuinely has a leaf literally named `lazy`/`number`/`trim`, route through `data-action="input"` + `data-fn="setValue"` directly to bypass modifier parsing.
 
 > **URL-attribute safety.** When `:href`, `:src`, `:action`, `:formaction`, `:background`, `:cite`, `:poster`, or `:data` evaluates to a string starting with `javascript:` (case-insensitive, leading whitespace ignored), Spektrum rewrites the value to `#`. This blocks the common XSS shape where an attacker-influenced value lands in an `<a :href>`. Other schemes (`https:`, `data:`, `mailto:`, etc.) pass through unchanged — review your own data sources if your threat model needs broader filtering.
 >
@@ -227,11 +239,11 @@ import spektrum, {
   // state (objects mutable; cursor/replaying are getters on the default instance)
   appState, appStateDelta, history, snapshots, forks, refs,
   // mutators
-  trigger, setValue, checkpoint,
+  trigger, setValue, checkpoint, addAsync,
   // derived state
   computed,
   // subscriptions & hooks
-  addSystem, removeSystem, defineFn, onError, onRecord, onFork,
+  addSystem, watch, removeSystem, defineFn, onError, onRecord, onFork,
   // lifecycle
   bindDOM, run, tick, replay, reset, resetState, serialize,
   // utility

@@ -604,23 +604,12 @@ test('data-stable-key preserves uncommitted input value across reorder', () => {
     'uncommitted input value survived reorder');
 });
 
-test('data-stable-key warns at bind time when template references the loop variable', (t) => {
-  const warnings = [];
-  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
-
-  document.body.innerHTML = `
-    <ul data-each="rows" data-as="row" data-key="row.id" data-stable-key>
-      <li>{{row.label}}</li>
-    </ul>`;
-  setValue('rows', [{ id: 1, label: 'a' }]);
-  bindDOM(document.body);
-  tick();
-
-  assert.ok(
-    warnings.some(w => /data-stable-key.*references "row"/.test(w)),
-    `expected stable-key foot-gun warn; got: ${JSON.stringify(warnings)}`,
-  );
-});
+// Note: the bind-time foot-gun warn for data-stable-key was dropped to
+// stay within the size budget. The contract (don't reference the loop
+// variable when data-stable-key is set) is documented in the README's
+// "Known trade-offs" section. The runtime behavior on misuse: stale
+// paths render against the wrong row after reorder — visible failure,
+// not silent corruption.
 
 test('data-stable-key without data-key does no path rewriting either', () => {
   // Edge case: data-stable-key without data-key. Without a key, every
@@ -1039,33 +1028,11 @@ test('reset() removes data-model input listener so rebind does not stack', () =>
     'one record per logical mutation; no stacked listeners');
 });
 
-// === Unknown data-action modifier warning (F-17) ===
-
-test('data-action with unknown modifier warns at bind time', (t) => {
-  const warnings = [];
-  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
-  document.body.innerHTML = `
-    <button data-action="click.preventdefault" data-fn="trigger" data-id="x" data-value="1" data-name="hit">+</button>`;
-  setValue('x', 0);
-  bindDOM(document.body);
-  assert.ok(
-    warnings.some(w => /unknown data-action modifier \.preventdefault/.test(w)),
-    `expected unknown-modifier warn; got: ${JSON.stringify(warnings)}`,
-  );
-});
-
-test('data-action with all known modifiers does not warn', (t) => {
-  const warnings = [];
-  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
-  document.body.innerHTML = `
-    <button data-action="click.prevent.stop.once" data-fn="trigger" data-id="x" data-value="1" data-name="hit">+</button>`;
-  setValue('x', 0);
-  bindDOM(document.body);
-  assert.equal(
-    warnings.filter(w => /unknown data-action modifier/.test(w)).length, 0,
-    'recognised modifiers must not warn',
-  );
-});
+// Note: the unknown-modifier bind-time warn (F-17) was dropped to free
+// byte budget after the 1.0-credibility batch. Typos like
+// "click.preventdefault" now silently fall off the modifier path —
+// listener fires as plain "click", no preventDefault. Documented as
+// a known footgun.
 
 // === Path extraction (F-12) ===
 

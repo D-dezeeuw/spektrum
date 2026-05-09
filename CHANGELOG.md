@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-05-10
+
+**Size trim back under 10 kB minified.** 0.5.0's 1.0-credibility batch grew the engine to 11.1 kB raw / 5.0 kB gzip — fast feedback was that the framing of "tiny" needed to actually stay tiny. This release pulls the bundle back to **10234 raw / 4728 gzip** (under the historic 10 kB / 4.7 kB markers) without losing a single feature. 871 B trimmed across multiple passes.
+
+### Changed
+
+- **Five dev-mode `console.warn` calls dropped to free byte budget.** Behavior on misuse is unchanged — only the warning that pointed at the misuse is gone:
+  - `data-stable-key` foot-gun warn (when the template referenced the loop variable). Misuse now produces visibly stale paths after reorder — easier to spot than silent corruption, and the README's "Known trade-offs" section documents the contract clearly.
+  - Unknown `data-action` modifier warn (e.g. `click.preventdefault` typo). Typos now silently fall off the modifier path; listener fires as plain `click`. Documented as a footgun.
+  - `reset()` detach warn (when called with active systems). `reset()` still clears systems; the warn that recommended `resetState()` was removed.
+  - `onError` / `onRecord` / `onFork` overwrite warns. Single-handler-per-instance semantics unchanged — later calls silently replace earlier. Pass `null` to clear.
+  - `defineFn` redefine warn. Same — silent replacement.
+- **`watch` is now `addSystem` directly** (`const watch = addSystem`) — same function reference. Previously a one-line wrapper; the wrapper added bytes for no behavior.
+- **`computed` writes to both state and delta** in a single derive closure — earlier eager-prime form duplicated the path-write logic across two places.
+- **Internal compaction across the engine.** Highlights:
+  - `RESERVED` Set → regex (~30 B saved at the path-extraction site).
+  - `escapeRegex` helper dropped — `varName` from `data-as` is always an identifier, so the escape was dead weight. `rewriteScope` and (now-dropped) data-stable-key warn used the unsanitised regex form.
+  - `applyClass` object branch uses `for...in` instead of `Object.entries` (~20 B).
+  - `deepMerge` is now chainable (`return target`); `stateSnapshot` collapses to one expression.
+  - `replay`'s snapshot-walk replaced with `Array.prototype.findLast` (~20 B).
+  - `record`'s snapshot loops use `snapshots.at(-1)?.index` and `snapshots[0]?.index` (~30 B).
+  - `addSystem`'s unsubscribe uses `~i &&` instead of `i !== -1` (~10 B).
+  - `bindAttrs` and `bindEach` cleanup loops tightened with `?.remove()` and inline iteration.
+  - `bindModel` writeEl/readEl simplified (`v ?? ''`, single ternary).
+  - `addAsync` shares a `set` helper closure across the four phase writes.
+  - `checkpointsOf` rewritten as `flatMap`.
+- **Size budget reset**: raw cap returned to 10240 (was 11264 in 0.5.0); gzip cap is now 4736 (was 5184). Future additions will need to fit OR justify a deliberate bump.
+- **README** — size claim back to "~10 kB minified (~4.7 kB gzipped)" since the engine is back under the 10 kB marker.
+
 ## [0.5.0] — 2026-05-10
 
 **Feature-complete pre-1.0.** This release closes the engineering side of the external 1.0-readiness review — every blocker addressed, every high-leverage should-have shipped. The remaining items in the [RFC](.claude/references/RFC.md) (Phase 2: `data-intent`, `data-schema`, optional `test()` harness) are explicitly deferred until usage data shapes them. Engine source crossed under the **1000-line marker** (999 lines including comments) — the "audit it in an afternoon" pitch is honest. 1.0 is now a relabel-and-marketing-moment away.

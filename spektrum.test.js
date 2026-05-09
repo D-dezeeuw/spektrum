@@ -15,7 +15,7 @@ import spektrum, {
   setValue, trigger, checkpoint, addSystem, watch, removeSystem,
   computed, addAsync,
   tick, replay, reset, resetState, serialize,
-  onError, onRecord, onFork, defineFn,
+  onError, onRecord, onFork,
   getPathObj, setPathValue, precompile,
 } from './spektrum.js';
 import { createSpektrum } from './spektrum.js';
@@ -808,45 +808,21 @@ test('tick max-iterations falls back to console.warn when no onError', (t) => {
   );
 });
 
-// === Hook-overwrite warnings (F-16) ===
+// Note: hook-overwrite and defineFn-redefine warnings (F-16) were
+// dropped in the 1.0 size trim. Single-handler-per-instance semantics
+// are unchanged — later calls silently replace earlier. The README's
+// "Error handling" section documents this. Pass `null` to clear.
 
-test('onError warns when overwriting an existing handler', (t) => {
-  const warnings = [];
-  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
-  onError(() => {});
-  assert.equal(warnings.length, 0, 'first set is silent');
-  onError(() => {});
-  assert.ok(warnings.some(w => /onError overwritten/.test(w)));
-});
-
-test('onRecord warns when overwriting; onFork too', (t) => {
-  const warnings = [];
-  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
-  onRecord(() => {});
-  onRecord(() => {});
-  onFork(() => {});
-  onFork(() => {});
-  assert.ok(warnings.some(w => /onRecord overwritten/.test(w)));
-  assert.ok(warnings.some(w => /onFork overwritten/.test(w)));
-});
-
-test('passing null to clear a hook does not warn', (t) => {
-  const warnings = [];
-  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
-  onError(() => {});
+test('hook setters silently replace earlier registrations', () => {
+  let aCalls = 0, bCalls = 0;
+  onError(() => aCalls++);
+  onError(() => bCalls++);  // replaces silently
+  addSystem(['x'], () => { throw new Error('boom'); });
+  setValue('x', 1);
+  tick();
+  assert.equal(aCalls, 0, 'first handler replaced');
+  assert.equal(bCalls, 1, 'second handler fires');
   onError(null);
-  onError(() => {});  // setting after explicit clear: silent
-  assert.equal(warnings.length, 0,
-    `expected no warn after null-clear; got: ${JSON.stringify(warnings)}`);
-});
-
-test('defineFn warns when redefining an existing name', (t) => {
-  const warnings = [];
-  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
-  defineFn('myFn', () => {});
-  assert.equal(warnings.length, 0, 'first definition is silent');
-  defineFn('myFn', () => {});
-  assert.ok(warnings.some(w => /defineFn myFn overwritten/.test(w)));
 });
 
 // === resetState / reset split ===
@@ -878,41 +854,15 @@ test('resetState() wipes state, history, snapshots, refs, forks', () => {
   assert.equal(spektrum.cursor, 0, 'cursor reset');
 });
 
-test('reset() warns when systems are present at call time', (t) => {
-  const warnings = [];
-  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+// Note: the reset-detach warn was dropped in the 1.0 trim. Behavior
+// unchanged — reset still clears systems — but the warning that
+// recommended `resetState` was removed. README's "Lifecycle" section
+// documents the distinction.
 
-  addSystem(['p'], () => {});
-  addSystem(['q'], () => {});
-  reset();
-
-  assert.ok(
-    warnings.some(w => /reset\(\) dropped 2 system\(s\)/.test(w)),
-    `expected detach warn; got: ${JSON.stringify(warnings)}`,
-  );
-});
-
-test('reset() does not warn when no systems are registered', (t) => {
-  const warnings = [];
-  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
-
-  // No systems registered yet (beforeEach already cleared).
-  reset();
-  assert.equal(
-    warnings.filter(w => /reset\(\) detached/.test(w)).length, 0,
-    `unexpected detach warn; got: ${JSON.stringify(warnings)}`,
-  );
-});
-
-test('reset() still clears systems after the warn', () => {
+test('reset() clears systems', () => {
   let calls = 0;
   addSystem(['x'], () => { calls++; });
-
-  // Silence the expected warn so test output stays clean.
-  const orig = console.warn;
-  console.warn = () => {};
-  try { reset(); } finally { console.warn = orig; }
-
+  reset();
   setValue('x', 1);
   tick();
   assert.equal(calls, 0, 'system cleared by reset()');

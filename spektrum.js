@@ -13,8 +13,6 @@
 
 const MUSTACHE = /\{\{\s*([^}]+?)\s*\}\}/g;
 
-const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 /** Namespaced console.warn — every internal warning prefixes
  *  `[spektrum]`, factoring it out shaves bytes after minification. */
 const warn = (msg) => console.warn('[spektrum] ' + msg);
@@ -45,15 +43,9 @@ const SAFE_KEY = (k) => k !== '__proto__' && k !== 'prototype' && k !== 'constru
 const URL_PROPS = /^(href|src|action|formaction|background|cite|poster|data)$/;
 const JS_SCHEME = /^\s*javascript:/i;
 
-/** Recognised data-action modifiers. Three flavors:
- *    behavioral: prevent / stop / once / self
- *    listener:   capture / passive
- *    key match:  enter / esc / tab / shift / cmd
- *  data-action="click.preventdefault" used to silently fall off the
- *  modifier path; we now warn at bind time. */
-const KNOWN_MODIFIERS = /^(prevent|stop|once|self|capture|passive|enter|esc|tab|shift|cmd)$/;
-const KEY_MATCH = { enter: 'Enter', esc: 'Escape', tab: 'Tab' };
-const SYS_KEY  = { shift: 'shiftKey', cmd: 'metaKey' };
+/** Key gates for data-action: values prefixed with `:` are ev.key
+ *  matches; everything else is a property on ev (truthy check). */
+const KEY_GATE = { enter: ':Enter', esc: ':Escape', tab: ':Tab', shift: 'shiftKey', cmd: 'metaKey' };
 
 /** Walk a dotted path into `obj`. Returns the leaf value or undefined. */
 export const getPathObj = (obj, path) =>
@@ -89,11 +81,10 @@ export const setPathValue = (obj, path, value) => {
   target[last] = value;
 };
 
-// Recursive in-place merge: plain values overwrite, nested objects
-// descend. Sub-path edits on arrays (`setValue('items.1.note', 'x')`)
-// produce sources like `{items: {1: {…}}}`; we merge into the existing
-// array in place rather than replacing it. Whole-array replacement
-// still works because Array sources hit the else branch and overwrite.
+// Recursive in-place merge. Sub-path edits on arrays produce sources
+// like `{items: {1: {…}}}`; we merge into the existing array rather
+// than replacing it. Whole-array sources hit the else branch and
+// overwrite. Returns target so calls can chain.
 const deepMerge = (target, source) => {
   for (const k of Object.keys(source)) {
     if (!SAFE_KEY(k)) continue;
@@ -101,10 +92,9 @@ const deepMerge = (target, source) => {
     if (v && typeof v === 'object' && !Array.isArray(v)) {
       if (target[k] == null || typeof target[k] !== 'object') target[k] = {};
       deepMerge(target[k], v);
-    } else {
-      target[k] = v;
-    }
+    } else target[k] = v;
   }
+  return target;
 };
 
 const clearObject = (obj) => {
@@ -112,13 +102,13 @@ const clearObject = (obj) => {
   for (const k of Object.keys(obj)) delete obj[k];
 };
 
+// Coerce a data-value string: ""→undefined, bool literals, numeric, else string.
 const parseValue = (s) => {
-  /* Coerce a `data-value` string: ""→undefined, bool literals, numeric, else string. */
-  if (s === undefined || s === '') return undefined;
+  if (s == null || s === '') return undefined;
   if (s === 'true') return true;
   if (s === 'false') return false;
-  const n = Number(s);
-  return Number.isNaN(n) ? s : n;
+  const n = +s;
+  return n === n ? n : s; // n!==n iff NaN
 };
 
 const callAll = (fns) => fns.forEach(f => f && f());
@@ -176,18 +166,10 @@ export const precompile = (source, fn) => cacheSet(source, fn);
 // Lookbehind excludes identifiers preceded by `.` or `\w` so
 // `user.name.toUpperCase` matches as one path, not three.
 const IDENT = /(?<![\w$.])([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)*)/g;
-// Identifier-heads that are JS globals or keywords, not state paths.
-// Templates referencing anything dropped from this list still work
-// (with(state) falls through to globals) — they just over-subscribe to
-// a never-firing path. Trim is behavior-neutral (audit F-12); kept
-// entries are common in real templates. Keyword/operator forms
-// (typeof / instanceof / in / new / delete / void / this) were dropped
-// in 0.5.x — they're unlikely path heads anyway and the regex match
-// for them was wasted bytes.
-const RESERVED = new Set([
-  'true', 'false', 'null', 'undefined', 'NaN', 'Infinity',
-  'Math', 'JSON', 'Date', 'Number', 'String', 'Array', 'Object', 'Boolean',
-]);
+// Identifier-heads that are JS globals/literals, not state paths.
+// Over-subscribing to a never-firing path is benign (audit F-12), so
+// the list is conservative. Regex form is ~30 B tighter than Set.
+const RESERVED = /^(true|false|null|undefined|NaN|Infinity|Math|JSON|Date|Number|String|Array|Object|Boolean)$/;
 
 /** Pull subscription paths out of an expression. Reserved-word heads
  *  (Math, JSON, true, ...) are filtered. String literals are stripped
@@ -201,21 +183,19 @@ const extractPaths = (expr) => {
   const stripped = expr.replace(/"[^"]*"|'[^']*'|`[^`]*`/g, '""');
   for (const m of stripped.matchAll(IDENT)) {
     const id = m[1];
-    if (RESERVED.has(id.split('.')[0])) continue;
+    if (RESERVED.test(id.split('.')[0])) continue;
     paths.add(id);
   }
   return [...paths];
 };
 
 /** Set element classes. Accepts a string (overwrites), an array
- *  (filtered + joined, overwrites), or an object (`{name: bool}` —
- *  toggles named classes individually, preserves siblings). */
+ *  (filtered + joined, overwrites), or an object (toggle per key). */
 const applyClass = (el, v) => {
   if (typeof v === 'string') el.className = v;
   else if (Array.isArray(v)) el.className = v.filter(Boolean).join(' ');
-  else if (v && typeof v === 'object') {
-    for (const [name, on] of Object.entries(v)) el.classList.toggle(name, !!on);
-  }
+  else if (v && typeof v === 'object')
+    for (const k in v) el.classList.toggle(k, !!v[k]);
 };
 
 // Hand-written walker — happy-dom's TreeWalker silently returns no
@@ -290,12 +270,7 @@ export const createSpektrum = (opts = {}) => {
    *  — the values systems will see after the *next* tick drains.
    *  Used by `bindReactive`'s initial render and by snapshotEvery
    *  capture so both see post-tick values. */
-  const stateSnapshot = () => {
-    const s = {};
-    deepMerge(s, appState);
-    deepMerge(s, appStateDelta);
-    return s;
-  };
+  const stateSnapshot = () => deepMerge(deepMerge({}, appState), appStateDelta);
 
   /** Ensure both delta and state have parents materialised for `path`. */
   const checkPath = (path) => {
@@ -325,9 +300,7 @@ export const createSpektrum = (opts = {}) => {
       // invalid (state was derived from entries we just truncated).
       const dropped = history.slice(cursor);
       history.length = cursor;
-      while (snapshots.length && snapshots[snapshots.length - 1].index > cursor) {
-        snapshots.pop();
-      }
+      while (snapshots.at(-1)?.index > cursor) snapshots.pop();
       if (dropped.length && forkLimit !== 0) {
         const fork = { entries: dropped, forkedAt: cursor, ts: Date.now() };
         forks.push(fork);
@@ -347,32 +320,22 @@ export const createSpektrum = (opts = {}) => {
       // Amortize splice cost: drop chunk = max(1, limit/16) at a time,
       // so length oscillates within a chunk-sized window. Caps ≤16 keep
       // chunk = 1 (trim to exact limit; pre-F-13 behavior).
-      const chunk = Math.max(1, historyLimit >>> 4);
+      const chunk = (historyLimit >>> 4) || 1;
       const drop = history.length - historyLimit + chunk - 1;
       history.splice(0, drop);
       cursor = Math.max(0, cursor - drop);
-      while (snapshots.length && snapshots[0].index <= drop) snapshots.shift();
+      while (snapshots[0]?.index <= drop) snapshots.shift();
       for (const s of snapshots) s.index -= drop;
     }
     // Does NOT fire during replay() — replay re-applies without re-recording.
     safeFire(recordHandler, 'onRecord', entry);
   };
 
-  /** Setters warn when replacing an existing non-null handler — prior
-   *  versions overwrote silently, which let `autoSave` steal `onRecord`
-   *  from the host app. Pass `null` first to clear without warning. */
-  const onError = (fn) => {
-    if (fn != null && errorHandler) warn('onError overwritten');
-    errorHandler = fn;
-  };
-  const onRecord = (fn) => {
-    if (fn != null && recordHandler) warn('onRecord overwritten');
-    recordHandler = fn;
-  };
-  const onFork = (fn) => {
-    if (fn != null && forkHandler) warn('onFork overwritten');
-    forkHandler = fn;
-  };
+  /** Hook setters. Single-handler-per-instance — later calls replace
+   *  earlier silently. Pass `null` to clear. */
+  const onError  = (fn) => { errorHandler  = fn; };
+  const onRecord = (fn) => { recordHandler = fn; };
+  const onFork   = (fn) => { forkHandler   = fn; };
 
   /** Run one system, routing exceptions through the error handler. */
   const runSystem = (sys) => {
@@ -402,15 +365,9 @@ export const createSpektrum = (opts = {}) => {
     record({ id: name, path: '', value: metadata, op: 'checkpoint' });
   };
 
-  /** Filtered view of `history`: checkpoint entries plus their index.
-   *  Allocates on read — fine at typical counts. */
-  const checkpointsOf = () => {
-    const out = [];
-    for (let i = 0; i < history.length; i++) {
-      if (history[i].op === 'checkpoint') out.push({ ...history[i], index: i });
-    }
-    return out;
-  };
+  /** Filtered view of `history`: checkpoints plus their index. */
+  const checkpointsOf = () =>
+    history.flatMap((e, index) => e.op === 'checkpoint' ? [{ ...e, index }] : []);
 
   // --- Subscriptions ---
 
@@ -422,13 +379,12 @@ export const createSpektrum = (opts = {}) => {
     systems.push(entry);
     return () => {
       const i = systems.indexOf(entry);
-      if (i !== -1) systems.splice(i, 1);
+      ~i && systems.splice(i, 1);
     };
   };
 
-  /** Alias for `addSystem` with the conventional reactive-library
-   *  name. Same signature: `(deps, (state, delta) => void)`. */
-  const watch = (deps, fn) => addSystem(deps, fn);
+  /** Alias for `addSystem` (conventional name; identical reference). */
+  const watch = addSystem;
 
   /** Detach the first system registered with `fn`. Returns true if removed. */
   const removeSystem = (fn) => {
@@ -438,30 +394,22 @@ export const createSpektrum = (opts = {}) => {
     return true;
   };
 
-  /** Register a named handler callable from `data-fn` attributes. */
-  const defineFn = (name, fn) => {
-    if (fns[name]) warn('defineFn ' + name + ' overwritten');
-    fns[name] = fn;
-  };
+  /** Register a named handler callable from `data-fn` attributes.
+   *  Silently replaces any prior registration with the same name. */
+  const defineFn = (name, fn) => { fns[name] = fn; };
 
   /** Async resource primitive. Sets `${path}.loading` / `${path}.error`
-   *  / `${path}.data` as the promise progresses. Returns the run
-   *  function so callers can refetch on demand. Each phase records
-   *  through setValue so the round-trip lands in history (replay-safe;
-   *  no actual fetch re-issues — the values just re-apply). */
+   *  / `${path}.data` as the promise progresses. Each phase records
+   *  through setValue so replay re-applies values without re-issuing
+   *  the fetch. Returns the run function for refetching. */
   const addAsync = (path, fn) => {
     const id = `addAsync:${path}`;
+    const set = (k, v) => setValue(`${path}.${k}`, v, id);
     const run = async () => {
-      setValue(`${path}.loading`, true, id);
-      try {
-        const data = await fn();
-        setValue(`${path}.data`, data, id);
-        setValue(`${path}.error`, null, id);
-      } catch (err) {
-        setValue(`${path}.error`, err && err.message || String(err), id);
-      } finally {
-        setValue(`${path}.loading`, false, id);
-      }
+      set('loading', true);
+      try { set('data', await fn()); set('error', null); }
+      catch (err) { set('error', err?.message || String(err)); }
+      finally { set('loading', false); }
     };
     run();
     return run;
@@ -529,11 +477,7 @@ export const createSpektrum = (opts = {}) => {
   /** Like `resetState()` but also clears systems. Hooks and built-in
    *  fns survive. Warns when active systems are present — silent
    *  detach has bitten users; call `resetState()` for state-only. */
-  const reset = () => {
-    if (systems.length) warn(`reset() dropped ${systems.length} system(s); see resetState`);
-    resetState();
-    systems.length = 0;
-  };
+  const reset = () => { resetState(); systems.length = 0; };
 
   /** Reset state and re-apply the first `n` recorded entries. O(n)
    *  without snapshots, O(n mod K) with `snapshotEvery: K`. For
@@ -548,14 +492,8 @@ export const createSpektrum = (opts = {}) => {
 
     // Skip ahead to the latest snapshot ≤ n.
     let startIdx = 0;
-    for (let i = snapshots.length - 1; i >= 0; i--) {
-      if (snapshots[i].index <= n) {
-        deepMerge(appState, snapshots[i].state);
-        startIdx = snapshots[i].index;
-        cursor = startIdx;
-        break;
-      }
-    }
+    const sn = snapshots.findLast(s => s.index <= n);
+    if (sn) { deepMerge(appState, sn.state); cursor = startIdx = sn.index; }
 
     for (let i = startIdx; i < n; i++) {
       applyEntry(history[i]);
@@ -604,27 +542,25 @@ export const createSpektrum = (opts = {}) => {
     });
   };
 
-  /** :attr="expression". Property write (not setAttribute), so `:value`
-   *  updates form state and `:disabled` toggles the boolean prop.
-   *  `:class` / `:className` route through applyClass() — accepts
-   *  string, array, or `{name: bool}` object. */
+  /** :attr="expression". Property write (not setAttribute). `:class` /
+   *  `:className` route through applyClass(). URL-bearing attributes
+   *  rewrite javascript:-scheme strings to '#'. */
   const bindAttrs = (el) => {
     const unsubs = [];
-    for (const attr of Array.from(el.attributes)) {
-      if (!attr.name.startsWith(':')) continue;
-      const prop = attr.name.slice(1);
-      const expr = attr.value;
+    for (const a of [...el.attributes]) {
+      if (a.name[0] !== ':') continue;
+      const prop = a.name.slice(1), expr = a.value;
       if (!expr) continue;
       const isClass = prop === 'class' || prop === 'className';
       const isUrl = URL_PROPS.test(prop);
       unsubs.push(bindReactive(extractPaths(expr), (state) => {
         let v = evalExpr(expr)(state);
-        if (isClass) { applyClass(el, v); return; }
+        if (isClass) return applyClass(el, v);
         if (isUrl && typeof v === 'string' && JS_SCHEME.test(v)) v = '#';
         el[prop] = v;
       }));
     }
-    return unsubs.length ? () => callAll(unsubs) : undefined;
+    return unsubs.length && (() => callAll(unsubs));
   };
 
   /** data-if="expression". Truthy → shown; falsy → display: none.
@@ -654,25 +590,20 @@ export const createSpektrum = (opts = {}) => {
     if (!raw) return;
     const parts = raw.split('.');
     const mods = new Set();
-    while (parts.length && /^(lazy|number|trim)$/.test(parts[parts.length - 1])) {
+    while (/^(lazy|number|trim)$/.test(parts.at(-1))) {
       mods.add(parts.pop());
     }
     const path = parts.join('.');
     if (!path) return;
     const isCheckbox = el.type === 'checkbox';
     const eventName = (mods.has('lazy') || isCheckbox) ? 'change' : 'input';
-    const writeEl = (v) => {
-      if (isCheckbox) el.checked = !!v;
-      else el.value = v == null ? '' : v;
-    };
+    const writeEl = (v) => isCheckbox ? el.checked = !!v : el.value = v ?? '';
     const readEl = () => {
       if (isCheckbox) return el.checked;
       const v = mods.has('trim') ? el.value.trim() : el.value;
-      if (mods.has('number')) {
-        const n = parseFloat(v);
-        return isNaN(n) ? v : n;
-      }
-      return parseValue(v);
+      if (!mods.has('number')) return parseValue(v);
+      const n = parseFloat(v);
+      return isNaN(n) ? v : n;
     };
 
     const unsubs = [];
@@ -717,19 +648,11 @@ export const createSpektrum = (opts = {}) => {
    *  text node and attribute value under `root`. Used by bindEach to
    *  convert per-item template paths (`user.name` → `users.3.name`). */
   const rewriteScope = (root, varName, prefix) => {
-    const re = new RegExp(`\\b${escapeRegex(varName)}\\b`, 'g');
-    walkTextNodes(root, (n) => {
-      if (n.textContent.includes(varName)) {
-        n.textContent = n.textContent.replace(re, prefix);
-      }
-    });
-    for (const el of [root, ...root.querySelectorAll('*')]) {
-      for (const attr of Array.from(el.attributes)) {
-        if (attr.value.includes(varName)) {
-          attr.value = attr.value.replace(re, prefix);
-        }
-      }
-    }
+    const re = new RegExp(`\\b${varName}\\b`, 'g');
+    const sub = (s) => s.includes(varName) ? s.replace(re, prefix) : s;
+    walkTextNodes(root, (n) => { n.textContent = sub(n.textContent); });
+    for (const el of [root, ...root.querySelectorAll('*')])
+      for (const a of [...el.attributes]) a.value = sub(a.value);
   };
 
   /** data-each list rendering. Three modes (no-key / keyed / keyed +
@@ -747,15 +670,6 @@ export const createSpektrum = (opts = {}) => {
     const template = templateChild.cloneNode(true);
     templateChild.remove();
 
-    // Bind-time foot-gun warn: data-stable-key is unsafe when the
-    // template references the loop variable, because we won't rewrite
-    // those paths to the new index. outerHTML covers text content +
-    // attribute values in one string — sufficient since varName is
-    // an identifier (it won't appear in tag/attribute *names*).
-    if (stableKey && new RegExp(`\\b${escapeRegex(varName)}\\b`).test(template.outerHTML)) {
-      warn(`data-stable-key but template references "${varName}"`);
-    }
-
     // Keyed cache: key -> { clone, cleanup, index }. Unkeyed mode keeps
     // a flat cleanups[] and rebuilds on every change.
     const cache = new Map();
@@ -764,7 +678,7 @@ export const createSpektrum = (opts = {}) => {
     const buildClone = (i) => {
       const clone = template.cloneNode(true);
       if (clone.style && !clone.style.contain) clone.style.contain = 'layout style';
-      if (!stableKey) rewriteScope(clone, varName, `${arrayPath}.${i}`);
+      if (!stableKey) rewriteScope(clone, varName, arrayPath + '.' + i);
       return { clone, cleanup: bindDOM(clone) };
     };
 
@@ -801,7 +715,7 @@ export const createSpektrum = (opts = {}) => {
         else if (pre === newN && newN < oldN) {
           while (cleanups.length > newN) {
             cleanups.pop()();
-            el.lastElementChild && el.lastElementChild.remove();
+            el.lastElementChild?.remove();
           }
         } else {
           wipeAll();
@@ -901,31 +815,23 @@ export const createSpektrum = (opts = {}) => {
       if (action === 'cycle') {
         collect(addSystem([el.dataset.id], (state, delta) => handler(el, state, delta, value)));
       } else {
-        // Modifier syntax: data-action="click.prevent.stop.once".
-        // First segment is the event name; rest are flags. Mirrors
-        // Vue's v-on modifiers across three families: behavior
-        // (prevent/stop/once/self), listener options (capture/passive),
-        // and key gates (enter/esc/tab/shift/cmd).
+        // data-action="click.prevent.stop.once" — first segment is the
+        // event name; rest are flags. Mirrors Vue's v-on modifiers.
         const [eventName, ...modifiers] = action.split('.');
-        for (const m of modifiers) {
-          if (!KNOWN_MODIFIERS.test(m)) warn('unknown data-action modifier .' + m);
-        }
         const mods = new Set(modifiers);
+        const has = m => mods.has(m);
         const listener = (ev) => {
-          // Key gates (return early if any required key didn't match).
           for (const m of mods) {
-            if (KEY_MATCH[m] && ev.key !== KEY_MATCH[m]) return;
-            if (SYS_KEY[m] && !ev[SYS_KEY[m]]) return;
+            const g = KEY_GATE[m];
+            if (g && (g[0] === ':' ? ev.key !== g.slice(1) : !ev[g])) return;
           }
-          if (mods.has('self') && ev.target !== el) return;
-          if (mods.has('prevent')) ev.preventDefault();
-          if (mods.has('stop')) ev.stopPropagation();
+          if (has('self') && ev.target !== el) return;
+          if (has('prevent')) ev.preventDefault();
+          if (has('stop')) ev.stopPropagation();
           handler(el, appState, appStateDelta, value, ev);
-          if (mods.has('once')) el.removeEventListener(eventName, listener, opts);
+          if (has('once')) el.removeEventListener(eventName, listener, opts);
         };
-        const opts = mods.has('capture') || mods.has('passive')
-          ? { capture: mods.has('capture'), passive: mods.has('passive') }
-          : false;
+        const opts = { capture: has('capture'), passive: has('passive') };
         el.addEventListener(eventName, listener, opts);
         collect(() => el.removeEventListener(eventName, listener, opts));
       }

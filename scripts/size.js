@@ -9,16 +9,14 @@
   transitive-dep tail dozens deep. zlib is built into Node.
 
   Tune the caps below as the surface area grows. Today the engine
-  prints around 11 kB raw / 5 kB gzipped; caps were bumped to
-  11264 / 5184 in the 0.5.0-track work to absorb the 1.0-credibility
-  batch: addAsync, watch alias, computed read-through fix, model
-  .number/.trim modifiers, data-action .self, .capture, .passive, and
-  the .enter/.esc/.tab/.shift/.cmd key modifiers. Earlier 0.4.x caps
-  were 10240/4672 (added checkpoint(), data-stable-key, append/pop
-  tail diff, structured onError, serialize()). The 1.0-batch crossed
-  ~860 B raw / ~360 B gzip; trims (RESERVED keyword/operator entries,
-  walkTextNodes inlined childNodes, F-12 regex inlined) had already
-  been applied. Adjust caps deliberately — every bump invites
+  prints around 10 kB raw / 4.7 kB gzipped. After 0.5.0 the bundle
+  briefly grew to 11.1 kB raw to absorb the 1.0-credibility batch
+  (addAsync, computed read-through, modifier sets); 0.5.1 brought it
+  back under 10 kB by dropping the dev-mode warns (data-stable-key
+  foot-gun, unknown-modifier, hook-overwrite, defineFn-redefine,
+  reset-detach) and tightening many internals (RESERVED → regex,
+  applyClass loop, deepMerge chainable, snapshot.at(-1), bitwise ~i
+  trick, etc). Adjust caps deliberately — every bump invites
   complacency. Trim before raising.
 */
 
@@ -31,7 +29,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 11264, gz: 5184 },
+  { file: 'spektrum.min.js',          raw: 10240, gz: 4736 },
   { file: 'spektrum-persist.min.js',  raw:  1024, gz:  576 },
   { file: 'spektrum-devtools.min.js', raw:  3072, gz: 1536 },
 ];

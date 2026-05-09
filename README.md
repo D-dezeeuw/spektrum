@@ -12,7 +12,7 @@
 A tiny templating engine with **time-travel built into the primitive**, deliberately auditable, drop-in, and CSP-safe.
 
 - **Time-travel.** Every mutation is recorded. `replay(n)` rebuilds any past state. Scrub a slider through it; ship undo without thinking. The optional `spektrum/devtools` panel renders the scrubber for you in dev.
-- **Auditable.** ~11 kB minified (5 kB gzipped), under 1000 lines of engine source, **zero runtime dependencies**, single file. Read it in an afternoon. The ecosystem keeps proving how fragile dependency sprawl is; Spektrum's design follows from that constraint.
+- **Auditable.** ~10 kB minified (~4.7 kB gzipped), under 1000 lines of engine source, **zero runtime dependencies**, single file. Read it in an afternoon. The ecosystem keeps proving how fragile dependency sprawl is; Spektrum's design follows from that constraint.
 - **Drop-in.** ESM from a `<script type="module">` tag — works in a plain HTML file, a WordPress theme, a browser extension, a CMS code block, an Electron renderer, anywhere you can write HTML. No bundler, no SPA framework, no `npm install` required. Pin a version: `https://unpkg.com/spektrum@<version>`.
 - **CSP-safe.** Out of the box, expressions compile via `new Function` (same caveat as Vue/Alpine). For deployments behind strict CSP that disable `unsafe-eval`, run `spektrum/compile` at build time — every template expression precompiles into a plain JS module, and the runtime never reaches the `Function` fallback.
 

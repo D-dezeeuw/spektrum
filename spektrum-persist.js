@@ -88,12 +88,11 @@ export const loadHistory = (spektrum, opts = {}) => {
 /**
  * Auto-save on every recorded mutation. Hooks into the engine's
  * `onRecord` so internal writes (e.g. `data-model` two-way bindings)
- * trigger a save the same way explicit `setValue` calls do.
- * Returns a stop() that detaches the hook.
+ * trigger a save the same way explicit `setValue` calls do. Returns a
+ * stop() that detaches just the autoSave hook — other onRecord
+ * subscribers (telemetry, supervisor mirrors, etc.) keep firing.
  *
- * Note: only one onRecord handler is active per instance — calling
- * autoSave replaces any prior handler. For high-frequency mutations
- * pass `{ debounce: 200 }` to coalesce writes.
+ * For high-frequency mutations pass `{ debounce: 200 }` to coalesce writes.
  */
 export const autoSave = (spektrum, opts = {}) => {
   let timer = null;
@@ -102,10 +101,10 @@ export const autoSave = (spektrum, opts = {}) => {
     ? () => { if (timer) clearTimeout(timer); timer = setTimeout(flush, opts.debounce); }
     : flush;
 
-  spektrum.onRecord(() => schedule());
+  const unsub = spektrum.onRecord(() => schedule());
 
   return () => {
     if (timer) clearTimeout(timer);
-    spektrum.onRecord(null);
+    unsub();
   };
 };

@@ -26,21 +26,20 @@ const warn = (msg) => console.warn('[spektrum] ' + msg);
 const SAFE_KEY = (k) => k !== '__proto__' && k !== 'prototype' && k !== 'constructor';
 
 /**
- * Property-write attributes that take a URL. When their bound
- * expression evaluates to a string starting with `javascript:`, we
- * rewrite to `#` so a stale path or attacker-influenced value can't
- * smuggle script execution through `<a :href="…">` and friends.
+ * `javascript:`-scheme guard for URL-bearing property writes. When a
+ * bound `:href` / `:src` / `:action` / `:formaction` / `:background` /
+ * `:cite` / `:poster` / `:data` evaluates to a string starting with
+ * `javascript:`, bindAttrs rewrites it to `#` so a stale path or
+ * attacker-influenced value can't smuggle script execution through
+ * `<a :href="…">` and friends. The URL-prop set is inlined at the
+ * single call site (bindAttrs).
  *
- * `srcdoc` is deliberately NOT included — its value is parsed as HTML,
- * not a URL, so a `javascript:` scheme check would give false
- * confidence. README documents that `:srcdoc` with untrusted input is
- * unsafe (same trust caveat as templates).
- *
- * `xlink:href` is also out of scope: the engine writes via property
- * (`el[prop] = v`), not `setAttribute`, and SVG navigation exposes no
- * `xlink:href` JS property — the binding is effectively dead-letter.
+ * `srcdoc` is deliberately NOT in the set — its value is parsed as
+ * HTML, not a URL, so a scheme check would give false confidence.
+ * `xlink:href` is also out of scope: we write via property, not
+ * `setAttribute`, and SVG navigation exposes no `xlink:href` JS
+ * property — the binding is effectively dead-letter.
  */
-const URL_PROPS = /^(href|src|action|formaction|background|cite|poster|data)$/;
 const JS_SCHEME = /^\s*javascript:/i;
 
 /** Key gates for data-action: values prefixed with `:` are ev.key
@@ -175,12 +174,11 @@ const RESERVED = /^(true|false|null|undefined|NaN|Infinity|Math|JSON|Date|Number
  *  (Math, JSON, true, ...) are filtered. String literals are stripped
  *  before scanning so identifiers inside quotes (e.g. `kind === 'foo'`)
  *  don't leak into the path set as spurious subscriptions. The strip
- *  regex is crude: it doesn't honour `\"` escapes — at worst the
- *  prior over-subscription behavior returns, which is benign (extra
- *  ticks, never wrong output). */
+ *  regex honours backslash escapes — `"foo \"bar\" baz"` collapses
+ *  cleanly without leaking `bar` as a subscription path. */
 const extractPaths = (expr) => {
   const paths = new Set();
-  const stripped = expr.replace(/"[^"]*"|'[^']*'|`[^`]*`/g, '""');
+  const stripped = expr.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, '""');
   for (const m of stripped.matchAll(IDENT)) {
     const id = m[1];
     if (RESERVED.test(id.split('.')[0])) continue;
@@ -245,11 +243,16 @@ export const createSpektrum = (opts = {}) => {
   const systems = [];
   const fns = {};
   const refs = {}; // DOM handles registered via data-ref="name"
+  const intents = {}; // semantic element registry: data-intent="verb.noun" → [el, …]
   let cursor = 0;
   let replaying = false;
-  let errorHandler = null;
-  let recordHandler = null;
-  let forkHandler = null;
+  // Hooks are multi-subscriber: each onX(fn) appends and returns an
+  // unsubscribe handle; onX(null) clears all. Pre-1.0 behavior was
+  // single-handler-replace, which silently collided when (e.g.)
+  // autoSave overwrote a user-registered onRecord.
+  const errorHandlers  = new Set();
+  const recordHandlers = new Set();
+  const forkHandlers   = new Set();
   let boundRoots = new WeakSet(); // tracks bindDOM roots for idempotency
   // All cleanup fns registered by bindDOM (DOM listeners, system unsubs).
   // reset() drains this so listeners don't leak across reset+rebind.
@@ -257,13 +260,15 @@ export const createSpektrum = (opts = {}) => {
 
   // --- Engine helpers (state-bound) ---
 
-  /** Fire a nullable hook with namespaced error logging. Centralises
-   *  the `if (h) try { h(...) } catch { console.error('[spektrum]
-   *  ${name} threw', err) }` pattern shared by every hook. */
-  const safeFire = (fn, name, ...args) => {
-    if (!fn) return;
-    try { fn(...args); }
-    catch (err) { console.error(`[spektrum] ${name} threw`, err); }
+  /** Fire every subscriber on a hook set, isolating each from the next
+   *  with namespaced error logging so one bad listener can't take the
+   *  others down. Iterating a Set during mutation is safe per spec —
+   *  added handlers fire, removed ones don't. */
+  const safeFire = (handlers, name, ...args) => {
+    for (const fn of handlers) {
+      try { fn(...args); }
+      catch (err) { console.error(`[spektrum] ${name} threw`, err); }
+    }
   };
 
   /** Snapshot of `appState` overlaid with the pending `appStateDelta`
@@ -305,7 +310,7 @@ export const createSpektrum = (opts = {}) => {
         const fork = { entries: dropped, forkedAt: cursor, ts: Date.now() };
         forks.push(fork);
         if (forks.length > forkLimit) forks.splice(0, forks.length - forkLimit);
-        safeFire(forkHandler, 'onFork', fork);
+        safeFire(forkHandlers, 'onFork', fork);
       }
     }
     applyEntry(entry);
@@ -328,20 +333,26 @@ export const createSpektrum = (opts = {}) => {
       for (const s of snapshots) s.index -= drop;
     }
     // Does NOT fire during replay() — replay re-applies without re-recording.
-    safeFire(recordHandler, 'onRecord', entry);
+    safeFire(recordHandlers, 'onRecord', entry);
   };
 
-  /** Hook setters. Single-handler-per-instance — later calls replace
-   *  earlier silently. Pass `null` to clear. */
-  const onError  = (fn) => { errorHandler  = fn; };
-  const onRecord = (fn) => { recordHandler = fn; };
-  const onFork   = (fn) => { forkHandler   = fn; };
+  /** Hook setters. Each call appends a new subscriber and returns an
+   *  unsubscribe handle. Pass `null` to clear every subscriber on that
+   *  hook (the way `autoSave(stop)` and tests do teardown). */
+  const sub = (set) => (fn) => {
+    if (fn === null) return set.clear();
+    set.add(fn);
+    return () => set.delete(fn);
+  };
+  const onError  = sub(errorHandlers);
+  const onRecord = sub(recordHandlers);
+  const onFork   = sub(forkHandlers);
 
-  /** Run one system, routing exceptions through the error handler. */
+  /** Run one system, routing exceptions through the error handlers. */
   const runSystem = (sys) => {
     try { sys.fn(appState, appStateDelta); }
     catch (err) {
-      if (errorHandler) safeFire(errorHandler, 'onError', err, sys.fn);
+      if (errorHandlers.size) safeFire(errorHandlers, 'onError', err, sys.fn);
       else console.error('[spektrum] system threw', err);
     }
   };
@@ -395,8 +406,10 @@ export const createSpektrum = (opts = {}) => {
   };
 
   /** Register a named handler callable from `data-fn` attributes.
-   *  Silently replaces any prior registration with the same name. */
-  const defineFn = (name, fn) => { fns[name] = fn; };
+   *  Silently replaces any prior registration with the same name.
+   *  Optional `meta` ({ description, input, output, examples }) is
+   *  attached to the function for `describe()` / MCP introspection. */
+  const defineFn = (name, fn, meta) => { if (meta) fn.meta = meta; fns[name] = fn; };
 
   /** Async resource primitive. Sets `${path}.loading` / `${path}.error`
    *  / `${path}.data` as the promise progresses. Each phase records
@@ -434,7 +447,7 @@ export const createSpektrum = (opts = {}) => {
       if (iterations++ > 1024) {
         const err = new Error('tick: max iterations exceeded');
         err.code = 'E_TICK_OVERFLOW';
-        if (errorHandler) safeFire(errorHandler, 'onError', err, null);
+        if (errorHandlers.size) safeFire(errorHandlers, 'onError', err, null);
         else warn('tick: max iterations exceeded');
         clearObject(appStateDelta);
         return;
@@ -552,7 +565,7 @@ export const createSpektrum = (opts = {}) => {
       const prop = a.name.slice(1), expr = a.value;
       if (!expr) continue;
       const isClass = prop === 'class' || prop === 'className';
-      const isUrl = URL_PROPS.test(prop);
+      const isUrl = /^(href|src|action|formaction|background|cite|poster|data)$/.test(prop);
       unsubs.push(bindReactive(extractPaths(expr), (state) => {
         let v = evalExpr(expr)(state);
         if (isClass) return applyClass(el, v);
@@ -621,6 +634,23 @@ export const createSpektrum = (opts = {}) => {
     if (!name) return;
     refs[name] = el;
     return () => { delete refs[name]; };
+  };
+
+  /** data-intent="verb.noun" — semantic locator for agentic tooling.
+   *  Multiple elements can share an intent; intents[name] is an array.
+   *  Looked up via `findByIntent(name)` and surfaced in `describe()`.
+   *  Pure marker — no runtime behavior; siblings (data-action, data-model,
+   *  data-fn) decide what the element does. */
+  const bindIntent = (el) => {
+    const name = el.dataset.intent;
+    if (!name) return;
+    (intents[name] ||= []).push(el);
+    return () => {
+      const a = intents[name];
+      const i = a?.indexOf(el);
+      if (i >= 0) a.splice(i, 1);
+      if (!a?.length) delete intents[name];
+    };
   };
 
   /** Derived state. Primes synchronously from current state on
@@ -764,6 +794,41 @@ export const createSpektrum = (opts = {}) => {
     });
   };
 
+  /** data-action — `cycle` (subscription) or `event[.modifier]*`
+   *  (DOM event listener). Extracted so bindDOM's main walk can
+   *  treat it like every other per-element binder. */
+  const bindAction = (el) => {
+    const action = el.dataset.action;
+    const handler = fns[el.dataset.fn];
+    if (!handler) {
+      console.warn(`[spektrum] unknown data-fn "${el.dataset.fn}"`, el);
+      return;
+    }
+    const value = parseValue(el.dataset.value);
+    if (action === 'cycle') {
+      return addSystem([el.dataset.id], (state, delta) => handler(el, state, delta, value));
+    }
+    // data-action="click.prevent.stop.once" — first segment is the
+    // event name; rest are flags. Mirrors Vue's v-on modifiers.
+    const [eventName, ...modifiers] = action.split('.');
+    const mods = new Set(modifiers);
+    const has = m => mods.has(m);
+    const listener = (ev) => {
+      for (const m of mods) {
+        const g = KEY_GATE[m];
+        if (g && (g[0] === ':' ? ev.key !== g.slice(1) : !ev[g])) return;
+      }
+      if (has('self') && ev.target !== el) return;
+      if (has('prevent')) ev.preventDefault();
+      if (has('stop')) ev.stopPropagation();
+      handler(el, appState, appStateDelta, value, ev);
+      if (has('once')) el.removeEventListener(eventName, listener, opts);
+    };
+    const opts = { capture: has('capture'), passive: has('passive') };
+    el.addEventListener(eventName, listener, opts);
+    return () => el.removeEventListener(eventName, listener, opts);
+  };
+
   // --- bindDOM: top-level scan ---
 
   /**
@@ -772,14 +837,13 @@ export const createSpektrum = (opts = {}) => {
    * calling bindDOM(sameRoot) twice is a no-op until destroy() runs.
    *
    * Pass order:
-   *   1. [data-each]   — must be first, to detach per-item templates
-   *                      before other scans walk into them
-   *   2. {{expr}}      text nodes
-   *   3. :attr="expr"
-   *   4. [data-if]
-   *   5. [data-model]
-   *   6. [data-ref]
-   *   7. [data-action] (cycle systems + DOM event listeners)
+   *   1. [data-each]    — first, to detach per-item templates before
+   *                       other scans walk into them
+   *   2. {{expr}}       — text nodes
+   *   3. one walk over every element: :attr, data-if/model/ref/intent/
+   *      action — each binder early-returns when its attribute is
+   *      absent, so the cost of "ask every element" is just the
+   *      hasAttribute check. data-cloak is stripped on the same pass.
    */
   const bindDOM = (root) => {
     root = root || document;
@@ -799,49 +863,22 @@ export const createSpektrum = (opts = {}) => {
 
     walkTextNodes(root, (n) => collect(bindText(n)));
 
-    for (const el of root.querySelectorAll('*')) collect(bindAttrs(el));
-    for (const el of root.querySelectorAll('[data-if]')) collect(bindIf(el));
-    for (const el of root.querySelectorAll('[data-model]')) collect(bindModel(el));
-    for (const el of root.querySelectorAll('[data-ref]')) collect(bindRef(el));
-
-    for (const el of root.querySelectorAll('[data-action]')) {
-      const action = el.dataset.action;
-      const handler = fns[el.dataset.fn];
-      if (!handler) {
-        console.warn(`[spektrum] unknown data-fn "${el.dataset.fn}"`, el);
-        continue;
-      }
-      const value = parseValue(el.dataset.value);
-      if (action === 'cycle') {
-        collect(addSystem([el.dataset.id], (state, delta) => handler(el, state, delta, value)));
-      } else {
-        // data-action="click.prevent.stop.once" — first segment is the
-        // event name; rest are flags. Mirrors Vue's v-on modifiers.
-        const [eventName, ...modifiers] = action.split('.');
-        const mods = new Set(modifiers);
-        const has = m => mods.has(m);
-        const listener = (ev) => {
-          for (const m of mods) {
-            const g = KEY_GATE[m];
-            if (g && (g[0] === ':' ? ev.key !== g.slice(1) : !ev[g])) return;
-          }
-          if (has('self') && ev.target !== el) return;
-          if (has('prevent')) ev.preventDefault();
-          if (has('stop')) ev.stopPropagation();
-          handler(el, appState, appStateDelta, value, ev);
-          if (has('once')) el.removeEventListener(eventName, listener, opts);
-        };
-        const opts = { capture: has('capture'), passive: has('passive') };
-        el.addEventListener(eventName, listener, opts);
-        collect(() => el.removeEventListener(eventName, listener, opts));
-      }
+    // Single walk over every descendant. Replaces 5 separate
+    // querySelectorAll calls (one per directive) plus the dedicated
+    // data-cloak strip pass — same behavior, fewer tree traversals.
+    for (const el of root.querySelectorAll('*')) {
+      collect(bindAttrs(el));
+      const ds = el.dataset;
+      if (ds.if     !== undefined) collect(bindIf(el));
+      if (ds.model  !== undefined) collect(bindModel(el));
+      if (ds.ref    !== undefined) collect(bindRef(el));
+      if (ds.intent !== undefined) collect(bindIntent(el));
+      if (ds.action !== undefined) collect(bindAction(el));
+      el.removeAttribute('data-cloak');
     }
-
-    // Strip data-cloak last so author-controlled pre-paint hiding via
-    // a `[data-cloak] { display: none }` rule releases atomically once
-    // every binding has rendered against state.
-    [root, ...root.querySelectorAll('[data-cloak]')]
-      .forEach(el => el.removeAttribute?.('data-cloak'));
+    // root itself wasn't in the walk above (querySelectorAll excludes
+    // it); strip its data-cloak too. Optional chain for `document`.
+    root.removeAttribute?.('data-cloak');
 
     return () => {
       boundRoots.delete(root);
@@ -860,6 +897,79 @@ export const createSpektrum = (opts = {}) => {
     if (opts.includeForks) out.forks = forks;
     return JSON.stringify(out);
   };
+
+  // === Agent surface ===
+  // describe / explain / attempt / findByIntent — introspection and
+  // speculative-execution affordances designed for AI agents (and
+  // useful to humans). The engine is small enough to fit in any
+  // model's context; these methods turn that into a complete
+  // operational manifest the agent can read and reason over.
+
+  /** Operational manifest of the running instance. Returns plain JSON
+   *  so an agent (or supervisor / dashboard) can read everything in
+   *  one call: current state, registered systems and their subscribed
+   *  paths, fns and their declared schemas, named refs, registered
+   *  semantic intents, checkpoints, and history shape. Cheap — no
+   *  serialization of history entries themselves. Pair with serialize()
+   *  when the agent needs the full mutation log. */
+  const describe = () => ({
+    state: appState,
+    cursor,
+    historyLength: history.length,
+    forkCount: forks.length,
+    snapshotCount: snapshots.length,
+    options: { historyLimit, snapshotEvery, forkLimit },
+    systems: systems.map(s => ({ paths: s.paths, name: s.fn.name || '' })),
+    fns: Object.entries(fns).map(([n, f]) => ({ name: n, ...(f.meta || {}) })),
+    refs: Object.keys(refs),
+    intents: Object.fromEntries(Object.entries(intents).map(([k, v]) => [k, v.length])),
+    checkpoints: checkpointsOf(),
+  });
+
+  /** Causal trace over a history range. Each entry is annotated with
+   *  the systems whose subscriptions intersect its path — i.e. who
+   *  *would* have fired in response. Useful for an agent reconstructing
+   *  why state moved. Note: subscriber set is the CURRENT registry, not
+   *  a historical record of who actually fired (engine doesn't preserve
+   *  that). For most cases — agents reading their own recent edits —
+   *  the two coincide. */
+  const explain = (opts = {}) => {
+    const from = Math.max(0, opts.from ?? 0);
+    const to = Math.min(history.length, opts.to ?? history.length);
+    return history.slice(from, to).map((e, i) => ({
+      ...e,
+      index: from + i,
+      triggers: e.op === 'checkpoint' ? [] : systems
+        .filter(s => s.paths.some(p =>
+          p === e.path || e.path.startsWith(p + '.') || p.startsWith(e.path + '.')))
+        .map(s => s.fn.name || ''),
+    }));
+  };
+
+  /** Speculative execution. Drops a checkpoint, runs `fn`, returns a
+   *  handle the caller uses to commit (mark in history) or discard
+   *  (replay back to before the checkpoint, sending the speculative
+   *  entries to `forks` on the next mutation). `fn` may return a value
+   *  or a Promise — the caller awaits and decides.
+   *
+   *    const h = spektrum.attempt('apply-edit', () => editFn());
+   *    if (await validate(h.result)) h.commit(); else h.discard();
+   */
+  const attempt = (name, fn) => {
+    const start = cursor;
+    checkpoint(`attempt:${name}`);
+    const result = fn();
+    return {
+      result,
+      commit:  () => checkpoint(`attempt:${name}:commit`),
+      discard: () => replay(start),
+    };
+  };
+
+  /** Locate elements by their declared `data-intent`. Returns a copy
+   *  so the caller can iterate without racing the registry. Empty
+   *  array when no element carries the intent. */
+  const findByIntent = (name) => intents[name]?.slice() || [];
 
   // --- Built-in fns (registered per instance) ---
 
@@ -883,13 +993,14 @@ export const createSpektrum = (opts = {}) => {
   // --- Public API of the instance ---
 
   return {
-    appState, appStateDelta, history, snapshots, forks, refs,
+    appState, appStateDelta, history, snapshots, forks, refs, intents,
     get cursor() { return cursor; },
     get replaying() { return replaying; },
     get checkpoints() { return checkpointsOf(); },
     trigger, setValue, checkpoint, computed, addAsync,
     addSystem, watch, removeSystem, defineFn, onError, onRecord, onFork,
     bindDOM, run, tick, replay, reset, resetState, serialize,
+    describe, explain, attempt, findByIntent,
   };
 };
 
@@ -898,8 +1009,9 @@ export const createSpektrum = (opts = {}) => {
 const _default = createSpektrum();
 export default _default;
 export const {
-  appState, appStateDelta, history, snapshots, forks, refs,
+  appState, appStateDelta, history, snapshots, forks, refs, intents,
   trigger, setValue, checkpoint, computed, addAsync,
   addSystem, watch, removeSystem, defineFn, onError, onRecord, onFork,
   bindDOM, run, tick, replay, reset, resetState, serialize,
+  describe, explain, attempt, findByIntent,
 } = _default;

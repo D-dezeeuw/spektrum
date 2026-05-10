@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-05-10
+
+**The relabel.** Every blocker from the external 1.0-readiness review shipped in 0.5.0; the agent-native surface added in 0.6 went well beyond it. This release stamps the version that's been ready for months and packages it with a small ergonomic fix that's been overdue.
+
+The framing is unchanged: a tiny, deliberately auditable reactive engine with time-travel as a primitive and a first-class agent surface. ~11.5 kB minified, zero runtime dependencies, single file. The whole engine still fits in your head — and now in any LLM's context window in one tool call.
+
+### Breaking changes
+
+- **Hooks (`onError`, `onRecord`, `onFork`) are now multi-subscriber.** Each call appends a subscriber and returns an unsubscribe handle; `onX(null)` clears all subscribers on that hook. Pre-1.0 behavior was single-handler-replace, which silently collided when (e.g.) `autoSave` overwrote a user-registered `onRecord`. The collision is the whole reason for the change.
+  - **Migration.** Most code keeps working unchanged: `onError(fn)` still installs the handler, `onError(null)` still clears. The two cases that need attention:
+    1. Code that relied on the second `onX(fn)` *replacing* the first (rather than appending) — no longer correct. Capture the unsub from the first call and call it before installing the second.
+    2. `autoSave`'s teardown previously ran `spektrum.onRecord(null)`, which would have wiped any user telemetry hook installed alongside it. The bundled `autoSave` now uses the returned unsub; if you wrote a custom autosave-style helper, do the same.
+
+### Added
+
+- **Agent-native surface (recap from the 0.6 line that landed pre-1.0):**
+  - `describe()` — operational manifest in one call (state, registered systems, fns + schemas, refs, intents, checkpoints, history shape).
+  - `explain({ from, to })` — causal trace over a history range, each entry annotated with the systems whose subscriptions intersect its path.
+  - `attempt(name, fn)` — speculative execution: drops a checkpoint, runs `fn`, returns a `{ result, commit, discard }` handle.
+  - `findByIntent(name)` — locates elements by their declared `data-intent="verb.noun"` semantic marker.
+  - `defineFn(name, fn, meta?)` — optional `meta` ({ description, input, output, examples }) for self-describing verb catalogs.
+- **`data-intent` directive** — semantic locator for agentic tooling. Pure marker; no runtime behavior.
+- **`spektrum/mcp`** — SDK-agnostic MCP tool catalog. `createTools(spektrum)` returns plain JS tool definitions wireable into any MCP server SDK.
+- **`spektrum/agent`** — in-page LLM assistant. Floating chat panel that drives the engine via the agent surface. Supports Anthropic, OpenAI, and OpenRouter via a per-provider settings UI.
+- **`AGENTS.md`** at the repo root — agent workflow tutorial (orient → speculate → explain → commit). Covers the in-page panel and the MCP catalog.
+
+### Changed
+
+- **`extractPaths` regex now honors backslash-escaped quotes.** Previously a string literal with `\"` could leak identifiers as spurious subscriptions. Failure mode was benign over-subscription; the fix is ~20 bytes for a tighter guarantee.
+- **README slimmed from ~676 lines to ~120.** Reference material moved to `docs/`. The README is now the front door (pitch, quick start, install, showcase, docs index); the depth lives in eight focused topical files. Plain Markdown, no docs framework.
+- **Documentation index at `docs/README.md`** — GitHub renders it natively when you visit `/docs/`. Cross-linked via relative paths.
+
+### Optimized
+
+A pre-release optimization pass against the 1.0 snapshot — pure refactors, behavior-equivalent, ~370 B raw saved across the engine + agent module. All measured, kept only the wins.
+
+- **`bindDOM` single-walk consolidation.** Five separate `querySelectorAll` calls (one per directive) plus the dedicated `[data-cloak]` strip pass collapsed into one walk over `*` that dispatches on `el.dataset.X !== undefined`. Same behavior, fewer tree traversals, also ~150 B raw saved on the engine bundle. The inline `data-action` handling extracted into a `bindAction(el)` helper to fit the per-element-binder pattern.
+- **OpenAI/OpenRouter adapter merge** in `spektrum-agent.js`. Both speak the same chat-completions shape; only URL + a couple of attribution headers differ. Refactored into a shared `openaiCall(url, extraHeaders)` factory. Same behavior, ~30% less code in that section, ~216 B raw saved.
+- **`URL_PROPS` regex inlined** at its single call site in `bindAttrs`. Named const removed.
+- **Built-in `data-fn` table form attempted** but reverted: measured at +7 B raw vs. the original 5 individual `defineFn(...)` calls. The loop overhead and object literal wrapper exceeded the bytes saved on the calls; original form kept.
+- **`safeFire` inlining attempted but skipped before implementation:** has 4 call sites (errorHandlers fires twice — system-throw and tick-overflow), inlining would have added ~170 B not saved.
+
+### Removed
+
+- **Pre-1.0 status callout from the README.** The "feature-complete pre-1.0" framing has been true since 0.5.0; the 0.6 batch made it overdue. 1.0 means nothing about new capability — it means "we're confident the API surface is what we said it would be."
+
 ## [0.5.1] — 2026-05-10
 
 **Size trim back under 10 kB minified.** 0.5.0's 1.0-credibility batch grew the engine to 11.1 kB raw / 5.0 kB gzip — fast feedback was that the framing of "tiny" needed to actually stay tiny. This release pulls the bundle back to **10234 raw / 4728 gzip** (under the historic 10 kB / 4.7 kB markers) without losing a single feature. 871 B trimmed across multiple passes.

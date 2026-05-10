@@ -16,8 +16,11 @@
   foot-gun, unknown-modifier, hook-overwrite, defineFn-redefine,
   reset-detach) and tightening many internals (RESERVED → regex,
   applyClass loop, deepMerge chainable, snapshot.at(-1), bitwise ~i
-  trick, etc). Adjust caps deliberately — every bump invites
-  complacency. Trim before raising.
+  trick, etc). 1.0 (which absorbed the 0.6 agent-native surface —
+  describe / explain / attempt / findByIntent / data-intent
+  registration / defineFn metadata) raises the cap to 11.5 kB raw /
+  5.25 kB gz; multi-subscriber hooks added a bit more. Adjust caps
+  deliberately — every bump invites complacency. Trim before raising.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -29,9 +32,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 10240, gz: 4736 },
+  { file: 'spektrum.min.js',          raw: 11776, gz: 5376 },
   { file: 'spektrum-persist.min.js',  raw:  1024, gz:  576 },
   { file: 'spektrum-devtools.min.js', raw:  3072, gz: 1536 },
+  { file: 'spektrum-mcp.min.js',      raw:  5120, gz: 2048 },
+  { file: 'spektrum-agent.min.js',    raw: 13312, gz: 5120 },
 ];
 
 let failed = false;

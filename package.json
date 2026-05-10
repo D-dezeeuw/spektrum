@@ -1,6 +1,6 @@
 {
   "name": "spektrum",
-  "version": "0.5.1",
+  "version": "1.0.0",
   "description": "Tiny reactive engine with HTML bindings and time-travel. ~10kB, zero deps.",
   "type": "module",
   "main": "./spektrum.js",
@@ -20,6 +20,12 @@
     },
     "./persist": {
       "import": "./spektrum-persist.js"
+    },
+    "./mcp": {
+      "import": "./spektrum-mcp.js"
+    },
+    "./agent": {
+      "import": "./spektrum-agent.js"
     }
   },
   "files": [
@@ -30,14 +36,18 @@
     "spektrum-devtools.js",
     "spektrum-devtools.min.js",
     "spektrum-persist.js",
-    "spektrum-persist.min.js"
+    "spektrum-persist.min.js",
+    "spektrum-mcp.js",
+    "spektrum-mcp.min.js",
+    "spektrum-agent.js",
+    "spektrum-agent.min.js"
   ],
   "scripts": {
     "start": "python3 -m http.server 8088",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage",
     "lint": "eslint .",
-    "build": "esbuild spektrum.js spektrum-persist.js spektrum-devtools.js --minify --format=esm --outdir=. --out-extension:.js=.min.js --legal-comments=none",
+    "build": "esbuild spektrum.js spektrum-persist.js spektrum-devtools.js spektrum-mcp.js spektrum-agent.js --minify --format=esm --outdir=. --out-extension:.js=.min.js --legal-comments=none",
     "size": "node scripts/size.js"
   },
   "keywords": [

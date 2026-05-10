@@ -62,6 +62,9 @@ counter.addSystem(['count'], seedCounter);
 
 counter.defineFn('undo', () => {
   counter.replay(Math.max(0, counter.cursor - 1));
+}, {
+  description: 'Step the cursor back one history entry. Pure replay; nothing is recorded.',
+  input: { type: 'object', properties: {}, additionalProperties: false },
 });
 
 // restoreFork: rewind to where the fork was discarded, then re-apply
@@ -84,7 +87,9 @@ const restoreFork = (instance) => (el) => {
   instance.forks.splice(idx, 1);
   mirrorForks(instance, instance.appStateDelta);
 };
-counter.defineFn('restoreFork', restoreFork(counter));
+counter.defineFn('restoreFork', restoreFork(counter), {
+  description: 'Re-apply a discarded future from spektrum.forks at the indicated index. Reads data-id="forkSummary.<i>".',
+});
 
 counter.bindDOM(document.getElementById('counter'));
 counter.run();
@@ -129,6 +134,12 @@ basket.defineFn('addKind', (el, state, delta) => {
     [...current, { id: nextId++, label: el.dataset.name, note: '' }],
     `add ${el.dataset.name}`,
   );
+}, {
+  description: 'Append a fruit to basket.items. Reads the label from the element\'s data-name attribute.',
+  input: {
+    type: 'object',
+    properties: { 'data-name': { type: 'string', description: 'Display label for the new row.' } },
+  },
 });
 
 // removeAt: data-id is rewritten by data-each from "item" to "items.<i>"
@@ -145,13 +156,19 @@ basket.defineFn('removeAt', (el, state, delta) => {
     current.filter((_, idx) => idx !== i),
     `remove ${i}`,
   );
+}, {
+  description: 'Remove a row from basket.items by index. Reads the index from data-id="items.<i>".',
 });
 
 basket.defineFn('undo', () => {
   basket.replay(Math.max(0, basket.cursor - 1));
+}, {
+  description: 'Step the cursor back one history entry. Pure replay; nothing is recorded.',
 });
 
-basket.defineFn('restoreFork', restoreFork(basket));
+basket.defineFn('restoreFork', restoreFork(basket), {
+  description: 'Re-apply a discarded future from spektrum.forks at the indicated index.',
+});
 
 // resetAll: footer link uses data-action="click.prevent" so the
 // `<a href="#">` doesn't navigate. Clear both stores and reload —
@@ -160,6 +177,8 @@ basket.defineFn('resetAll', () => {
   localStorage.removeItem(counterKey);
   localStorage.removeItem(basketKey);
   location.reload();
+}, {
+  description: 'Wipe persisted history for both demo instances and reload. Destructive — no confirm.',
 });
 
 basket.bindDOM(document.getElementById('basket'));
@@ -225,4 +244,48 @@ const makeCollapsible = (root, { startCollapsed = false } = {}) => {
 
 for (const root of document.querySelectorAll('[data-spektrum-devtools]')) {
   makeCollapsible(root, { startCollapsed: small });
+}
+
+// === Agent surface playground ===
+//
+// Both instances are exposed on `window.spektrum` so anyone (or any
+// in-browser agent) can drive them from devtools console:
+//
+//   spektrum.basket.describe()                       // full manifest
+//   spektrum.basket.findByIntent('basket.add')       // [el, el, el, el]
+//   spektrum.counter.attempt('+5', () => {           // speculative edit
+//     for (let i = 0; i < 5; i++)
+//       spektrum.counter.trigger('inc', 'count', 1);
+//   })                                                // → { result, commit, discard }
+//   spektrum.counter.explain({ from: spektrum.counter.history.length - 5 })
+//
+// See AGENTS.md in the repo root for a full agent workflow tutorial.
+window.spektrum = { counter, basket };
+
+// === In-page AI agent (opt-in) ===
+//
+// The footer's "enable AI assistant" link mounts the agent panel from
+// spektrum/agent. We don't auto-mount: the panel asks for an Anthropic
+// API key on first open and we don't want to surprise casual visitors.
+// Once enabled, the choice persists for the session via sessionStorage.
+const AGENT_FLAG = 'spektrum:demo:agent-enabled';
+const enableAgentLink = document.getElementById('enable-agent');
+
+const mountAgent = async () => {
+  const { mount: mountAgentPanel } = await import('../spektrum-agent.js');
+  // The agent drives the basket instance (more interesting surface area:
+  // lists, filtering, multiple intents). Mount one per instance if you
+  // want both wired.
+  mountAgentPanel(basket, { position: small ? 'top-left' : 'top-right', title: 'agent · basket' });
+  enableAgentLink.style.display = 'none';
+};
+
+if (sessionStorage.getItem(AGENT_FLAG) === '1') {
+  mountAgent();
+} else {
+  enableAgentLink.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    sessionStorage.setItem(AGENT_FLAG, '1');
+    mountAgent();
+  });
 }

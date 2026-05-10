@@ -407,6 +407,38 @@ test('reset() clears refs', () => {
   assert.equal(spektrum.refs.email, undefined);
 });
 
+// === data-intent (agent-native) ===
+
+test('data-intent registers elements into intents and findByIntent locates them', () => {
+  document.body.innerHTML = `
+    <button data-intent="checkout.submit">Pay</button>
+    <button data-intent="checkout.submit" id="alt">Pay also</button>
+    <a data-intent="nav.home">Home</a>`;
+  bindDOM(document.body);
+  const submitBtns = spektrum.findByIntent('checkout.submit');
+  assert.equal(submitBtns.length, 2);
+  assert.equal(spektrum.findByIntent('nav.home').length, 1);
+  assert.equal(spektrum.findByIntent('does.not.exist').length, 0);
+});
+
+test('data-intent registry surfaces in describe() with element counts', () => {
+  document.body.innerHTML = `
+    <button data-intent="checkout.submit"></button>
+    <a data-intent="nav.home"></a>`;
+  bindDOM(document.body);
+  const m = spektrum.describe();
+  assert.equal(m.intents['checkout.submit'], 1);
+  assert.equal(m.intents['nav.home'], 1);
+});
+
+test('destroy() returned by bindDOM cleans up intent registrations', () => {
+  document.body.innerHTML = '<button data-intent="checkout.submit"></button>';
+  const destroy = bindDOM(document.body);
+  assert.equal(spektrum.findByIntent('checkout.submit').length, 1);
+  destroy();
+  assert.equal(spektrum.findByIntent('checkout.submit').length, 0);
+});
+
 // === Keyed data-each ===
 
 test('keyed data-each preserves nodes by key when index is unchanged', () => {

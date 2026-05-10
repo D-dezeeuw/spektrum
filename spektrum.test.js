@@ -808,21 +808,65 @@ test('tick max-iterations falls back to console.warn when no onError', (t) => {
   );
 });
 
-// Note: hook-overwrite and defineFn-redefine warnings (F-16) were
-// dropped in the 1.0 size trim. Single-handler-per-instance semantics
-// are unchanged — later calls silently replace earlier. The README's
-// "Error handling" section documents this. Pass `null` to clear.
+// Hooks are multi-subscriber as of 1.0: each onX(fn) appends a
+// subscriber and returns an unsubscribe handle; onX(null) clears all.
+// Pre-1.0 behavior was single-handler-replace, which silently collided
+// when (e.g.) autoSave overwrote a user-registered onRecord.
 
-test('hook setters silently replace earlier registrations', () => {
+test('onError appends subscribers (every handler fires)', () => {
   let aCalls = 0, bCalls = 0;
   onError(() => aCalls++);
-  onError(() => bCalls++);  // replaces silently
+  onError(() => bCalls++);
   addSystem(['x'], () => { throw new Error('boom'); });
   setValue('x', 1);
   tick();
-  assert.equal(aCalls, 0, 'first handler replaced');
-  assert.equal(bCalls, 1, 'second handler fires');
+  assert.equal(aCalls, 1, 'first handler still fires');
+  assert.equal(bCalls, 1, 'second handler also fires');
   onError(null);
+});
+
+test('onError returns an unsubscribe handle that detaches just that subscriber', () => {
+  let aCalls = 0, bCalls = 0;
+  const unsubA = onError(() => aCalls++);
+  onError(() => bCalls++);
+  unsubA();
+  addSystem(['x'], () => { throw new Error('boom'); });
+  setValue('x', 1);
+  tick();
+  assert.equal(aCalls, 0, 'detached handler does not fire');
+  assert.equal(bCalls, 1, 'other handler still fires');
+  onError(null);
+});
+
+test('onError(null) clears every subscriber on the hook', () => {
+  let calls = 0;
+  onError(() => calls++);
+  onError(() => calls++);
+  onError(() => calls++);
+  onError(null);
+  // Without any handler the engine falls back to console.error; we just
+  // assert no surviving subscribers fire.
+  const orig = console.error; console.error = () => {};
+  try {
+    addSystem(['x'], () => { throw new Error('boom'); });
+    setValue('x', 1);
+    tick();
+  } finally { console.error = orig; }
+  assert.equal(calls, 0, 'no subscriber survived clear');
+});
+
+test('onRecord appends — autoSave can coexist with a user telemetry hook', () => {
+  // Regression test for the pre-1.0 collision: autoSave used to
+  // silently overwrite any user onRecord. Now both fire.
+  const userEntries = [];
+  const autoSaveLike = [];
+  onRecord((e) => userEntries.push(e));
+  onRecord((e) => autoSaveLike.push(e));
+  setValue('a', 1);
+  setValue('b', 2);
+  assert.equal(userEntries.length, 2);
+  assert.equal(autoSaveLike.length, 2);
+  onRecord(null);
 });
 
 // === resetState / reset split ===
@@ -1022,4 +1066,88 @@ test('serialize({ includeForks: true }) includes preserved fork tails', () => {
   const parsed = JSON.parse(serialize({ includeForks: true }));
   assert.ok(Array.isArray(parsed.forks));
   assert.equal(parsed.forks.length, 1, 'one fork captured');
+});
+
+// === Agent surface: describe / explain / attempt / defineFn meta ===
+
+test('describe() returns a manifest with state, systems, fns, refs, intents, checkpoints', () => {
+  const s = createSpektrum();
+  s.setValue('user.name', 'alice');
+  s.tick();
+  s.addSystem(['user.name'], function greet() {});
+  s.defineFn('shout', () => {}, { description: 'uppercase + log', input: { type: 'string' } });
+  s.checkpoint('boot');
+  const m = s.describe();
+  assert.equal(m.state.user.name, 'alice');
+  assert.equal(m.cursor, s.cursor);
+  assert.equal(m.historyLength, s.history.length);
+  assert.ok(m.systems.find(x => x.name === 'greet'));
+  const shout = m.fns.find(x => x.name === 'shout');
+  assert.equal(shout.description, 'uppercase + log');
+  assert.deepEqual(shout.input, { type: 'string' });
+  assert.equal(m.checkpoints.length, 1);
+  assert.equal(m.checkpoints[0].id, 'boot');
+});
+
+test('explain() annotates each entry with current subscriber names', () => {
+  const s = createSpektrum();
+  s.addSystem(['cart.items'], function recomputeTotal() {});
+  s.setValue('cart.items', [{ price: 1 }]);
+  s.setValue('user.name', 'alice');
+  const trace = s.explain();
+  const cartEntry = trace.find(e => e.path === 'cart.items');
+  assert.ok(cartEntry.triggers.includes('recomputeTotal'));
+  const userEntry = trace.find(e => e.path === 'user.name');
+  assert.deepEqual(userEntry.triggers, []);
+});
+
+test('explain({ from, to }) slices the history range', () => {
+  const s = createSpektrum();
+  for (let i = 0; i < 5; i++) s.setValue('n', i);
+  const trace = s.explain({ from: 1, to: 4 });
+  assert.equal(trace.length, 3);
+  assert.equal(trace[0].index, 1);
+  assert.equal(trace[2].index, 3);
+});
+
+test('attempt() + commit keeps the speculative entries in history', () => {
+  const s = createSpektrum();
+  s.setValue('x', 1); s.tick();
+  const cursorBefore = s.cursor;
+  const h = s.attempt('try-bump', () => { s.setValue('x', 99); return 'ok'; });
+  assert.equal(h.result, 'ok');
+  s.tick();
+  assert.equal(s.appState.x, 99);
+  h.commit();
+  assert.ok(s.cursor > cursorBefore);
+  assert.equal(s.appState.x, 99);
+});
+
+test('attempt() + discard rewinds the cursor back to before the attempt', () => {
+  const s = createSpektrum();
+  s.setValue('x', 1); s.tick();
+  const cursorBefore = s.cursor;
+  const h = s.attempt('try-bump', () => { s.setValue('x', 99); });
+  s.tick();
+  assert.equal(s.appState.x, 99);
+  h.discard();
+  assert.equal(s.cursor, cursorBefore);
+  assert.equal(s.appState.x, 1);
+});
+
+test('defineFn(name, fn, meta) attaches metadata for describe()', () => {
+  const s = createSpektrum();
+  const noop = () => {};
+  s.defineFn('toast', noop, { description: 'show a toast', examples: [{ msg: 'hi' }] });
+  const entry = s.describe().fns.find(f => f.name === 'toast');
+  assert.equal(entry.description, 'show a toast');
+  assert.deepEqual(entry.examples, [{ msg: 'hi' }]);
+});
+
+test('defineFn without meta still works (backwards compatible)', () => {
+  const s = createSpektrum();
+  s.defineFn('plain', () => {});
+  const entry = s.describe().fns.find(f => f.name === 'plain');
+  assert.equal(entry.name, 'plain');
+  assert.equal(entry.description, undefined);
 });

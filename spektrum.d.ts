@@ -63,6 +63,60 @@ export type RecordHandler = (entry: HistoryEntry) => void;
 
 export type ForkHandler = (fork: ForkRecord) => void;
 
+/**
+ * Optional metadata attached to a `defineFn` registration. Surfaced
+ * via `describe()` and the MCP tool catalog so agents see what each
+ * fn does and what arguments it expects without reading the source.
+ */
+export interface FnMeta {
+  /** Human-readable description of what the fn does. */
+  description?: string;
+  /** Free-form input schema (typically JSON Schema). */
+  input?: any;
+  /** Free-form output schema (typically JSON Schema). */
+  output?: any;
+  /** Optional usage examples. */
+  examples?: any[];
+}
+
+/**
+ * The manifest returned by `describe()`. Designed for agent
+ * orientation: one call returns everything an agent needs to start
+ * reasoning about the running instance.
+ */
+export interface SpektrumManifest {
+  state: State;
+  cursor: number;
+  historyLength: number;
+  forkCount: number;
+  snapshotCount: number;
+  options: SpektrumOptions;
+  systems: Array<{ paths: string[]; name: string }>;
+  fns: Array<{ name: string } & FnMeta>;
+  refs: string[];
+  /** intent name → number of bound elements carrying that intent */
+  intents: Record<string, number>;
+  checkpoints: CheckpointView[];
+}
+
+/** A history entry annotated with the systems whose subscriptions
+ *  intersect its path (i.e. who would have fired). */
+export interface ExplainedEntry extends HistoryEntry {
+  index: number;
+  triggers: string[];
+}
+
+/** Handle returned by `attempt()`. The caller decides whether the
+ *  speculative work survives (commit) or is rolled back (discard). */
+export interface AttemptHandle<T = any> {
+  /** Whatever the attempt callback returned (often a Promise). */
+  result: T;
+  /** Mark the attempt as committed in history (records a checkpoint). */
+  commit(): void;
+  /** Replay back to before the attempt; the entries land on `forks` on the next mutation. */
+  discard(): void;
+}
+
 export type BoundFn = (
   el: HTMLElement,
   state: State,
@@ -117,6 +171,13 @@ export interface Spektrum {
   readonly forks: ForkRecord[];
   /** DOM handles registered via `data-ref="name"`. Keyed by the ref name. */
   readonly refs: Record<string, Element>;
+  /**
+   * Semantic element registry populated from `data-intent="verb.noun"`.
+   * Each intent maps to the array of elements currently carrying it.
+   * Used by `findByIntent()` and surfaced in `describe()`. Lets agents
+   * locate UI by purpose ("checkout.submit") instead of by selector.
+   */
+  readonly intents: Record<string, Element[]>;
   /** Index of the next history slot. Equals history.length unless scrubbed back via replay. */
   readonly cursor: number;
   /** True while replay() is in flight. */
@@ -163,30 +224,41 @@ export interface Spektrum {
   watch(deps: string[], fn: SystemFn): () => void;
   /** Detach the first system registered with `fn`. Returns true if removed. */
   removeSystem(fn: SystemFn): boolean;
-  /** Register a named handler callable from `data-fn` attributes. */
-  defineFn(name: string, fn: BoundFn): void;
   /**
-   * Install an error handler. Called as `(err, systemFn)` whenever a
-   * subscribed system throws inside tick(). One handler per instance
-   * — later calls replace earlier. Pass `null` to clear; without a
-   * handler, errors fall through to console.error.
+   * Register a named handler callable from `data-fn` attributes.
+   * Optional `meta` declares the handler's purpose, input, and output
+   * shape — surfaced via `describe()` so agents know what each verb
+   * does without reading the source.
    */
-  onError(fn: ErrorHandler | null): void;
+  defineFn(name: string, fn: BoundFn, meta?: FnMeta): void;
   /**
-   * Install a post-record hook. Called synchronously with every
-   * recorded `HistoryEntry` after it's been applied, snapshotted,
-   * and trimmed. Does not fire during `replay()` (replay re-applies
-   * without re-recording). One handler per instance.
+   * Subscribe an error handler. Called as `(err, systemFn)` whenever a
+   * subscribed system throws inside tick(). Multiple handlers may be
+   * registered; each call appends a subscriber and returns an
+   * unsubscribe handle. Without any handler, errors fall through to
+   * console.error. Pass `null` to clear every subscriber on this hook.
    */
-  onRecord(fn: RecordHandler | null): void;
+  onError(fn: ErrorHandler): () => void;
+  onError(fn: null): void;
   /**
-   * Install a fork hook. Fires when a `record()` truncates history
+   * Subscribe a post-record hook. Called synchronously with every
+   * recorded `HistoryEntry` after it's been applied, snapshotted, and
+   * trimmed. Does not fire during `replay()` (replay re-applies without
+   * re-recording). Multiple handlers may be registered; returns an
+   * unsubscribe handle. Pass `null` to clear all subscribers.
+   */
+  onRecord(fn: RecordHandler): () => void;
+  onRecord(fn: null): void;
+  /**
+   * Subscribe a fork hook. Fires when a `record()` truncates history
    * (mutate-while-scrubbed-back), receiving the captured `ForkRecord`.
-   * Descriptive: the truncate has already happened by the time the
-   * hook runs; the dropped entries are accessible on `forks` and via
-   * the hook argument. One handler per instance.
+   * Descriptive: the truncate has already happened by the time the hook
+   * runs; the dropped entries are accessible on `forks` and via the
+   * hook argument. Multiple handlers may be registered; returns an
+   * unsubscribe handle. Pass `null` to clear all subscribers.
    */
-  onFork(fn: ForkHandler | null): void;
+  onFork(fn: ForkHandler): () => void;
+  onFork(fn: null): void;
 
   /**
    * Scan a DOM subtree for declarative bindings: {{expr}}, :attr="expr",
@@ -226,6 +298,39 @@ export interface Spektrum {
    * (debug-only; forks aren't replay-restored by `loadHistory`).
    */
   serialize(opts?: { includeHistory?: boolean; includeForks?: boolean }): string;
+
+  // === Agent surface ===
+
+  /**
+   * Operational manifest of the running instance. One JSON object
+   * containing state, registered systems, fns and their schemas,
+   * named refs, registered intents, checkpoints, and history shape.
+   * Cheap. The single best first call for an agent orienting itself.
+   */
+  describe(): SpektrumManifest;
+
+  /**
+   * Causal trace over a slice of `history`. Each entry is annotated
+   * with the systems whose subscriptions intersect its path. Useful
+   * for agents reconstructing why state moved. Note: subscriber set
+   * is the CURRENT registry, not a historical record of who actually
+   * fired.
+   */
+  explain(opts?: { from?: number; to?: number }): ExplainedEntry[];
+
+  /**
+   * Speculative execution. Drops a checkpoint, runs `fn`, returns a
+   * handle the caller uses to commit (mark in history) or discard
+   * (rewind cursor). `fn` may return a value or a Promise — the
+   * caller awaits and decides.
+   */
+  attempt<T = any>(name: string, fn: () => T): AttemptHandle<T>;
+
+  /**
+   * Locate elements by their declared `data-intent`. Returns a copy
+   * so the caller can iterate without racing the registry.
+   */
+  findByIntent(name: string): Element[];
 }
 
 /** Walk a dotted path into `obj` and return the leaf value, or undefined. */
@@ -258,6 +363,7 @@ export const history: HistoryEntry[];
 export const snapshots: Snapshot[];
 export const forks: ForkRecord[];
 export const refs: Record<string, Element>;
+export const intents: Record<string, Element[]>;
 export const trigger: Spektrum['trigger'];
 export const setValue: Spektrum['setValue'];
 export const checkpoint: Spektrum['checkpoint'];
@@ -277,3 +383,7 @@ export const replay: Spektrum['replay'];
 export const reset: Spektrum['reset'];
 export const resetState: Spektrum['resetState'];
 export const serialize: Spektrum['serialize'];
+export const describe: Spektrum['describe'];
+export const explain: Spektrum['explain'];
+export const attempt: Spektrum['attempt'];
+export const findByIntent: Spektrum['findByIntent'];

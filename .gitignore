@@ -2,5 +2,7 @@ node_modules/
 spektrum.min.js
 spektrum-persist.min.js
 spektrum-devtools.min.js
+spektrum-mcp.min.js
+spektrum-agent.min.js
 *.tgz
 .DS_Store

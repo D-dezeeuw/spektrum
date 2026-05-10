@@ -326,15 +326,17 @@
       <div class="meta">next: {{count + 1}} · doubled: {{count * 2}}</div>
 
       <div class="controls">
-        <button data-action="click" data-fn="trigger" data-id="count" data-value="-1" data-name="dec">−1</button>
-        <button data-action="click" data-fn="trigger" data-id="count" data-value="1"  data-name="inc">+1</button>
-        <button data-action="click" data-fn="trigger" data-id="count" data-value="10" data-name="inc10">+10</button>
+        <button data-intent="counter.decrement" data-action="click" data-fn="trigger" data-id="count" data-value="-1" data-name="dec">−1</button>
+        <button data-intent="counter.increment" data-action="click" data-fn="trigger" data-id="count" data-value="1"  data-name="inc">+1</button>
+        <button data-intent="counter.bump"      data-action="click" data-fn="trigger" data-id="count" data-value="10" data-name="inc10">+10</button>
       </div>
 
       <input class="set" type="number" step="1" data-model="count.lazy"
+             data-intent="counter.set"
              aria-label="set count directly" placeholder="set directly (commits on blur)">
 
       <button class="undo"
+              data-intent="counter.undo"
               data-action="click" data-fn="undo"
               :disabled="atSeed">↶ undo</button>
 
@@ -359,13 +361,14 @@
       <h2>BASKET</h2>
 
       <div class="kinds">
-        <button data-action="click" data-fn="addKind" data-name="🍎 apple"  aria-label="add apple"  title="apple">🍎</button>
-        <button data-action="click" data-fn="addKind" data-name="🍌 banana" aria-label="add banana" title="banana">🍌</button>
-        <button data-action="click" data-fn="addKind" data-name="🍇 grapes" aria-label="add grapes" title="grapes">🍇</button>
-        <button data-action="click" data-fn="addKind" data-name="🥭 mango"  aria-label="add mango"  title="mango">🥭</button>
+        <button data-intent="basket.add" data-action="click" data-fn="addKind" data-name="🍎 apple"  aria-label="add apple"  title="apple">🍎</button>
+        <button data-intent="basket.add" data-action="click" data-fn="addKind" data-name="🍌 banana" aria-label="add banana" title="banana">🍌</button>
+        <button data-intent="basket.add" data-action="click" data-fn="addKind" data-name="🍇 grapes" aria-label="add grapes" title="grapes">🍇</button>
+        <button data-intent="basket.add" data-action="click" data-fn="addKind" data-name="🥭 mango"  aria-label="add mango"  title="mango">🥭</button>
       </div>
 
       <input class="filter" type="text" data-model="filter" data-ref="filterInput"
+             data-intent="basket.filter"
              aria-label="filter basket" placeholder="filter…">
 
       <!--
@@ -379,7 +382,7 @@
           <span class="label">{{item.label}}</span>
           <input class="note" type="text" data-model="item.note.lazy"
                  aria-label="note" placeholder="note…">
-          <button class="remove" data-action="click.stop" data-fn="removeAt" data-id="item"
+          <button class="remove" data-intent="basket.remove" data-action="click.stop" data-fn="removeAt" data-id="item"
                   aria-label="remove" title="remove">×</button>
         </li>
       </ul>
@@ -411,6 +414,7 @@
     <a href="https://www.npmjs.com/package/spektrum">npm</a>
     .
   <a href="https://unpkg.com/spektrum@latest/spektrum.min.js">cdn</a>
+    <a href="#" class="reset" id="enable-agent" aria-label="enable in-page AI assistant">enable AI assistant</a>
     <a href="#" class="reset" data-action="click.prevent" data-fn="resetAll"
        aria-label="clear saved state and reload">clear saved state</a>
   </footer>

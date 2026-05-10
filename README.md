@@ -75,7 +75,7 @@ Apps shipping on Spektrum today — single static `index.html`, no build, no SPA
 | App | What it is | Live | Source |
 | --- | --- | --- | --- |
 | **SKYo** | Hourly weather, single page | [d-dezeeuw.github.io/hourly-weather](https://d-dezeeuw.github.io/hourly-weather/) | [github.com/D-dezeeuw/hourly-weather](https://github.com/D-dezeeuw/hourly-weather) |
-| **Devworld26 guide** | Conference schedule navigator | — | [github.com/D-dezeeuw/my-confs](https://github.com/D-dezeeuw/my-confs) |
+| **Devworld26 guide** | Conference schedule navigator | [d-dezeeuw.github.io/my-confs](https://d-dezeeuw.github.io/my-confs/) | [github.com/D-dezeeuw/my-confs](https://github.com/D-dezeeuw/my-confs) |
 | **Spektrum demo** | Counter + basket reference, two isolated instances, devtools, persist, agent | [d-dezeeuw.github.io/spektrum/example](https://d-dezeeuw.github.io/spektrum/example/) | [example/](example/) |
 
 Shipped something on Spektrum? Open a PR adding it here.

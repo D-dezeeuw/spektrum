@@ -6,7 +6,10 @@ spektrum.min.js
 companions/*.min.js
 
 # Working notes / drafts that live outside the published docs.
-notes/
+# The folder's purpose is documented in notes/README.md (tracked); the
+# rest of the folder is contributor-local scratch space.
+notes/*
+!notes/README.md
 
 # Misc
 *.tgz

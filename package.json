@@ -17,8 +17,8 @@
     "./persist":  { "import": "./companions/spektrum-persist.js"  },
     "./mcp":      { "import": "./companions/spektrum-mcp.js"      },
     "./agent":    { "import": "./companions/spektrum-agent.js"    },
-    "./inspect":  { "import": "./companions/spektrum-inspect.js"  },
-    "./dock":     { "import": "./companions/spektrum-dock.js"     }
+    "./inspect":  { "types":  "./companions/spektrum-inspect.d.ts", "import": "./companions/spektrum-inspect.js" },
+    "./dock":     { "types":  "./companions/spektrum-dock.d.ts",    "import": "./companions/spektrum-dock.js"    }
   },
   "files": [
     "spektrum.js",

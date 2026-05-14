@@ -214,3 +214,142 @@ test('mount order is independent — companion before dock works the standalone 
     'no dock tab for the pre-existing devtools');
   stopDt(); dock.unmount();
 });
+
+// === Interaction coverage ===
+
+test('clicking × on a tab fires onClose and removes the tab', () => {
+  // Hits the data-x branch in the tab-button click handler — without
+  // this test, panel.close() via UI is unexercised.
+  const dock = mountDock();
+  let closed = false;
+  const panel = dock.registerPanel({ id: 'x', label: 'X', onClose: () => { closed = true; } });
+  const xButton = panel.button.querySelector('[data-x]');
+  assert.ok(xButton, 'tab has an × child');
+  xButton.click();
+  assert.ok(closed, 'onClose fired');
+  assert.equal(document.querySelector('[data-panel-tab="x"]'), null);
+  dock.unmount();
+});
+
+test('clicking the dock side button toggles right ⇆ bottom', () => {
+  const dock = mountDock({ side: 'right' });
+  const root = document.querySelector('[data-spektrum-dock]');
+  assert.ok(root.classList.contains('r'));
+  root.querySelector('[data-act="side"]').click();
+  assert.ok(root.classList.contains('b'), 'switched to bottom');
+  root.querySelector('[data-act="side"]').click();
+  assert.ok(root.classList.contains('r'), 'switched back to right');
+  dock.unmount();
+});
+
+test('clicking the chip expands the dock', () => {
+  // The chip is only visible while collapsed; clicking it expands.
+  const dock = mountDock({ collapsed: true });
+  const root = document.querySelector('[data-spektrum-dock]');
+  assert.ok(root.classList.contains('c'), 'starts collapsed');
+  root.querySelector('[data-chip]').click();
+  assert.equal(root.classList.contains('c'), false, 'chip click expanded');
+  dock.unmount();
+});
+
+test('clicking the header toggle collapses and re-expands the dock', () => {
+  const dock = mountDock();
+  const root = document.querySelector('[data-spektrum-dock]');
+  const toggle = root.querySelector('[data-act="toggle"]');
+  toggle.click();
+  assert.ok(root.classList.contains('c'), 'toggle collapsed');
+  toggle.click();
+  assert.equal(root.classList.contains('c'), false, 'toggle re-expanded');
+  dock.unmount();
+});
+
+test('setActive switches the visible tab', () => {
+  const dock = mountDock();
+  dock.registerPanel({ id: 'a', label: 'A' });
+  const b = dock.registerPanel({ id: 'b', label: 'B' });
+  dock.setActive('b');
+  assert.ok(b.container.classList.contains('a'), 'panel B is active');
+  assert.ok(b.button.classList.contains('a'), 'tab B is active');
+  dock.unmount();
+});
+
+test('setActive is a no-op for an unregistered id', () => {
+  const dock = mountDock();
+  dock.registerPanel({ id: 'a', label: 'A' });
+  dock.setActive('nope');                 // does not throw, does not change state
+  const a = document.querySelector('[data-panel-tab="a"]');
+  assert.ok(a.classList.contains('a'), 'A remains active');
+  dock.unmount();
+});
+
+test('setSide changes the dock side at runtime', () => {
+  const dock = mountDock({ side: 'right' });
+  const root = document.querySelector('[data-spektrum-dock]');
+  dock.setSide('bottom');
+  assert.ok(root.classList.contains('b'));
+  dock.setSide('right');
+  assert.ok(root.classList.contains('r'));
+  dock.setSide('nope');                   // unknown side is a no-op
+  assert.ok(root.classList.contains('r'));
+  dock.unmount();
+});
+
+test('detaching the active panel surfaces the next one (or renders empty)', () => {
+  // Exercises the activeId-rollover branch in panel.detach().
+  const dock = mountDock();
+  const a = dock.registerPanel({ id: 'a', label: 'A' });
+  const b = dock.registerPanel({ id: 'b', label: 'B' });
+  a.activate();
+  a.detach();
+  assert.ok(b.button.classList.contains('a'), 'B promoted to active');
+  b.detach();
+  assert.ok(document.querySelector('[data-spektrum-dock] .empty'),
+    'empty state rendered after all panels gone');
+  dock.unmount();
+});
+
+test('onClose throwing does not crash the dock; tab is still removed', () => {
+  const dock = mountDock();
+  const calls = [];
+  const origErr = console.error;
+  console.error = (...a) => calls.push(a);
+  try {
+    const panel = dock.registerPanel({ id: 'boom', label: 'Boom', onClose: () => { throw new Error('oops'); } });
+    panel.close();
+  } finally { console.error = origErr; }
+  assert.equal(document.querySelector('[data-panel-tab="boom"]'), null, 'tab gone despite throw');
+  assert.ok(calls.some(c => String(c[0]).includes('[spektrum.dock] onClose threw')),
+    'failure logged to console.error');
+  dock.unmount();
+});
+
+test('clicking the header close-equivalent (tab × on last panel) restores empty state', () => {
+  const dock = mountDock();
+  const p = dock.registerPanel({ id: 'only', label: 'Only' });
+  p.close();
+  assert.ok(document.querySelector('[data-spektrum-dock] .empty'),
+    'empty state restored after closing the last panel');
+  dock.unmount();
+});
+
+test('escapeHtml handles missing label via registerPanel without a label', () => {
+  // L66 — `String(s ?? '')` nullish branch. Pass undefined label.
+  const dock = mountDock();
+  const panel = dock.registerPanel({ id: 'no-label' });    // label intentionally missing
+  // Panel renders with empty label text — no throw.
+  assert.equal(panel.button.querySelector('span').textContent, '');
+  dock.unmount();
+});
+
+test('clicking the label-span inside a tab activates the panel (not closes)', () => {
+  // L161 — the dataset.x === undefined branch (clicked the label, not ×).
+  const dock = mountDock();
+  const a = dock.registerPanel({ id: 'a', label: 'A' });
+  const b = dock.registerPanel({ id: 'b', label: 'B' });
+  // Click the label span on tab A (not the × child).
+  const labelSpan = a.button.querySelector('span:not([data-x])');
+  labelSpan.click();
+  assert.ok(a.button.classList.contains('a'), 'A is active after label click');
+  assert.equal(b.button.classList.contains('a'), false);
+  dock.unmount();
+});

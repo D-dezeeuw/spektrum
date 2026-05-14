@@ -238,3 +238,35 @@ test('unmount detaches scrubber and live listeners', async () => {
   scrub.dispatchEvent(new Event('input'));
   assert.equal(spektrum.cursor, cursorBefore, 'replay not called after unmount');
 });
+
+// === Branch coverage ===
+
+test('checkpoint entry rendered with dim accent when scrubbed before it', async () => {
+  // L120 — `isCp ? (at ? '#fcd34d' : '#665a2c') : dim` — the !at branch
+  // for checkpoints. Need a checkpoint in history AND the cursor to be
+  // before it. Scrub back via replay() then let render run.
+  setValue('a', 1); tick();
+  spektrum.checkpoint('cp-future');
+  setValue('b', 2); tick();
+  const unmount = mount(spektrum);
+  spektrum.replay(1);                          // cursor before the checkpoint
+  // The render loop is rAF-driven; trigger one render frame.
+  await new Promise(r => requestAnimationFrame(r));
+  const log = document.querySelector('[data-spektrum-devtools] [data-log]');
+  // The dim-checkpoint color (#665a2c) appears in the rendered HTML.
+  assert.match(log.innerHTML, /#665a2c/i);
+  unmount();
+});
+
+test('truncate handles JSON.stringify returning undefined', async () => {
+  // L156 — `s == null ? String(v) : ...` — when value is something
+  // JSON.stringify can't represent (undefined, function, symbol).
+  setValue('weird', undefined);                // explicit undefined leaf
+  tick();
+  // setValue with undefined goes through; the history entry's value
+  // is undefined. The render loop will truncate(undefined) for it.
+  const unmount = mount(spektrum);
+  await new Promise(r => requestAnimationFrame(r));
+  // No throw is the assertion; the render path covered the null branch.
+  unmount();
+});

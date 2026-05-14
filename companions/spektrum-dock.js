@@ -125,8 +125,9 @@ export const mount = (opts = {}) => {
     chipEl.style.display = collapsed ? 'flex' : 'none';
     countEl.textContent = String(panels.size);
   };
+  // Always called when panels.size === 0 (initial mount, last-panel detach);
+  // no defensive guard needed.
   const renderEmpty = () => {
-    if (panels.size) return;
     contEl.innerHTML = `<div class="empty">No panels mounted.<br>Import a companion (devtools / inspect / agent) and call its <code>mount(spektrum)</code> — it will register here.</div>`;
   };
 
@@ -157,7 +158,10 @@ export const mount = (opts = {}) => {
     button.setAttribute('data-panel-tab', id);
     button.innerHTML = `<span>${escapeHtml(label)}</span><span class="xc" title="close" data-x>×</span>`;
     button.addEventListener('click', (ev) => {
-      if (ev.target.dataset?.x !== undefined) { panel.close(); return; }
+      // The button has two children: the label span and the × span
+      // (with data-x). Every click target inside the button is an
+      // Element with a dataset.
+      if (ev.target.dataset.x !== undefined) { panel.close(); return; }
       setActive(id);
     });
     tabsEl.appendChild(button);

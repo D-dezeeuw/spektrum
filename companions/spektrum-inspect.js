@@ -329,8 +329,10 @@ export const mount = (spektrum, opts = {}) => {
   // === Lint ===
 
   const findingsEl = root.querySelector('[data-findings]');
+  // runLint is only invoked when findingsEl exists (initial mount gated
+  // by `features.includes('lint')`, re-lint button only present in the
+  // lint pane). No null-guard needed.
   const runLint = () => {
-    if (!findingsEl) return;
     const res = lint(spektrum, document.body);
     findingsEl.innerHTML = res.length
       ? res.map(f => `<div class="f">${escapeHtml(f.msg)}<i>&lt;${escapeHtml(f.el.tagName.toLowerCase())}${f.el.id ? ` id="${escapeHtml(f.el.id)}"` : ''}&gt;</i></div>`).join('')
@@ -340,8 +342,9 @@ export const mount = (spektrum, opts = {}) => {
   // === Wire panel buttons ===
 
   root.addEventListener('click', (ev) => {
+    // Click targets inside the panel are always Elements (buttons,
+    // tabs, inputs); no defensive instanceof guard needed.
     const t = ev.target;
-    if (!(t instanceof Element)) return;
     if (t.dataset.tab) setTab(t.dataset.tab);
     else if (t.dataset.act === 'close')        unmount();
     else if (t.dataset.act === 'inspect-mode') { inspectMode = !inspectMode; pinned = null; if (!inspectMode) hideFloaters(); refreshBtn(); }

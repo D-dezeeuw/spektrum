@@ -13,6 +13,7 @@ import spektrum, {
   appState, history,
   setValue, trigger, checkpoint, tick, reset,
   getPathObj,
+  createSpektrum,
 } from '../spektrum.js';
 import { saveHistory, loadHistory, autoSave } from '../companions/spektrum-persist.js';
 
@@ -302,4 +303,52 @@ test('loadHistory rejects malformed checkpoint entries', () => {
   assert.equal(getPathObj(appState, 'real'), 7);
   assert.equal(spektrum.checkpoints.length, 1);
   assert.equal(spektrum.checkpoints[0].id, 'good');
+});
+
+// === Branch coverage ===
+
+test('loadHistory falls back to globalThis.localStorage when no opts.storage', () => {
+  // L58 — exercises the `opts.storage || globalThis.localStorage` OR.
+  // Stub globalThis.localStorage temporarily (vanilla Node has none).
+  const store = {};
+  const fake = { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; } };
+  fake.setItem('spektrum:history', JSON.stringify([
+    { op: 'set', path: 'fromLs', value: 42, id: 'x' },
+  ]));
+  const orig = globalThis.localStorage;
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: fake });
+  try {
+    const s = createSpektrum();
+    loadHistory(s);                            // no opts → falls back to globalThis.localStorage
+    assert.equal(getPathObj(s.appState, 'fromLs'), 42);
+  } finally {
+    if (orig === undefined) delete globalThis.localStorage;
+    else Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: orig });
+  }
+});
+
+test('loadHistory returns false when no storage is available at all', () => {
+  // L59 — `if (!storage) return false;`. No globalThis.localStorage and no opts.storage.
+  const orig = globalThis.localStorage;
+  if (orig !== undefined) delete globalThis.localStorage;
+  try {
+    const s = createSpektrum();
+    assert.equal(loadHistory(s), false);
+  } finally {
+    if (orig !== undefined) Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: orig });
+  }
+});
+
+test('loadHistory skips null/falsy entries in the parsed history', () => {
+  // L72 — `if (!e) continue;` in the per-entry validation loop.
+  // Tampered storage where some array slots are nulls.
+  const storage = { _v: null, getItem() { return this._v; }, setItem(_, v) { this._v = v; } };
+  storage.setItem('spektrum:history', JSON.stringify([
+    null,
+    { op: 'set', path: 'kept', value: 'yes', id: 'k' },
+    null,
+  ]));
+  const s = createSpektrum();
+  loadHistory(s, { storage });
+  assert.equal(getPathObj(s.appState, 'kept'), 'yes');
 });

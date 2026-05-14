@@ -880,3 +880,19 @@ test('clearing the filter input resets filterRe to null (L356 falsy branch)', ()
   assert.match(log, /beta/);                      // both shown again, no filter
   unmount();
 });
+
+test('panel click handler returns early when ev.target is not an Element (L344 false branch)', () => {
+  // Dispatch a click from a Comment node inside the panel — ev.target
+  // is the Comment (CharacterData, not Element), event bubbles to the
+  // root listener, the `instanceof Element` guard short-circuits.
+  // Without the guard, the next line (`t.dataset.tab`) would throw.
+  const unmount = mount(s);
+  const panel = document.querySelector('[data-spektrum-inspect]');
+  const comment = document.createComment('not-an-element');
+  panel.appendChild(comment);
+  const ev = new Event('click', { bubbles: true });
+  // No throw = guard worked.
+  comment.dispatchEvent(ev);
+  assert.ok(document.querySelector('[data-spektrum-inspect]'), 'panel still standing');
+  unmount();
+});

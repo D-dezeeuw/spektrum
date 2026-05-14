@@ -17,6 +17,8 @@
 
 import { createSpektrum } from '../spektrum.js';
 import { mount as mountDevtools } from '../companions/spektrum-devtools.js';
+import { mount as mountInspect  } from '../companions/spektrum-inspect.js';
+import { mount as mountDock     } from '../companions/spektrum-dock.js';
 import { loadHistory, autoSave } from '../companions/spektrum-persist.js';
 
 // One simple ID source for keyed list items. Persisted history
@@ -203,8 +205,17 @@ basket.refs.filterInput?.focus();
 // content. Mobile: stacked on the right (top + bottom) so two
 // 260-wide panels don't collide at the bottom of a 375-wide screen.
 const small = matchMedia('(max-width: 600px)').matches;
-mountDevtools(counter, { position: small ? 'top-right'    : 'bottom-left',  title: 'counter' });
-mountDevtools(basket,  { position: small ? 'bottom-right' : 'bottom-right', title: 'basket'  });
+
+// Counter keeps a free-floating devtools panel — the simple, single-tool
+// integration that every existing user knows.
+mountDevtools(counter, { position: small ? 'top-right' : 'bottom-left', title: 'counter' });
+
+// Basket shows the cohesive dock UI: one container, tabs for each tool,
+// collapse/expand, side-toggle. Mount the dock FIRST so the companions
+// detect it and register as tabs instead of free-floating panels.
+mountDock({ side: small ? 'bottom' : 'right' });
+mountDevtools(basket, { title: 'basket' });
+mountInspect(basket);
 
 // Make each devtools panel collapsible — click the title row to
 // toggle. The devtools module doesn't ship with this; we do it from

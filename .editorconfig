@@ -1,0 +1,24 @@
+# EditorConfig keeps formatting consistent across editors without
+# every contributor having to configure their IDE the same way.
+# https://editorconfig.org/
+#
+# Match what's already in the codebase: 2-space indent, LF line endings,
+# UTF-8, no trailing whitespace, final newline. The exception is .md —
+# trailing whitespace there can be intentional (two spaces = hard line
+# break in Markdown), so we don't strip it.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false
+
+[Makefile]
+indent_style = tab

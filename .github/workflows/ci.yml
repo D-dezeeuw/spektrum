@@ -1,0 +1,52 @@
+# Run the same checks every contributor runs locally — test, lint,
+# build, size — on every push to main and every PR. Complements the
+# tag-triggered publish.yml: that one ships, this one gates.
+#
+# Single matrix entry (Node 22, ubuntu-latest). The engine supports
+# more (Node ≥ 22 per package.json), but the test surface is small
+# and deterministic — running it multiple times just buys minutes.
+# Add a matrix row when you have a reason to.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel an in-flight run for the same ref when a new commit lands —
+# avoids stacking up runs on rapid pushes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Size budget
+        # `npm run size` exits non-zero if any minified bundle exceeds
+        # its cap in scripts/size.js. Run last so the failure points
+        # at the exact file + delta if it trips.
+        run: npm run size

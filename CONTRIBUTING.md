@@ -19,6 +19,26 @@ npm run size      # asserts the minified bundle is under budget
 Open the demo with `npm start` and visit
 <http://127.0.0.1:8088/example/>.
 
+## Project structure
+
+```text
+spektrum.js            engine — single file, the constraint everything else defends
+spektrum.d.ts          TypeScript declarations
+spektrum.min.js        built artifact (gitignored; CI re-builds)
+companions/            opt-in subpath modules (devtools / persist / compile / mcp /
+                       agent / inspect / dock) — each a single file + matching .min.js
+docs/                  reference + topical guides; see docs/README.md for the index
+example/               demo wiring (index.html + app.js); two isolated instances
+tests/                 node:test + happy-dom; one file per concern
+scripts/size.js        zero-dep size-budget enforcer
+notes/                 working notes (gitignored)
+```
+
+Standards files (`README.md`, `LICENSE`, `CHANGELOG.md`, `SECURITY.md`,
+`AGENTS.md`, this file) and config (`package.json`, `package-lock.json`,
+`eslint.config.js`, `.editorconfig`, `.gitignore`) stay at root because
+GitHub, npm, and unpkg read them by exact name there.
+
 ## What we'd love
 
 - **Bug reports with a failing test.** A 10-line `.test.js`

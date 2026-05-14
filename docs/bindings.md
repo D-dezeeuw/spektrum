@@ -21,9 +21,103 @@ Spektrum's HTML directives. Author them in markup; the engine wires them up at `
 
 Built-in `data-fn` handlers: `trigger`, `setValue`, `setText`, `setStyle`, `toggle`. Register your own with `defineFn(name, handler)`. Handler signature: `(el, state, delta, value, event?)`. The `event` argument is the DOM `Event` for `data-action="click"`-style bindings, or `undefined` for `data-action="cycle"` (subscription-driven, no event in scope).
 
+### `data-each` — container, not template
+
+`data-each` marks the **container**; its *first element child* is what gets cloned and repeated. This is the opposite of Vue's `v-for` and Alpine's `x-for`, which attach the directive to the element being repeated.
+
+```html
+<!-- ❌ wrong: <li> is the container; its first element child is absent -->
+<li data-each="items">{{item}}</li>           <!-- nothing renders; warns -->
+
+<!-- ✅ right: <ul> is the container, <li> is the template -->
+<ul data-each="items">
+  <li>{{item}}</li>
+</ul>
+```
+
+`data-each` takes a **dotted path**, not an expression — unlike `data-if` and `:attr`, which evaluate full JS. For derived arrays, build a `computed` and bind that:
+
+```js
+computed('visible', ['items', 'filter'],
+  state => state.items.filter(i => i.kind === state.filter));
+```
+
+```html
+<ul data-each="visible"><li>{{item.name}}</li></ul>
+```
+
+If the path resolves to a non-array value (other than `undefined`, which is normal pre-population), the engine warns at tick time.
+
+### `data-as` naming
+
+`data-as` is substituted into the cloned subtree by **whole-word string replace** (see [trade-offs](trade-offs.md#rewritescope-rewrites-string-literals-too)). Short or common names will rewrite unrelated text and attribute values. The engine warns at bind time for names ≤2 characters, common identifiers (`index`, `key`, `value`, `name`, `el`, `fn`, `id`, `data`), and names that collide with top-level state keys.
+
+Recommended: longer, distinctive names (`row`, `chip`, `node`) or a leading-underscore convention for short ones (`_t`, `_n` — the boundary doesn't match `_`).
+
+### `{{…}}` is text-node only
+
+Mustache interpolation is wired up by `bindText`; it runs on text nodes only, **not** on attribute values. For reactive attributes, use `:attr="expression"`:
+
+```html
+<!-- ❌ wrong: href is literal text "{{user.url}}" -->
+<a href="{{user.url}}">profile</a>
+
+<!-- ✅ right: :href evaluates the expression reactively -->
+<a :href="user.url">profile</a>
+```
+
+For `data-action`'s `data-value`, the value is read **once at bind time** and is intentionally non-reactive — `data-action` is dispatch metadata, not a reactive binding. Reach into state from the handler instead:
+
+```js
+defineFn('inc', (el, state) => setValue('count', state.count + 1));
+```
+
+### Handler `state` argument
+
+The `state` arg passed to a `defineFn` handler differs by action type:
+
+| Action type | `state` arg is… |
+| --- | --- |
+| `data-action="event"` (click, keydown, …) | **live** — `appState` reference, mutated in place |
+| `data-action="cycle"` (subscription) | a **snapshot** passed by the system runner |
+
+For event-based handlers, reads after `await` see fresh values (because `appState` is mutated, not replaced):
+
+```js
+defineFn('save', async (el, state) => {
+  await api.put('/user', state.user);
+  console.log(state.user.id);   // ALSO live — may have changed during the await
+});
+```
+
+If you need a stable copy inside an async handler, capture before the first `await`:
+
+```js
+defineFn('save', async (el, state) => {
+  const payload = { ...state.user };
+  await api.put('/user', payload);
+});
+```
+
+Async handler rejections are routed through `onError` (or `console.error` if no handler is registered); they don't disappear into unhandled-promise warnings.
+
+### Derived state
+
 Derived state via `computed(path, deps, fn)` — primes synchronously from current state on registration (so registering after deps are already populated, e.g. after `loadHistory`, lands the initial value on the next tick), then re-derives whenever any `deps` change. Writes to both state and the delta so mid-tick reads see fresh values (a sibling system reading `state.derived` in the same pass gets the just-computed value, not the prior one). Returns an unsubscribe handle.
 
-Async resources via `addAsync(path, fn)` — sets `${path}.loading` / `${path}.error` / `${path}.data` as the Promise progresses. Each phase records through `setValue`, so the round-trip lands in history (replay re-applies the values; no actual fetch re-issues). Returns a refetch handle. Example: `const refetch = spektrum.addAsync('user', () => fetch('/api/user').then(r => r.json()))`. Bind with `data-if="user.loading"`, `{{user.error}}`, `{{user.data.name}}`.
+### Async resources
+
+`addAsync(path, fn)` sets `${path}.loading` / `${path}.error` / `${path}.data` as the Promise progresses. Each phase records through `setValue`, so the round-trip lands in history (replay re-applies the values; no actual fetch re-issues). **Returns a refetch handle**, and is also indexed by `path` so `refresh(path)` works without retaining the handle:
+
+```js
+import { addAsync, refresh } from 'spektrum';
+
+const refetch = addAsync('user', () => fetch('/api/user').then(r => r.json()));
+await refetch();          // re-run via the returned handle
+await refresh('user');    // re-run via the keyed registry — same effect
+```
+
+Bind with `data-if="user.loading"`, `{{user.error}}`, `{{user.data.name}}`.
 
 `watch(deps, fn)` is a public alias for `addSystem(deps, fn)` — same signature, conventional name.
 

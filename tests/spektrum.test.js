@@ -17,8 +17,8 @@ import spektrum, {
   tick, replay, reset, resetState, serialize,
   onError, onRecord, onFork,
   getPathObj, setPathValue, precompile,
-} from './spektrum.js';
-import { createSpektrum } from './spektrum.js';
+} from '../spektrum.js';
+import { createSpektrum } from '../spektrum.js';
 
 // Hooks survive reset() (per the documented contract), so we clear
 // them between cases to keep tests self-isolating now that re-setting
@@ -1150,4 +1150,53 @@ test('defineFn without meta still works (backwards compatible)', () => {
   const entry = s.describe().fns.find(f => f.name === 'plain');
   assert.equal(entry.name, 'plain');
   assert.equal(entry.description, undefined);
+});
+
+// === refresh(path) — keyed addAsync re-runner ===
+
+test('refresh(path) re-runs the loader registered under that path', async () => {
+  // Same contract as the returned refetch handle, but addressable by
+  // path so callers who didn't retain the handle can still re-fetch.
+  const s = createSpektrum();
+  let calls = 0;
+  s.addAsync('thing', async () => ++calls);
+  await new Promise(r => setTimeout(r, 0));   // settle the eager run
+  s.tick();
+  const before = calls;
+  await s.refresh('thing');
+  await new Promise(r => setTimeout(r, 0));
+  s.tick();
+  assert.equal(calls, before + 1, 'refresh ran the loader exactly once more');
+});
+
+test('refresh(path) returns undefined when path was never registered', () => {
+  const s = createSpektrum();
+  assert.equal(s.refresh('never-registered'), undefined);
+});
+
+// === Empty-path guards (1.1 DX batch follow-up) ===
+
+test('setValue with empty path warns and does NOT record', () => {
+  // Pre-guard: setValue('', x) silently landed appState[''] = x and
+  // pushed a no-op entry to history. Now refused at the entry point.
+  const s = createSpektrum();
+  const warns = [];
+  const orig = console.warn;
+  console.warn = (m) => warns.push(m);
+  try { s.setValue('', 42); } finally { console.warn = orig; }
+  assert.equal(s.history.length, 0, 'no history entry recorded');
+  assert.equal(s.appState[''], undefined, 'no empty-key pollution');
+  assert.ok(warns.some(w => w.includes('setValue') && w.includes('empty path')),
+    `expected empty-path warn; got: ${warns.join(' | ')}`);
+});
+
+test('trigger with empty path warns and does NOT record', () => {
+  const s = createSpektrum();
+  const warns = [];
+  const orig = console.warn;
+  console.warn = (m) => warns.push(m);
+  try { s.trigger('id', '', 1); } finally { console.warn = orig; }
+  assert.equal(s.history.length, 0);
+  assert.ok(warns.some(w => w.includes('trigger') && w.includes('empty path')),
+    `expected empty-path warn; got: ${warns.join(' | ')}`);
 });

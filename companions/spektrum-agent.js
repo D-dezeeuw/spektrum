@@ -271,9 +271,21 @@ export const mount = (spektrum, opts = {}) => {
 
   // === DOM ===
 
+  // Dock integration: if a dock is mounted, render inside it as a tab
+  // instead of as a free-floating panel. Skip our own corner placement;
+  // the dock owns layout. Detected by DOM query — no import needed.
+  const dock = document.querySelector('[data-spektrum-dock]')?._spektrumDock;
+  let dockPanel = null;
   const root = document.createElement('div');
   root.setAttribute('data-spektrum-agent', '');
-  root.style.cssText = STYLES + (corners[position] || corners['bottom-left']);
+  if (dock) {
+    dockPanel = dock.registerPanel({ id: 'agent', label: 'Agent', onClose: () => unmount() });
+    // Inside the dock: flat, fills the container; the dock provides
+    // border, shadow, and positioning.
+    root.style.cssText = 'position:static;width:auto;height:100%;border:0;border-radius:0;background:transparent;box-shadow:none;display:flex;flex-direction:column;';
+  } else {
+    root.style.cssText = STYLES + (corners[position] || corners['bottom-left']);
+  }
 
   root.innerHTML = `
     <div data-header style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #2a2a2e;">
@@ -306,7 +318,8 @@ export const mount = (spektrum, opts = {}) => {
       </div>
     </div>
   `;
-  parent.appendChild(root);
+  if (dockPanel) dockPanel.container.appendChild(root);
+  else parent.appendChild(root);
 
   const $ = (sel) => root.querySelector(sel);
   const titleEl    = $('[data-title]');
@@ -519,7 +532,8 @@ export const mount = (spektrum, opts = {}) => {
   // Greeting
   append(`<div style="color:#666;margin-bottom:10px;">${currentKey() ? 'Ready. Try: <em style="color:#888;">"what does this app do?"</em>' : 'Pick a provider and paste an API key in ⚙ to begin.'}</div>`);
 
-  return () => root.remove();
+  const unmount = () => { root.remove(); dockPanel?.detach(); };
+  return unmount;
 };
 
 // === Helpers ===

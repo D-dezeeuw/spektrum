@@ -11,8 +11,8 @@ GlobalRegistrator.register();
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import spektrum, { setValue, tick, reset } from './spektrum.js';
-import { mount } from './spektrum-devtools.js';
+import spektrum, { setValue, tick, reset } from '../spektrum.js';
+import { mount } from '../companions/spektrum-devtools.js';
 
 beforeEach(() => {
   // Silence the "reset() detached N system(s)" warn during cleanup.

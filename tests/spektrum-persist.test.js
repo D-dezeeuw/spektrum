@@ -13,8 +13,8 @@ import spektrum, {
   appState, history,
   setValue, trigger, checkpoint, tick, reset,
   getPathObj,
-} from './spektrum.js';
-import { saveHistory, loadHistory, autoSave } from './spektrum-persist.js';
+} from '../spektrum.js';
+import { saveHistory, loadHistory, autoSave } from '../companions/spektrum-persist.js';
 
 beforeEach(() => {
   // Silence the "reset() detached N system(s)" warn during cleanup.

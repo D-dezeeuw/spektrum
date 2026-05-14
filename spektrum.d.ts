@@ -214,9 +214,16 @@ export interface Spektrum {
    * `${path}.data` as the promise progresses. Each phase records
    * through setValue (so the round-trip lands in history; replay
    * re-applies the values without re-issuing the fetch). Returns the
-   * run function for refetching.
+   * run function for refetching; also indexed by `path` so
+   * `refresh(path)` works without retaining the handle.
    */
   addAsync<T = any>(path: string, fn: () => Promise<T>): () => Promise<void>;
+  /**
+   * Re-run the loader previously registered via `addAsync(path, …)`.
+   * Returns the run Promise, or undefined when `path` was never
+   * registered. Lets callers refetch without retaining the handle.
+   */
+  refresh(path: string): Promise<void> | undefined;
 
   /** Subscribe a system to one or more paths. Returns an unsubscribe function. */
   addSystem(paths: string[], fn: SystemFn): () => void;
@@ -369,6 +376,7 @@ export const setValue: Spektrum['setValue'];
 export const checkpoint: Spektrum['checkpoint'];
 export const computed: Spektrum['computed'];
 export const addAsync: Spektrum['addAsync'];
+export const refresh: Spektrum['refresh'];
 export const addSystem: Spektrum['addSystem'];
 export const watch: Spektrum['watch'];
 export const removeSystem: Spektrum['removeSystem'];

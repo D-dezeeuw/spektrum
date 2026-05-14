@@ -58,9 +58,21 @@ export const mount = (spektrum, opts = {}) => {
   const position = opts.position || 'bottom-right';
   const title = opts.title || 'spektrum';
 
+  // If a dock is mounted, render inside it as a tab instead of as a
+  // free-floating panel. Skip our own style/position; the dock owns
+  // layout. Detection is by DOM query — no import needed.
+  const dock = document.querySelector('[data-spektrum-dock]')?._spektrumDock;
+  let dockPanel = null;
   const root = document.createElement('div');
   root.setAttribute('data-spektrum-devtools', '');
-  root.style.cssText = STYLES + (corners[position] || corners['bottom-right']);
+  if (dock) {
+    dockPanel = dock.registerPanel({ id: 'devtools', label: 'Devtools', onClose: () => unmount() });
+    root.style.cssText = 'padding:8px 10px;';
+    dockPanel.container.appendChild(root);
+  } else {
+    root.style.cssText = STYLES + (corners[position] || corners['bottom-right']);
+    parent.appendChild(root);
+  }
 
   root.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
@@ -71,7 +83,6 @@ export const mount = (spektrum, opts = {}) => {
     <input data-scrub type="range" min="0" max="0" value="0" step="1" style="width:100%;margin-bottom:8px;">
     <div data-log style="max-height:120px;overflow-y:auto;font-size:10px;color:#888;line-height:1.5;border-top:1px solid #2a2a2e;padding-top:6px;"></div>
   `;
-  parent.appendChild(root);
 
   const cursorEl = root.querySelector('[data-cursor]');
   const scrubEl = root.querySelector('[data-scrub]');
@@ -126,12 +137,14 @@ export const mount = (spektrum, opts = {}) => {
   const onLive = () => spektrum.replay(spektrum.history.length);
   liveBtn.addEventListener('click', onLive);
 
-  return () => {
+  const unmount = () => {
     stopped = true;
     scrubEl.removeEventListener('input', onScrub);
     liveBtn.removeEventListener('click', onLive);
     root.remove();
+    dockPanel?.detach();
   };
+  return unmount;
 };
 
 const escapeHtml = (s) => String(s)

@@ -1,7 +1,7 @@
 {
   "name": "spektrum",
   "version": "1.0.0",
-  "description": "Tiny reactive engine with HTML bindings and time-travel. ~10kB, zero deps.",
+  "description": "Tiny reactive engine with HTML bindings and time-travel. ~12kB minified, zero runtime deps, agent-native.",
   "type": "module",
   "main": "./spektrum.js",
   "types": "./spektrum.d.ts",
@@ -12,42 +12,26 @@
       "types": "./spektrum.d.ts",
       "import": "./spektrum.js"
     },
-    "./compile": {
-      "import": "./spektrum-compile.js"
-    },
-    "./devtools": {
-      "import": "./spektrum-devtools.js"
-    },
-    "./persist": {
-      "import": "./spektrum-persist.js"
-    },
-    "./mcp": {
-      "import": "./spektrum-mcp.js"
-    },
-    "./agent": {
-      "import": "./spektrum-agent.js"
-    }
+    "./compile":  { "import": "./companions/spektrum-compile.js"  },
+    "./devtools": { "import": "./companions/spektrum-devtools.js" },
+    "./persist":  { "import": "./companions/spektrum-persist.js"  },
+    "./mcp":      { "import": "./companions/spektrum-mcp.js"      },
+    "./agent":    { "import": "./companions/spektrum-agent.js"    },
+    "./inspect":  { "types":  "./companions/spektrum-inspect.d.ts", "import": "./companions/spektrum-inspect.js" },
+    "./dock":     { "types":  "./companions/spektrum-dock.d.ts",    "import": "./companions/spektrum-dock.js"    }
   },
   "files": [
     "spektrum.js",
     "spektrum.min.js",
     "spektrum.d.ts",
-    "spektrum-compile.js",
-    "spektrum-devtools.js",
-    "spektrum-devtools.min.js",
-    "spektrum-persist.js",
-    "spektrum-persist.min.js",
-    "spektrum-mcp.js",
-    "spektrum-mcp.min.js",
-    "spektrum-agent.js",
-    "spektrum-agent.min.js"
+    "companions/"
   ],
   "scripts": {
     "start": "python3 -m http.server 8088",
-    "test": "node --test",
+    "test": "node --test tests/*.test.js",
     "test:coverage": "node --test --experimental-test-coverage",
     "lint": "eslint .",
-    "build": "esbuild spektrum.js spektrum-persist.js spektrum-devtools.js spektrum-mcp.js spektrum-agent.js --minify --format=esm --outdir=. --out-extension:.js=.min.js --legal-comments=none",
+    "build": "esbuild spektrum.js --minify --format=esm --outdir=. --out-extension:.js=.min.js --legal-comments=none && esbuild companions/spektrum-persist.js companions/spektrum-devtools.js companions/spektrum-mcp.js companions/spektrum-agent.js companions/spektrum-inspect.js companions/spektrum-dock.js --minify --format=esm --outdir=companions --out-extension:.js=.min.js --legal-comments=none",
     "size": "node scripts/size.js"
   },
   "keywords": [

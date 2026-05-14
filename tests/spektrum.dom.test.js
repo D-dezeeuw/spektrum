@@ -16,8 +16,8 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import spektrum, {
   appState, setValue, bindDOM, tick, reset, getPathObj, precompile,
-} from './spektrum.js';
-import { extractExpressions, emitPrecompileSource } from './spektrum-compile.js';
+} from '../spektrum.js';
+import { extractExpressions, emitPrecompileSource } from '../companions/spektrum-compile.js';
 
 beforeEach(() => {
   // Silence the "reset() detached N system(s)" warn during cleanup —
@@ -1310,4 +1310,194 @@ test('run() invokes tick synchronously and schedules the next rAF', (t) => {
   assert.equal(Object.keys(spektrum.appStateDelta).length, 0,
     'run() called tick() synchronously, draining the delta');
   assert.equal(scheduled, 1, 'run() scheduled exactly one next rAF');
+});
+
+// === Developer-experience warnings (1.1 DX batch) ===
+//
+// Capture console.warn during bind so we can assert on emitted messages
+// without leaking output into the test runner. Each test scopes the
+// capture tightly to the bindDOM call under inspection.
+const captureWarns = (fn) => {
+  const seen = [];
+  const orig = console.warn;
+  console.warn = (...args) => seen.push(args.join(' '));
+  try { fn(); } finally { console.warn = orig; }
+  return seen;
+};
+
+test('data-each warns when first child is not an element', () => {
+  // Used to silently no-op; surfaces the misuse so authors don't ship
+  // invisible loops (feedback 2026-05-14: "four invisible chip rows").
+  document.body.innerHTML = `<button data-each="chips">{{label}}</button>`;
+  setValue('chips', [{ label: 'a' }, { label: 'b' }]);
+  const warns = captureWarns(() => bindDOM(document.body));
+  assert.ok(warns.some(w => w.includes('data-each="chips"') && w.includes('element child')),
+    `expected warn about missing element child; got: ${warns.join(' | ')}`);
+});
+
+test('data-each warns when path resolves to a non-array (non-undefined) value', () => {
+  // 'gallery' is set to an object, not an array — the loop wipes
+  // silently in the old behavior. Now surfaces the type mismatch.
+  document.body.innerHTML = `<ul data-each="gallery"><li>{{item}}</li></ul>`;
+  setValue('gallery', { not: 'an array' });
+  const warns = captureWarns(() => { bindDOM(document.body); tick(); });
+  assert.ok(warns.some(w => w.includes('data-each="gallery"') && w.includes('expected Array')),
+    `expected non-array warn; got: ${warns.join(' | ')}`);
+});
+
+test('data-each stays silent when path is undefined (normal pre-population)', () => {
+  // Undefined paths are normal during initial bind (state populated
+  // later by addAsync, fetch, etc). Warning here would spam every page.
+  document.body.innerHTML = `<ul data-each="not.yet"><li>{{item}}</li></ul>`;
+  const warns = captureWarns(() => { bindDOM(document.body); tick(); });
+  assert.equal(warns.length, 0, `expected no warns; got: ${warns.join(' | ')}`);
+});
+
+test('data-as warns on short or common variable names', () => {
+  // 'item' is the silent default — anything shorter/common rewrites
+  // \\b<name>\\b across template text/attrs (rewriteScope footgun).
+  document.body.innerHTML = `<ul data-each="rows" data-as="t"><li>{{t.name}}</li></ul>`;
+  setValue('rows', [{ name: 'a' }]);
+  const warns = captureWarns(() => bindDOM(document.body));
+  assert.ok(warns.some(w => w.includes('data-as="t"') && w.includes('short/common')),
+    `expected short-name warn; got: ${warns.join(' | ')}`);
+});
+
+test('data-as default ("item") does NOT warn', () => {
+  // The implicit default is silent — only explicit short/common names
+  // are flagged. 'item' is the documented, expected loop variable.
+  document.body.innerHTML = `<ul data-each="rows"><li>{{item.name}}</li></ul>`;
+  setValue('rows', [{ name: 'a' }]);
+  const warns = captureWarns(() => bindDOM(document.body));
+  assert.equal(warns.length, 0, `expected no warns for default; got: ${warns.join(' | ')}`);
+});
+
+test('data-as warns when the name shadows an existing state key', () => {
+  // Collision rewrites references to state.<name> inside the loop
+  // subtree — a particularly hard footgun to debug.
+  setValue('user', { id: 1 });
+  document.body.innerHTML = `<ul data-each="rows" data-as="user"><li>{{user.id}}</li></ul>`;
+  setValue('rows', [{ id: 1 }]);
+  const warns = captureWarns(() => { bindDOM(document.body); tick(); });
+  assert.ok(warns.some(w => w.includes('shadows state.user')),
+    `expected shadow warn; got: ${warns.join(' | ')}`);
+});
+
+// === async data-fn error routing (1.1 DX batch) ===
+
+test('async data-fn rejection is routed through onError, not unhandled', async () => {
+  // Pre-batch: an async handler that rejected landed as an unhandled
+  // Promise warning and never reached the registered error path.
+  const seen = [];
+  spektrum.onError((err, fn) => seen.push({ msg: err.message, fnName: fn.name }));
+  spektrum.defineFn('crashAsync', async () => { throw new Error('async boom'); });
+  document.body.innerHTML = `<button data-action="click" data-fn="crashAsync" data-name="crash">x</button>`;
+  bindDOM(document.body);
+  document.body.querySelector('button').click();
+  // Promise rejection is observed on a microtask.
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(seen.length, 1, `expected onError to receive the rejection; got ${seen.length}`);
+  assert.equal(seen[0].msg, 'async boom');
+  spektrum.onError(null);
+});
+
+test('sync data-fn throw is routed through onError', () => {
+  // Same shape, sync path — callFn catches both.
+  const seen = [];
+  spektrum.onError((err) => seen.push(err.message));
+  spektrum.defineFn('crashSync', () => { throw new Error('sync boom'); });
+  document.body.innerHTML = `<button data-action="click" data-fn="crashSync" data-name="crash">x</button>`;
+  bindDOM(document.body);
+  document.body.querySelector('button').click();
+  assert.deepEqual(seen, ['sync boom']);
+  spektrum.onError(null);
+});
+
+test('sync data-fn throw falls back to console.error when no onError is registered', () => {
+  // callFn:367 — when errorHandlers is empty, the engine still surfaces
+  // the failure rather than swallowing it. Logs `[spektrum] sync data-fn
+  // "<name>"` so the offending handler is greppable in the console.
+  spektrum.onError(null);                          // ensure no handlers
+  const calls = [];
+  const orig = console.error;
+  console.error = (...args) => calls.push(args);
+  try {
+    spektrum.defineFn('crashSyncBare', () => { throw new Error('uncaught sync'); });
+    document.body.innerHTML = `<button data-action="click" data-fn="crashSyncBare" data-name="cb">x</button>`;
+    bindDOM(document.body);
+    document.body.querySelector('button').click();
+  } finally { console.error = orig; }
+  assert.equal(calls.length, 1, `expected one console.error call; got ${calls.length}`);
+  assert.match(calls[0][0], /\[spektrum\] sync data-fn "crashSyncBare"/);
+  assert.equal(calls[0][1].message, 'uncaught sync', 'error object is the second arg');
+});
+
+test('async data-fn rejection falls back to console.error when no onError is registered', async () => {
+  // Same line (callFn:367) on the async path. Without this branch,
+  // async rejections would land as unhandled-promise browser warnings
+  // with no Spektrum context — hard to attribute to a specific handler.
+  spektrum.onError(null);
+  const calls = [];
+  const orig = console.error;
+  console.error = (...args) => calls.push(args);
+  try {
+    spektrum.defineFn('crashAsyncBare', async () => { throw new Error('uncaught async'); });
+    document.body.innerHTML = `<button data-action="click" data-fn="crashAsyncBare" data-name="cb">x</button>`;
+    bindDOM(document.body);
+    document.body.querySelector('button').click();
+    await new Promise(r => setTimeout(r, 0));     // observe the rejection microtask
+  } finally { console.error = orig; }
+  assert.equal(calls.length, 1, `expected one console.error call; got ${calls.length}`);
+  assert.match(calls[0][0], /\[spektrum\] async data-fn "crashAsyncBare"/);
+  assert.equal(calls[0][1].message, 'uncaught async');
+});
+
+test('callFn fallback for cycle action without onError also reaches console.error', () => {
+  // The cycle path uses callFn too — make sure the fallback works
+  // there as well as in event-based dispatch. Catches accidental
+  // divergence if the cycle branch ever bypasses callFn.
+  spektrum.onError(null);
+  const calls = [];
+  const orig = console.error;
+  console.error = (...args) => calls.push(args);
+  try {
+    spektrum.defineFn('crashCycle', () => { throw new Error('cycle boom'); });
+    document.body.innerHTML = `<button data-action="cycle" data-fn="crashCycle" data-id="trigger.path">x</button>`;
+    setValue('trigger.path', 1);
+    bindDOM(document.body);                       // bindReactive primes the cycle once
+    tick();
+  } finally { console.error = orig; }
+  assert.ok(calls.length >= 1, `expected ≥1 console.error call; got ${calls.length}`);
+  assert.match(calls[0][0], /\[spektrum\] sync data-fn "crashCycle"/);
+});
+
+// === DX warnings, follow-up (F-A, F-B) ===
+
+test('data-stable-key without data-key warns at bind time', () => {
+  // Stable-key only takes effect inside the keyed branch — without
+  // data-key it silently falls through to the default rebuild path.
+  document.body.innerHTML = `<ul data-each="rows" data-stable-key><li>{{item}}</li></ul>`;
+  setValue('rows', [{ id: 1 }]);
+  const warns = captureWarns(() => { bindDOM(document.body); tick(); });
+  assert.ok(warns.some(w => w.includes('data-stable-key') && w.includes('needs data-key')),
+    `expected stable-key warn; got: ${warns.join(' | ')}`);
+});
+
+test('data-stable-key with data-key does NOT warn', () => {
+  // The valid combination is silent.
+  document.body.innerHTML = `<ul data-each="rows" data-key="item.id" data-stable-key><li>{{item.id}}</li></ul>`;
+  setValue('rows', [{ id: 1 }]);
+  const warns = captureWarns(() => { bindDOM(document.body); tick(); });
+  assert.equal(warns.length, 0, `expected no warns; got: ${warns.join(' | ')}`);
+});
+
+test('data-action="cycle" without data-id warns and does not crash', () => {
+  // Pre-guard: addSystem([undefined]) threw `Cannot read properties of
+  // undefined (reading 'split')` deep in topKeys precompute — a stack
+  // trace far from the offending element. Now refused at bind time.
+  spektrum.defineFn('cycleFn', () => {});
+  document.body.innerHTML = `<button data-action="cycle" data-fn="cycleFn">x</button>`;
+  const warns = captureWarns(() => bindDOM(document.body));
+  assert.ok(warns.some(w => w.includes('data-action="cycle"') && w.includes('data-id')),
+    `expected cycle/data-id warn; got: ${warns.join(' | ')}`);
 });

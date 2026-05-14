@@ -357,15 +357,34 @@ export const createSpektrum = (opts = {}) => {
     }
   };
 
+  /** Invoke a data-fn handler, routing sync throws AND async rejections
+   *  through onError (or console.error fallback). Without this, async
+   *  handler rejections land as unhandled-promise warnings and never
+   *  reach the registered error path. */
+  const callFn = (name, fn, ...args) => {
+    const onErr = (err, tag) => {
+      if (errorHandlers.size) safeFire(errorHandlers, 'onError', err, fn);
+      else console.error(`[spektrum] ${tag} data-fn "${name}"`, err);
+    };
+    try {
+      const r = fn(...args);
+      if (r?.then) r.catch(err => onErr(err, 'async'));
+    } catch (err) { onErr(err, 'sync'); }
+  };
+
   // --- Public mutators ---
 
-  /** Record an additive numeric change. Multiple in one tick accumulate. */
+  /** Record an additive numeric change. Multiple in one tick accumulate.
+   *  Empty path is rejected — silently writing to appState[''] used to
+   *  pollute state and bloat history with values no binding could read. */
   const trigger = (id, path, value) => {
+    if (!path) return warn('trigger: empty path');
     record({ id, path, value, op: 'add' });
   };
 
   /** Record an absolute set. `id` defaults to `set:<path>` when omitted. */
   const setValue = (path, value, id) => {
+    if (!path) return warn('setValue: empty path');
     record({ id: id || `set:${path}`, path, value, op: 'set' });
   };
 
@@ -414,7 +433,9 @@ export const createSpektrum = (opts = {}) => {
   /** Async resource primitive. Sets `${path}.loading` / `${path}.error`
    *  / `${path}.data` as the promise progresses. Each phase records
    *  through setValue so replay re-applies values without re-issuing
-   *  the fetch. Returns the run function for refetching. */
+   *  the fetch. Returns the run function for refetching; also indexed
+   *  by `path` so `refresh(path)` works without holding the handle. */
+  const asyncRunners = {};
   const addAsync = (path, fn) => {
     const id = `addAsync:${path}`;
     const set = (k, v) => setValue(`${path}.${k}`, v, id);
@@ -424,9 +445,15 @@ export const createSpektrum = (opts = {}) => {
       catch (err) { set('error', err?.message || String(err)); }
       finally { set('loading', false); }
     };
+    asyncRunners[path] = run;
     run();
     return run;
   };
+
+  /** Re-run the loader previously registered via `addAsync(path, …)`.
+   *  Returns the run Promise, or undefined when `path` was never
+   *  registered. Lets callers refetch without retaining the handle. */
+  const refresh = (path) => asyncRunners[path]?.();
 
   // --- Tick / lifecycle ---
 
@@ -695,8 +722,30 @@ export const createSpektrum = (opts = {}) => {
     const varName = el.dataset.as || 'item';
     const keyExpr = el.dataset.key;
     const stableKey = el.hasAttribute('data-stable-key');
+    // data-stable-key is a no-op without data-key — its whole purpose is
+    // to opt into a path within the keyed branch. Author probably wants
+    // the reorder-free behavior; surface the missing prerequisite.
+    if (stableKey && !keyExpr) warn(`data-stable-key on "${arrayPath}" needs data-key`);
     const templateChild = el.firstElementChild;
-    if (!templateChild) return;
+    // data-each marks the *container*; its first element child is the
+    // template. A bare loop body (text-only, comment-only, whitespace)
+    // used to silent-no-op — surface it so the misuse is visible.
+    if (!templateChild) {
+      warn(`data-each="${arrayPath}" needs an element child to clone`);
+      return;
+    }
+    // data-as substitution is whole-word string replace (rewriteScope);
+    // short or common names will rewrite unrelated text/attributes in
+    // the template subtree. 'item' is the silent default; flag the rest.
+    if (varName !== 'item' && (varName.length <= 2 || /^(index|key|value|name|el|fn|id|data)$/.test(varName))) {
+      warn(`data-as="${varName}" is short/common — rewrites \\b${varName}\\b across template text/attrs`);
+    }
+    // Check the delta too — bindDOM commonly runs before the first
+    // tick, so setValue('user', …) before bind leaves the key in
+    // appStateDelta only. A merged check catches both cases.
+    if (varName !== 'item' && (varName in appState || varName in appStateDelta)) {
+      warn(`data-as="${varName}" shadows state.${varName}`);
+    }
     const template = templateChild.cloneNode(true);
     templateChild.remove();
 
@@ -735,7 +784,14 @@ export const createSpektrum = (opts = {}) => {
 
     return bindReactive([arrayPath], (state) => {
       const items = getPathObj(state, arrayPath);
-      if (!Array.isArray(items)) { wipeAll(); prev = []; return; }
+      if (!Array.isArray(items)) {
+        // Undefined is the normal "path not populated yet" case; stay
+        // silent. Anything else (null, object, primitive) is a real
+        // type mismatch worth surfacing — data-each takes a dotted path,
+        // not an expression; use computed() for derived arrays.
+        if (items !== undefined) warn(`data-each="${arrayPath}" resolved to ${items === null ? 'null' : typeof items}, expected Array`);
+        wipeAll(); prev = []; return;
+      }
 
       if (!keyExpr) {
         const oldN = prev.length, newN = items.length;
@@ -805,8 +861,12 @@ export const createSpektrum = (opts = {}) => {
       return;
     }
     const value = parseValue(el.dataset.value);
+    const fnName = el.dataset.fn;
     if (action === 'cycle') {
-      return addSystem([el.dataset.id], (state, delta) => handler(el, state, delta, value));
+      // Cycle subscribes to data-id as a path — without it, addSystem
+      // would throw deep in topKeys computation. Fail at the bind site.
+      if (!el.dataset.id) return warn(`data-action="cycle" needs data-id`);
+      return addSystem([el.dataset.id], (state, delta) => callFn(fnName, handler, el, state, delta, value));
     }
     // data-action="click.prevent.stop.once" — first segment is the
     // event name; rest are flags. Mirrors Vue's v-on modifiers.
@@ -821,7 +881,7 @@ export const createSpektrum = (opts = {}) => {
       if (has('self') && ev.target !== el) return;
       if (has('prevent')) ev.preventDefault();
       if (has('stop')) ev.stopPropagation();
-      handler(el, appState, appStateDelta, value, ev);
+      callFn(fnName, handler, el, appState, appStateDelta, value, ev);
       if (has('once')) el.removeEventListener(eventName, listener, opts);
     };
     const opts = { capture: has('capture'), passive: has('passive') };
@@ -997,7 +1057,7 @@ export const createSpektrum = (opts = {}) => {
     get cursor() { return cursor; },
     get replaying() { return replaying; },
     get checkpoints() { return checkpointsOf(); },
-    trigger, setValue, checkpoint, computed, addAsync,
+    trigger, setValue, checkpoint, computed, addAsync, refresh,
     addSystem, watch, removeSystem, defineFn, onError, onRecord, onFork,
     bindDOM, run, tick, replay, reset, resetState, serialize,
     describe, explain, attempt, findByIntent,
@@ -1010,7 +1070,7 @@ const _default = createSpektrum();
 export default _default;
 export const {
   appState, appStateDelta, history, snapshots, forks, refs, intents,
-  trigger, setValue, checkpoint, computed, addAsync,
+  trigger, setValue, checkpoint, computed, addAsync, refresh,
   addSystem, watch, removeSystem, defineFn, onError, onRecord, onFork,
   bindDOM, run, tick, replay, reset, resetState, serialize,
   describe, explain, attempt, findByIntent,

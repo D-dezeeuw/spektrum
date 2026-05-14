@@ -9,7 +9,7 @@ import spektrum, {
   // state (objects mutable; cursor/replaying are getters on the default instance)
   appState, appStateDelta, history, snapshots, forks, refs, intents,
   // mutators
-  trigger, setValue, checkpoint, addAsync,
+  trigger, setValue, checkpoint, addAsync, refresh,
   // derived state
   computed,
   // subscriptions & hooks
@@ -30,6 +30,37 @@ import spektrum, {
 spektrum.cursor;     // current history position
 spektrum.replaying;  // true while replay() is in flight
 ```
+
+## Reading state
+
+`appState` is a stable, live reference — the same object throughout the lifetime of the instance. Mutations land in `appStateDelta` first, then merge into `appState` on each `tick()`. Import it and read directly any time:
+
+```js
+import { appState, defineFn } from 'spektrum';
+
+defineFn('save', async (el) => {
+  await api.put('/user', appState.user);   // always current
+});
+```
+
+There is no `getState()` accessor — the exported reference *is* the accessor. For event-based `data-fn` handlers, the `state` arg passed to your handler is the same live reference (cycle-based handlers receive a snapshot — see [bindings](bindings.md#handler-state-argument)).
+
+For derived values that need to re-compute on dep change, use `computed(path, deps, fn)` rather than recomputing on every read; it writes the result back into state so bindings stay reactive.
+
+## Refetching async resources
+
+`addAsync(path, fn)` returns the run function for refetching, and is also indexed by `path` so `refresh(path)` works without retaining the handle:
+
+```js
+import { addAsync, refresh } from 'spektrum';
+
+const refetch = addAsync('user', () => fetch('/api/user').then(r => r.json()));
+
+await refetch();          // re-run via the returned handle
+await refresh('user');    // re-run via the keyed registry — same effect
+```
+
+`refresh(path)` returns the run Promise, or `undefined` when the path was never registered. See [bindings — async resources](bindings.md#async-resources) for the binding shape.
 
 ## Multiple isolated instances
 
@@ -141,10 +172,37 @@ spektrum.defineFn('addToCart', (el, state, delta, value) => {
 
 Backwards compatible — `defineFn(name, fn)` still works.
 
+## TypeScript
+
+The package ships [`spektrum.d.ts`](../spektrum.d.ts) and `package.json` points to it via the `types` field — TypeScript and JS-with-`// @ts-check` projects pick it up automatically on `import 'spektrum'`. No `@types/spektrum` package needed; nothing to install.
+
+```ts
+import spektrum, {
+  setValue, addAsync, defineFn,
+  createSpektrum, type Spektrum, type State, type FnMeta,
+} from 'spektrum';
+
+interface AppState extends State {
+  count: number;
+  user?: { id: string; email: string };
+}
+
+// Cast appState to your app's shape for autocomplete inside handlers.
+const app = createSpektrum() as Spektrum & { appState: AppState };
+
+defineFn('inc', (el, state) => {
+  setValue('count', (state as AppState).count + 1);
+});
+```
+
+Every export carries a JSDoc-style block in the d.ts (signature, behavior, replay semantics, edge cases). When you change a public surface in `spektrum.js`, update `spektrum.d.ts` in the same commit — see [CONTRIBUTING.md](../CONTRIBUTING.md). The d.ts is the contract; reviewers will ask you to keep it in sync.
+
+**Out of scope (deliberately).** Template-literal types over state paths (so `setValue('user.email', …)` could narrow against `AppState`) would be powerful but conflict with the dynamic-`with(state)` expression engine. The current d.ts types paths as `string`. Pass your shape through your handlers if you want stricter checking inside them.
+
 ## Related
 
 - [Bindings](bindings.md) — declarative HTML directives that hook into the API
 - [Time-travel](time-travel.md) — `replay`, `checkpoint`, `forks`, `snapshots`
-- [Modules](modules.md) — `spektrum/devtools`, `persist`, `compile`, `mcp`, `agent`
+- [Modules](modules.md) — `spektrum/devtools`, `persist`, `compile`, `mcp`, `agent`, `inspect`, `dock`
 - [AGENTS.md](../AGENTS.md) — agent workflow tutorial
 - [TypeScript declarations](../spektrum.d.ts) — full type surface

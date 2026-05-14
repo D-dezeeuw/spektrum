@@ -19,8 +19,13 @@
   trick, etc). 1.0 (which absorbed the 0.6 agent-native surface —
   describe / explain / attempt / findByIntent / data-intent
   registration / defineFn metadata) raises the cap to 11.5 kB raw /
-  5.25 kB gz; multi-subscriber hooks added a bit more. Adjust caps
-  deliberately — every bump invites complacency. Trim before raising.
+  5.25 kB gz; multi-subscriber hooks added a bit more. The 1.1 DX
+  batch (data-each / data-as warnings, async data-fn error routing,
+  refresh(path) keyed re-runner) selectively re-adds the warns that
+  0.5.1 dropped — this time pinned to the highest-pain footguns
+  surfaced by real-world feedback — and bumps the cap to 12 kB raw /
+  5.5 kB gz. Adjust caps deliberately — every bump invites complacency.
+  Trim before raising.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -32,11 +37,28 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 11776, gz: 5376 },
-  { file: 'spektrum-persist.min.js',  raw:  1024, gz:  576 },
-  { file: 'spektrum-devtools.min.js', raw:  3072, gz: 1536 },
-  { file: 'spektrum-mcp.min.js',      raw:  5120, gz: 2048 },
-  { file: 'spektrum-agent.min.js',    raw: 13312, gz: 5120 },
+  { file: 'spektrum.min.js',          raw: 12288, gz: 5632 },
+  { file: 'companions/spektrum-persist.min.js',  raw:  1024, gz:  576 },
+  // 1.2 dock integration adds ~120 B for the [data-spektrum-dock]
+  // detection branch + dockPanel.detach() in unmount. Standalone
+  // behavior unchanged; cap raised once to absorb the integration.
+  { file: 'companions/spektrum-devtools.min.js', raw:  3328, gz: 1664 },
+  { file: 'companions/spektrum-mcp.min.js',      raw:  5120, gz: 2048 },
+  { file: 'companions/spektrum-agent.min.js',    raw: 13312, gz: 5120 },
+  // Inspect Phase 1 + Lint (element inspector with hover tooltip +
+  // outline overlay, three-tab panel, mutation tracer with filter, and
+  // static lint pass). First cap-set, not a bump. The design doc's
+  // ~6 kB estimate was optimistic — the scoped CSS block, tooltip
+  // rendering, multi-feature panel HTML, and trigger-annotation logic
+  // together push to ~10 kB raw / 4 kB gz. Still well under the agent
+  // companion (~12 kB) and proportional to the surface area; trim
+  // before raising further. Revisit when Phase 2/3 features land.
+  { file: 'companions/spektrum-inspect.min.js',  raw: 10752, gz: 4352 },
+  // Dock: shared container for the dev-time companions (devtools,
+  // inspect, agent). Provides tab strip, collapse/expand, side toggle,
+  // and a registerPanel() API that the others detect at mount time.
+  // First cap-set, not a bump.
+  { file: 'companions/spektrum-dock.min.js',     raw:  5632, gz: 2304 },
 ];
 
 let failed = false;

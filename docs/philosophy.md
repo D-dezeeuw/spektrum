@@ -35,16 +35,12 @@ Every line of code in Spektrum was added against these constraints. Each constra
 
 | Path | What |
 | --- | --- |
-| [`spektrum.js`](../spektrum.js) | The engine. ES module. |
-| [`spektrum-devtools.js`](../spektrum-devtools.js) | Optional time-travel scrubber panel. |
-| [`spektrum-persist.js`](../spektrum-persist.js) | Optional save/load helpers over localStorage. |
-| [`spektrum-compile.js`](../spektrum-compile.js) | Build-time helper for CSP-safe precompile. |
-| [`spektrum-mcp.js`](../spektrum-mcp.js) | Optional MCP tool catalog — exposes the agent surface for orchestrators. |
-| [`spektrum-agent.js`](../spektrum-agent.js) | Optional in-page LLM assistant (Anthropic / OpenAI / OpenRouter). |
-| [`example/index.html`](../example/index.html) | Demo page — declarative bindings using every feature. |
-| [`example/app.js`](../example/app.js) | Demo wiring (seed, clamp, derived flags, log fan-out, scrubber sync). |
-| [`spektrum.test.js`](../spektrum.test.js) | Engine tests via `node --test`. |
-| [`spektrum.dom.test.js`](../spektrum.dom.test.js) | DOM-touching tests (happy-dom). |
+| [`spektrum.js`](../spektrum.js) | The engine. ES module. Single file at root. |
+| [`spektrum.d.ts`](../spektrum.d.ts) | TypeScript declarations. |
+| [`companions/`](../companions/) | Opt-in subpath modules — `devtools`, `persist`, `compile`, `mcp`, `agent`, `inspect`, `dock`. Each is a single file. |
+| [`tests/`](../tests/) | Engine + DOM tests (`node --test`, happy-dom). One file per concern. |
+| [`example/`](../example/) | Demo page (`index.html` + `app.js`) — declarative bindings using every feature, two isolated Spektrum instances. |
+| [`docs/`](../docs/) | Reference + topical guides, plus the agent workflow at [`../AGENTS.md`](../AGENTS.md). |
 | [`scripts/size.js`](../scripts/size.js) | Zero-dep size budget enforcer. |
 
 ## Related

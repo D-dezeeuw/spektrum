@@ -158,10 +158,11 @@ export const mount = (opts = {}) => {
     button.setAttribute('data-panel-tab', id);
     button.innerHTML = `<span>${escapeHtml(label)}</span><span class="xc" title="close" data-x>×</span>`;
     button.addEventListener('click', (ev) => {
-      // The button has two children: the label span and the × span
-      // (with data-x). Every click target inside the button is an
-      // Element with a dataset.
-      if (ev.target.dataset.x !== undefined) { panel.close(); return; }
+      // Optional-chain is defense-in-depth: in normal flow ev.target is
+      // either the label span or the × span (both Elements with dataset),
+      // but synthetic events (tests, dev tools, Shadow DOM retargeting)
+      // can land non-Element targets here.
+      if (ev.target.dataset?.x !== undefined) { panel.close(); return; }
       setActive(id);
     });
     tabsEl.appendChild(button);

@@ -342,9 +342,11 @@ export const mount = (spektrum, opts = {}) => {
   // === Wire panel buttons ===
 
   root.addEventListener('click', (ev) => {
-    // Click targets inside the panel are always Elements (buttons,
-    // tabs, inputs); no defensive instanceof guard needed.
+    // Defense-in-depth — the DOM spec gives Elements for mouse-event
+    // targets, but synthetic events (tests, dev tools, future Shadow
+    // DOM) can break that. Bail before `t.dataset.tab` throws.
     const t = ev.target;
+    if (!(t instanceof Element)) return;
     if (t.dataset.tab) setTab(t.dataset.tab);
     else if (t.dataset.act === 'close')        unmount();
     else if (t.dataset.act === 'inspect-mode') { inspectMode = !inspectMode; pinned = null; if (!inspectMode) hideFloaters(); refreshBtn(); }

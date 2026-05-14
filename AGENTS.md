@@ -345,7 +345,7 @@ The agent surface gives an agent the same authority any caller of `setValue` / `
 | --- | --- |
 | Engine source | [spektrum.js](spektrum.js) — read it. ~1100 lines. |
 | Type definitions | [spektrum.d.ts](spektrum.d.ts) — `Spektrum`, `SpektrumManifest`, `ExplainedEntry`, `AttemptHandle`, `FnMeta`. |
-| MCP tool factory | [spektrum-mcp.js](spektrum-mcp.js) — twelve tools, plain JS, SDK-agnostic. |
+| MCP tool factory | [companions/spektrum-mcp.js](companions/spektrum-mcp.js) — twelve tools, plain JS, SDK-agnostic. |
 | Wired demo | [example/](example/) — open in a browser, then `window.spektrum.{counter,basket}` in devtools. |
 | Full README | [README.md](README.md) — design philosophy, all directives, time-travel internals. |
 

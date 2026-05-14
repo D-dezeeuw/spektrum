@@ -16,8 +16,8 @@
 */
 
 import { createSpektrum } from '../spektrum.js';
-import { mount as mountDevtools } from '../spektrum-devtools.js';
-import { loadHistory, autoSave } from '../spektrum-persist.js';
+import { mount as mountDevtools } from '../companions/spektrum-devtools.js';
+import { loadHistory, autoSave } from '../companions/spektrum-persist.js';
 
 // One simple ID source for keyed list items. Persisted history
 // re-applies its own pre-existing IDs, so we only ever bump for new
@@ -272,7 +272,7 @@ const AGENT_FLAG = 'spektrum:demo:agent-enabled';
 const enableAgentLink = document.getElementById('enable-agent');
 
 const mountAgent = async () => {
-  const { mount: mountAgentPanel } = await import('../spektrum-agent.js');
+  const { mount: mountAgentPanel } = await import('../companions/spektrum-agent.js');
   // The agent drives the basket instance (more interesting surface area:
   // lists, filtering, multiple intents). Mount one per instance if you
   // want both wired.

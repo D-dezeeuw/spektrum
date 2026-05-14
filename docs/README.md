@@ -24,7 +24,7 @@ Reference material for working with Spektrum. The [root README](../README.md) is
 
 - **Engine** — [`spektrum.js`](../spektrum.js) (~1100 lines, single file, zero deps)
 - **Types** — [`spektrum.d.ts`](../spektrum.d.ts)
-- **Tests** — [`spektrum.test.js`](../spektrum.test.js) + [`spektrum.dom.test.js`](../spektrum.dom.test.js)
+- **Tests** — [`tests/`](../tests/) (engine + DOM, one file per concern)
 - **Demo** — [`example/`](../example/)
 - **Changelog** — [`../CHANGELOG.md`](../CHANGELOG.md)
 - **Security policy** — [`../SECURITY.md`](../SECURITY.md)

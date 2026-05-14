@@ -53,9 +53,10 @@ Open the demo with `npm start` and visit
   to delete `// returns the value` and keep `// runtime try/catch
   so paths absent before the first tick render as undefined`.
 - **Tests.** Every behavior change ships with a `node:test` test
-  in `spektrum.test.js` (no DOM) or `spektrum.dom.test.js`
-  (happy-dom). No fake timers, no mocks of the DOM, no awaits on
-  microtasks — `tick()` is synchronous on purpose.
+  in `tests/spektrum.test.js` (no DOM) or `tests/spektrum.dom.test.js`
+  (happy-dom). Companion tests live alongside (`tests/spektrum-*.test.js`).
+  No fake timers, no mocks of the DOM, no awaits on microtasks —
+  `tick()` is synchronous on purpose.
 - **Public API surface** lives in `spektrum.d.ts` — keep it in
   sync.
 - **Changelog.** Add a line under `## [Unreleased]` in

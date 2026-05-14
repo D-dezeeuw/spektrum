@@ -1,8 +1,8 @@
 # `spektrum/inspect` — Design Doc
 
-**Status.** Proposal. Not yet implemented.
+**Status.** **Phase 1 + 3.2 shipped** (Element Inspector, Mutation Tracer, Static Lint). Phase 2 (state diff + subscription map) and Phase 3.1 (loop registry) are deferred — see [Sequencing & milestones](#sequencing--milestones). For user-facing docs of what shipped, see [modules.md#spektruminspect](modules.md#spektruminspect).
 **Author.** Drafted 2026-05-14, response to the 14-05 feedback batch.
-**Companion to.** `spektrum/devtools` (time-travel scrubber) — complementary, not overlapping.
+**Companion to.** `spektrum/devtools` (time-travel scrubber) and `spektrum/dock` (shared container) — complementary, not overlapping.
 
 ---
 
@@ -76,12 +76,14 @@ The two features that pay for the panel by themselves. If these two land, the re
 **Problem.** "What state does this element see right now?"
 
 **UX.**
+
 - `inspect` mode toggles via a button in the panel header (or hold `Alt` from `pinKey:`).
 - While active, hovering any element draws a thin outline and shows a fixed tooltip listing every binding on that element + every binding inherited from its `data-each` ancestor.
 - Click an element to pin the tooltip (mouse can move away). Click elsewhere or press `Esc` to unpin.
 
 **What the tooltip shows.**
-```
+
+```text
 <div :class="state.theme" data-if="user.loggedIn">
   bindings:
     :class    → state.theme           = "dark"
@@ -92,6 +94,7 @@ The two features that pay for the panel by themselves. If these two land, the re
 ```
 
 **Implementation sketch.**
+
 ```js
 // Mouse capture phase so we beat page handlers.
 document.addEventListener('mouseover', onHover, true);
@@ -132,19 +135,22 @@ function readBindings(el) {
 **Problem.** "Why is this system re-running?" / "What just changed in state?"
 
 **UX.**
+
 - Scrolling log inside the panel: timestamp, op, path, value (truncated), and the names of systems that fired in response.
 - Filter input (regex on path).
 - Pause / resume button.
 - "Echo to console" toggle — when on, every entry also goes through `console.groupCollapsed` so it survives panel unmount.
 
 **Display example.**
-```
+
+```text
 14:23:01.412  set  gallery.data.items   Array(24)   → renderGallery, recountFilters
 14:23:01.413  add  cart.total           +19.99      → renderCartTotal, recomputeShipping
 14:23:01.414  ◆    attempt:apply-edit                (checkpoint)
 ```
 
 **Implementation sketch.**
+
 ```js
 const seenEntries = [];
 const stopRecord = spektrum.onRecord(entry => {
@@ -174,6 +180,7 @@ function whoSubscribesTo(path) {
 **Problem.** "What state changed since I clicked that button?"
 
 **UX.**
+
 - "Snap" button — captures the current state (`JSON.parse(JSON.stringify(spektrum.appState))`).
 - Tree view of the diff between the snapped state and current:
   - **Green:** added paths
@@ -183,6 +190,7 @@ function whoSubscribesTo(path) {
 - "Re-snap" button to update the baseline.
 
 **Implementation sketch.**
+
 ```js
 function diff(a, b, path = '') {
   // Recursive walk; emit { path, kind: 'add'|'change'|'remove', from, to } records.
@@ -199,11 +207,13 @@ Don't try to display giant diffs — cap displayed entries at e.g. 200 with an "
 **Problem.** "Who listens to `cart.total`?" / "Which paths have no subscribers — are they dead writes?"
 
 **UX.**
+
 - Tree view of every subscribed path, sorted lexically.
 - Each leaf shows: list of system names subscribed to it (or any ancestor).
 - A "Write-only paths" section: paths that appear in `spektrum.history` but match no subscriber's `paths`. Strong signal of dead state.
 
 **Implementation sketch.**
+
 ```js
 function buildSubMap() {
   const map = new Map();
@@ -229,11 +239,13 @@ function writeOnlyPaths() {
 **Problem.** "Is this list actually rendering? Are my keys colliding?"
 
 **UX.**
+
 - List of every `[data-each]` on the page.
 - Per loop: bound path, resolved array length, `data-as` name, `data-key` expression if any, **key collision count** (computed by evaluating the key expr against each item).
 - Click a row to scroll/outline the loop in the page.
 
 **Implementation sketch.**
+
 ```js
 function scanLoops() {
   return [...document.querySelectorAll('[data-each]')].map(el => {
@@ -261,9 +273,11 @@ function scanLoops() {
 **Problem.** Things that *would* have been inline warns in core but the size budget rejected — most notably the stray-`{{…}}`-in-attribute footgun (B.1.b from the 14-05 plan).
 
 **UX.**
+
 - One-shot scan on `mount()`, plus a "re-lint" button. Results render as a list with severity, message, and a "scroll to" link to each offending element.
 
 **Initial checks.**
+
 - `{{…}}` in plain (non-`:`, non-`data-`) attribute values → warn (B.1.b).
 - `data-action="event"` with a modifier not in the known set → info (the unknown-modifier warn that core deliberately doesn't ship).
 - `data-fn="name"` where `name` isn't registered in `spektrum.describe().fns` → warn.
@@ -306,9 +320,11 @@ The programmatic helpers are exported individually so tests and agents can consu
 | 3 | Loops + Lint | ~1.4 KB | ~6.0 KB raw / ~2.5 KB gz |
 
 Cap proposal for [scripts/size.js](../scripts/size.js) at Phase 1 ship:
+
 ```js
 { file: 'spektrum-inspect.min.js', raw: 3584, gz: 1792 },
 ```
+
 Raise to `{ raw: 5120, gz: 2304 }` at Phase 2, `{ raw: 6144, gz: 2560 }` at Phase 3 — each bump tied to a named, justified feature set in the `scripts/size.js` comment block.
 
 ## Open questions (to resolve before Phase 1)

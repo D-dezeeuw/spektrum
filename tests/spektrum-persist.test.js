@@ -3,26 +3,22 @@
   with a fake { getItem, setItem } backend so we don't need happy-dom
   here — the engine is DOM-free and the persist module only touches
   Storage-shaped backends.
+
+  Each test gets a fresh instance via createSpektrum() — no shared
+  singleton state, no `reset()` plumbing between tests, no warns to
+  silence. Matches the style used by spektrum-inspect.test.js and
+  spektrum-dock.test.js.
 */
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import spektrum, {
-  appState, history,
-  setValue, trigger, checkpoint, tick, reset,
-  getPathObj,
-  createSpektrum,
-} from '../spektrum.js';
+import { getPathObj, createSpektrum } from '../spektrum.js';
 import { saveHistory, loadHistory, autoSave } from '../companions/spektrum-persist.js';
 
-beforeEach(() => {
-  // Silence the "reset() detached N system(s)" warn during cleanup.
-  const orig = console.warn;
-  console.warn = () => {};
-  try { reset(); } finally { console.warn = orig; }
-});
+let s;
+beforeEach(() => { s = createSpektrum(); });
 
 const fakeStorage = () => {
   const data = new Map();
@@ -36,20 +32,20 @@ const fakeStorage = () => {
 // === saveHistory ===
 
 test('saveHistory writes the current history JSON to storage', () => {
-  setValue('count', 5);
-  trigger('inc', 'count', 1);
-  tick();
+  s.setValue('count', 5);
+  s.trigger('inc', 'count', 1);
+  s.tick();
   const storage = fakeStorage();
-  assert.equal(saveHistory(spektrum, { storage }), true);
+  assert.equal(saveHistory(s, { storage }), true);
   const persisted = JSON.parse(storage.getItem('spektrum:history'));
-  assert.deepEqual(persisted, spektrum.history);
+  assert.deepEqual(persisted, s.history);
 });
 
 test('saveHistory honours opts.key', () => {
-  setValue('x', 1);
-  tick();
+  s.setValue('x', 1);
+  s.tick();
   const storage = fakeStorage();
-  saveHistory(spektrum, { storage, key: 'custom-key' });
+  saveHistory(s, { storage, key: 'custom-key' });
   assert.equal(storage._data.has('custom-key'), true);
   assert.equal(storage._data.has('spektrum:history'), false);
 });
@@ -59,9 +55,9 @@ test('saveHistory returns false when storage.setItem throws (quota / readonly)',
     getItem: () => null,
     setItem: () => { throw new Error('QuotaExceededError'); },
   };
-  setValue('x', 1);
-  tick();
-  assert.equal(saveHistory(spektrum, { storage }), false);
+  s.setValue('x', 1);
+  s.tick();
+  assert.equal(saveHistory(s, { storage }), false);
 });
 
 test('saveHistory returns false when no storage is available', () => {
@@ -70,7 +66,7 @@ test('saveHistory returns false when no storage is available', () => {
   const orig = globalThis.localStorage;
   delete globalThis.localStorage;
   try {
-    assert.equal(saveHistory(spektrum, {}), false);
+    assert.equal(saveHistory(s, {}), false);
   } finally {
     if (orig !== undefined) globalThis.localStorage = orig;
   }
@@ -79,23 +75,18 @@ test('saveHistory returns false when no storage is available', () => {
 // === loadHistory ===
 
 test('loadHistory replays a saved history (round-trip)', () => {
-  // Seed, save, reset, load — the round-trip path used in real apps.
-  setValue('count', 5);
-  trigger('inc', 'count', 1);
-  tick();
+  // Seed in instance A, save, load into instance B — the round-trip
+  // path used in real apps (save in one session, load in the next).
+  s.setValue('count', 5);
+  s.trigger('inc', 'count', 1);
+  s.tick();
   const storage = fakeStorage();
-  saveHistory(spektrum, { storage });
+  saveHistory(s, { storage });
 
-  // Silence the expected reset-warn here since this test pre-dates
-  // the warn and a non-test caller wouldn't see it.
-  const orig = console.warn;
-  console.warn = () => {};
-  try { reset(); } finally { console.warn = orig; }
-  assert.equal(history.length, 0);
-
-  loadHistory(spektrum, { storage });
-  assert.equal(getPathObj(appState, 'count'), 6);
-  assert.equal(history.length, 2);
+  const fresh = createSpektrum();
+  loadHistory(fresh, { storage });
+  assert.equal(getPathObj(fresh.appState, 'count'), 6);
+  assert.equal(fresh.history.length, 2);
 });
 
 test('loadHistory preserves systems registered before the load (regression)', () => {
@@ -103,42 +94,42 @@ test('loadHistory preserves systems registered before the load (regression)', ()
   // silently detached on every reload because loadHistory called
   // reset() which clears systems. Now loadHistory uses resetState().
   let calls = 0;
-  spektrum.addSystem(['watched'], () => { calls++; });
+  s.addSystem(['watched'], () => { calls++; });
 
   // Seed storage with something to load.
-  setValue('watched', 'before-save');
-  tick();
+  s.setValue('watched', 'before-save');
+  s.tick();
   const storage = fakeStorage();
-  saveHistory(spektrum, { storage });
+  saveHistory(s, { storage });
 
   // The user's pre-load system should still fire after loadHistory
   // replays its entries — that's the whole point of the fix.
   const beforeLoad = calls;
-  loadHistory(spektrum, { storage });
+  loadHistory(s, { storage });
   assert.ok(calls > beforeLoad, 'system fired during loadHistory replay');
 
   // And it should keep firing on subsequent mutations.
   const afterLoad = calls;
-  setValue('watched', 'post-load');
-  tick();
+  s.setValue('watched', 'post-load');
+  s.tick();
   assert.ok(calls > afterLoad, 'system survived loadHistory and still fires');
 });
 
 test('loadHistory returns false when storage is empty / missing', () => {
   const empty = fakeStorage();
-  assert.equal(loadHistory(spektrum, { storage: empty }), false);
+  assert.equal(loadHistory(s, { storage: empty }), false);
 
   // Garbage JSON.
   const broken = { getItem: () => '{not-json', setItem() {} };
-  assert.equal(loadHistory(spektrum, { storage: broken }), false);
+  assert.equal(loadHistory(s, { storage: broken }), false);
 
   // Wrong shape (object instead of array).
   const wrongShape = { getItem: () => '{"a":1}', setItem() {} };
-  assert.equal(loadHistory(spektrum, { storage: wrongShape }), false);
+  assert.equal(loadHistory(s, { storage: wrongShape }), false);
 
   // Empty array.
   const emptyArray = { getItem: () => '[]', setItem() {} };
-  assert.equal(loadHistory(spektrum, { storage: emptyArray }), false);
+  assert.equal(loadHistory(s, { storage: emptyArray }), false);
 });
 
 test('loadHistory ignores entries with non-string path', () => {
@@ -150,9 +141,9 @@ test('loadHistory ignores entries with non-string path', () => {
     ]),
     setItem() {},
   };
-  loadHistory(spektrum, { storage });
-  assert.equal(getPathObj(appState, 'good'), 1);
-  assert.equal(history.length, 1, 'only the well-formed entry replays');
+  loadHistory(s, { storage });
+  assert.equal(getPathObj(s.appState, 'good'), 1);
+  assert.equal(s.history.length, 1, 'only the well-formed entry replays');
 });
 
 test('loadHistory rejects non-numeric value on additive trigger op', () => {
@@ -164,8 +155,8 @@ test('loadHistory rejects non-numeric value on additive trigger op', () => {
     ]),
     setItem() {},
   };
-  loadHistory(spektrum, { storage });
-  assert.equal(getPathObj(appState, 'count'), 8,
+  loadHistory(s, { storage });
+  assert.equal(getPathObj(s.appState, 'count'), 8,
     'string value silently skipped, numeric still applies');
 });
 
@@ -179,10 +170,10 @@ test('loadHistory rejects Infinity on additive trigger op', () => {
     + '{"op":"add","path":"count","value":7,"id":"good"}'
     + ']';
   const storage = { getItem: () => raw, setItem() {} };
-  loadHistory(spektrum, { storage });
-  assert.equal(getPathObj(appState, 'count'), 7,
+  loadHistory(s, { storage });
+  assert.equal(getPathObj(s.appState, 'count'), 7,
     'overflow-to-Infinity rejected; finite add still applies');
-  assert.ok(Number.isFinite(getPathObj(appState, 'count')),
+  assert.ok(Number.isFinite(getPathObj(s.appState, 'count')),
     'count must remain finite after replay');
 });
 
@@ -191,9 +182,9 @@ test('loadHistory caps replay at opts.maxEntries', () => {
     op: 'set', path: 'n', value: i, id: `e${i}`,
   }));
   const storage = { getItem: () => JSON.stringify(big), setItem() {} };
-  loadHistory(spektrum, { storage, maxEntries: 10 });
-  assert.equal(history.length, 10, 'replay capped at maxEntries');
-  assert.equal(getPathObj(appState, 'n'), 9, 'last replayed entry is index 9');
+  loadHistory(s, { storage, maxEntries: 10 });
+  assert.equal(s.history.length, 10, 'replay capped at maxEntries');
+  assert.equal(getPathObj(s.appState, 'n'), 9, 'last replayed entry is index 9');
 });
 
 // === autoSave ===
@@ -205,10 +196,10 @@ test('autoSave fires on every recorded mutation (no debounce)', () => {
     getItem: storage.getItem,
     setItem: (k, v) => { saves++; storage.setItem(k, v); },
   };
-  const stop = autoSave(spektrum, { storage: wrapped });
-  setValue('x', 1);
-  trigger('inc', 'x', 1);
-  tick();
+  const stop = autoSave(s, { storage: wrapped });
+  s.setValue('x', 1);
+  s.trigger('inc', 'x', 1);
+  s.tick();
   assert.equal(saves, 2, 'one save per recorded entry without debounce');
   const persisted = JSON.parse(storage.getItem('spektrum:history'));
   assert.equal(persisted.length, 2);
@@ -222,11 +213,11 @@ test('autoSave with debounce coalesces rapid mutations into one save', async () 
     getItem: storage.getItem,
     setItem: (k, v) => { saves++; storage.setItem(k, v); },
   };
-  const stop = autoSave(spektrum, { storage: wrapped, debounce: 30 });
-  setValue('a', 1);
-  setValue('b', 2);
-  setValue('c', 3);
-  tick();
+  const stop = autoSave(s, { storage: wrapped, debounce: 30 });
+  s.setValue('a', 1);
+  s.setValue('b', 2);
+  s.setValue('c', 3);
+  s.tick();
   assert.equal(saves, 0, 'no save fires before the debounce window elapses');
 
   await delay(60);
@@ -238,15 +229,15 @@ test('autoSave with debounce coalesces rapid mutations into one save', async () 
 
 test('autoSave stop() detaches the onRecord hook', () => {
   const storage = fakeStorage();
-  const stop = autoSave(spektrum, { storage });
-  setValue('x', 1);
-  tick();
+  const stop = autoSave(s, { storage });
+  s.setValue('x', 1);
+  s.tick();
   const beforeStop = storage.getItem('spektrum:history');
   assert.ok(beforeStop, 'something was saved before stop()');
 
   stop();
-  setValue('y', 99);
-  tick();
+  s.setValue('y', 99);
+  s.tick();
   // No save fires after stop, so storage is unchanged.
   assert.equal(storage.getItem('spektrum:history'), beforeStop);
 });
@@ -258,9 +249,9 @@ test('autoSave stop() also clears a pending debounced flush', async () => {
     getItem: storage.getItem,
     setItem: (k, v) => { saves++; storage.setItem(k, v); },
   };
-  const stop = autoSave(spektrum, { storage: wrapped, debounce: 100 });
-  setValue('x', 1);
-  tick();
+  const stop = autoSave(s, { storage: wrapped, debounce: 100 });
+  s.setValue('x', 1);
+  s.tick();
   // Mutation queued; flush scheduled for +100ms.
   stop();
   await delay(150);
@@ -270,23 +261,20 @@ test('autoSave stop() also clears a pending debounced flush', async () => {
 // === checkpoints ===
 
 test('loadHistory restores checkpoints from storage', () => {
-  setValue('a', 1);
-  checkpoint('cp', { tag: 'middle' });
-  setValue('b', 2);
-  tick();
+  s.setValue('a', 1);
+  s.checkpoint('cp', { tag: 'middle' });
+  s.setValue('b', 2);
+  s.tick();
   const storage = fakeStorage();
-  saveHistory(spektrum, { storage });
+  saveHistory(s, { storage });
 
-  // Wipe and restore.
-  const orig = console.warn;
-  console.warn = () => {};
-  try { reset(); } finally { console.warn = orig; }
-
-  loadHistory(spektrum, { storage });
-  assert.equal(history.length, 3, 'all three entries restored');
-  assert.equal(spektrum.checkpoints.length, 1);
-  assert.equal(spektrum.checkpoints[0].id, 'cp');
-  assert.deepEqual(spektrum.checkpoints[0].value, { tag: 'middle' });
+  // Load into a fresh instance to confirm the restore path.
+  const fresh = createSpektrum();
+  loadHistory(fresh, { storage });
+  assert.equal(fresh.history.length, 3, 'all three entries restored');
+  assert.equal(fresh.checkpoints.length, 1);
+  assert.equal(fresh.checkpoints[0].id, 'cp');
+  assert.deepEqual(fresh.checkpoints[0].value, { tag: 'middle' });
 });
 
 test('loadHistory rejects malformed checkpoint entries', () => {
@@ -299,10 +287,10 @@ test('loadHistory rejects malformed checkpoint entries', () => {
     { op: 'checkpoint', id: 'good' },              // OK
   ]));
 
-  loadHistory(spektrum, { storage });
-  assert.equal(getPathObj(appState, 'real'), 7);
-  assert.equal(spektrum.checkpoints.length, 1);
-  assert.equal(spektrum.checkpoints[0].id, 'good');
+  loadHistory(s, { storage });
+  assert.equal(getPathObj(s.appState, 'real'), 7);
+  assert.equal(s.checkpoints.length, 1);
+  assert.equal(s.checkpoints[0].id, 'good');
 });
 
 // === Branch coverage ===
@@ -318,7 +306,6 @@ test('loadHistory falls back to globalThis.localStorage when no opts.storage', (
   const orig = globalThis.localStorage;
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: fake });
   try {
-    const s = createSpektrum();
     loadHistory(s);                            // no opts → falls back to globalThis.localStorage
     assert.equal(getPathObj(s.appState, 'fromLs'), 42);
   } finally {
@@ -332,7 +319,6 @@ test('loadHistory returns false when no storage is available at all', () => {
   const orig = globalThis.localStorage;
   if (orig !== undefined) delete globalThis.localStorage;
   try {
-    const s = createSpektrum();
     assert.equal(loadHistory(s), false);
   } finally {
     if (orig !== undefined) Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: orig });
@@ -348,7 +334,6 @@ test('loadHistory skips null/falsy entries in the parsed history', () => {
     { op: 'set', path: 'kept', value: 'yes', id: 'k' },
     null,
   ]));
-  const s = createSpektrum();
   loadHistory(s, { storage });
   assert.equal(getPathObj(s.appState, 'kept'), 'yes');
 });

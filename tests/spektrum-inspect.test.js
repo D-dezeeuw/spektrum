@@ -7,7 +7,7 @@
 import { GlobalRegistrator } from '@happy-dom/global-registrator';
 GlobalRegistrator.register();
 
-import { test, beforeEach } from 'node:test';
+import { test, suite, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createSpektrum } from '../spektrum.js';
@@ -21,7 +21,7 @@ beforeEach(() => {
   s = createSpektrum();
 });
 
-// === readBindings ===
+suite('readBindings', () => {
 
 test('readBindings extracts every binding kind on an element', () => {
   document.body.innerHTML = `<button :class="theme" data-if="show" data-action="click" data-fn="hit" data-id="x" data-ref="btn" data-intent="cart.submit">{{label}}</button>`;
@@ -56,7 +56,9 @@ test('readBindings extracts multiple {{expressions}} from one text node', () => 
   assert.deepEqual(bs.map(b => b.expr), ['a', 'b.c', 'd']);
 });
 
-// === whoSubscribesTo ===
+});
+
+suite('whoSubscribesTo', () => {
 
 test('whoSubscribesTo returns systems with intersecting paths', () => {
   s.addSystem(['cart.items'], function renderCart() {});
@@ -74,7 +76,9 @@ test('whoSubscribesTo handles overlap in either direction', () => {
   assert.ok(whoSubscribesTo(s, 'user').includes('renderEmail'));
 });
 
-// === lint ===
+});
+
+suite('lint', () => {
 
 test('lint flags stray {{…}} in plain attributes', () => {
   document.body.innerHTML = `<a href="{{user.url}}">x</a>`;
@@ -112,7 +116,9 @@ test('lint skips elements inside other inspect / devtools panels', () => {
   assert.match(findings[0].msg, /\{\{…\}\}.*"href"/);
 });
 
-// === mount lifecycle ===
+});
+
+suite('mount lifecycle', () => {
 
 test('mount renders a panel and unmount removes it', () => {
   const unmount = mount(s);
@@ -185,17 +191,19 @@ test('unmount removes the tooltip and outline overlays', () => {
   assert.equal(document.querySelectorAll('[data-spektrum-inspect-outline]').length, 0);
 });
 
-// === Interaction coverage ===
+});
 
+// Used in both the interaction and branch-coverage suites — happy-dom's
+// Element doesn't ship with helpful Event constructors, so we build a
+// minimal Event and let bubbling do the rest.
 const dispatch = (target, type, init = {}) => {
-  // happy-dom's Element doesn't ship with helpful Event constructors —
-  // build a minimal Event with the props we need and let bubbling do
-  // the rest.
   const ev = new Event(type, { bubbles: true, cancelable: true });
   Object.assign(ev, init);
   target.dispatchEvent(ev);
   return ev;
 };
+
+suite('interaction', () => {
 
 test('enabling inspect mode + hover renders binding info', () => {
   // Stages: click "inspect element" → mousemove over a bound element →
@@ -420,7 +428,9 @@ test('truncate handles circular structures without throwing', () => {
   unmount();
 });
 
-// === Inspect branch coverage ===
+});
+
+suite('branch coverage', () => {
 
 test('readBindings handles elements without dataset (SVG-like)', () => {
   // Indirectly exercises findLoopContext's `cur.dataset?.each` optional
@@ -544,21 +554,6 @@ test('lint finding for an element without an id renders without id attribute', (
   unmount();
 });
 
-test('clicking inside the panel on a non-button text node is ignored', () => {
-  // L344 — `if (!(t instanceof Element)) return;` — synthetic event
-  // whose target is a Text node would hit this. We can't easily
-  // construct that, but clicking on a structural <span> (no data-act,
-  // no data-tab) lands the handler on an Element and falls through —
-  // covering the "no match" branch through the else-chain.
-  const unmount = mount(s);
-  const span = document.createElement('span');
-  document.querySelector('[data-spektrum-inspect]').appendChild(span);
-  span.click();                                  // Element but matches nothing
-  // Panel still standing; no throw.
-  assert.ok(document.querySelector('[data-spektrum-inspect]'));
-  unmount();
-});
-
 test('toggling inspect-mode off via the button hides floaters', () => {
   // L347 — `if (!inspectMode) hideFloaters();` — the falsy branch
   // after toggling off.
@@ -574,22 +569,7 @@ test('toggling inspect-mode off via the button hides floaters', () => {
   unmount();
 });
 
-test('escapeHtml handles nullish input via the ?? coalesce', () => {
-  // L72 — `String(s ?? '')`. We exercise via lint, which feeds element
-  // tagName.toLowerCase() into escapeHtml; that's never nullish, so we
-  // hit ?? via readBindings → formatBinding indirectly when an action
-  // has no event (unlikely) — instead, just hit it through whoSubscribesTo:
-  // pass an empty path and a system with an anonymous fn → name fallback.
-  s.addSystem([''], () => {});
-  // Inspect's mutation tracer calls whoSubscribesTo and may format the
-  // empty path through escapeHtml.
-  const unmount = mount(s);
-  s.setValue('', 1);                             // no-op (engine refuses empty path) but covers escape
-  s.tick();
-  unmount();
-});
-
-// === More branch coverage — second sweep ===
+// --- truncate / tooltip rendering ---
 
 test('truncate short strings pass through unchanged (no ellipsis)', () => {
   // L79 — `s.length > n ? slice : s` — the s-stays-short branch. The
@@ -728,19 +708,6 @@ test('inspectMode=on with pinned element skips further mousemove showFor calls',
   unmount();
 });
 
-test('lint with no findings inside a sub-tree shows ✓ ok', () => {
-  // L336 line has multiple branches around lint rendering; we already
-  // covered both "with findings" and "no findings" — touch up the
-  // anonymous-fn rendering branch in the mutation tracer indirectly.
-  // (We've already hit this in earlier tests; this is a safety net.)
-  document.body.innerHTML = `<p>{{ok}}</p>`;
-  const unmount = mount(s);
-  // Switch to lint tab and ensure the ok message is present.
-  document.querySelector('[data-tab="lint"]').click();
-  assert.match(document.querySelector('[data-findings]').innerHTML, /no findings/);
-  unmount();
-});
-
 test('whoSubscribesTo returns "(anon)" for systems with no fn.name', () => {
   // L128 in inspect — `s.name || '(anon)'`. describe() uses fn.name ||
   // '' so the inspect helper substitutes '(anon)' for empty strings.
@@ -749,16 +716,20 @@ test('whoSubscribesTo returns "(anon)" for systems with no fn.name', () => {
   assert.ok(names.includes('(anon)'), `expected (anon); got: ${names.join(', ')}`);
 });
 
-// === Inspect — final defensive branch sweep ===
+// --- defensive nullish / fallback paths ---
 
-test('escapeHtml handles nullish via checkpoint(undefined-id) in the tracer', () => {
-  // inspect L72 — `String(s ?? '')` nullish branch. The mutation tracer
-  // renders `escapeHtml(r.id)` for checkpoints; `checkpoint()` with no
-  // name records `id: undefined`.
+test('checkpoint() with no id renders the ◆ marker with empty escaped id (not "undefined")', () => {
+  // inspect L72 — `String(s ?? '')` nullish branch via the mutation
+  // tracer's `◆ ${escapeHtml(r.id)}`. A bare checkpoint() records
+  // id: undefined; the ?? guard must coerce it to '' (not the string
+  // "undefined" that String(undefined) alone would produce).
   const unmount = mount(s);
-  s.checkpoint();                                // id is undefined
+  document.querySelector('[data-tab="mut"]').click();
+  s.checkpoint();
   s.tick();
-  // No throw is enough — the path escapeHtml(undefined) fires.
+  const log = document.querySelector('[data-log]').innerHTML;
+  assert.match(log, /◆/, 'checkpoint marker rendered');
+  assert.equal(log.includes('undefined'), false, 'nullish id coerced to "" not "undefined"');
   unmount();
 });
 
@@ -826,7 +797,7 @@ test('filter regex matches checkpoint entries via empty-path fallback', () => {
   unmount();
 });
 
-// === Inspect — last branch sweep ===
+// --- final element-rendering edge cases ---
 
 test('tryEval returns undefined for non-simple-path data-each (L87 false branch)', () => {
   // Tooltip on a data-each whose path isn't a dotted identifier — tryEval
@@ -895,4 +866,6 @@ test('panel click handler returns early when ev.target is not an Element (L344 f
   comment.dispatchEvent(ev);
   assert.ok(document.querySelector('[data-spektrum-inspect]'), 'panel still standing');
   unmount();
+});
+
 });

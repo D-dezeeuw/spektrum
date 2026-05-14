@@ -18,7 +18,7 @@ import spektrum, {
   appState, getPathObj, defineFn, addAsync, explain, onRecord, onError, checkpoint,
   addSystem, describe,
 } from '../spektrum.js';
-import { createSpektrum, setPathValue } from '../spektrum.js';
+import { setPathValue } from '../spektrum.js';
 
 beforeEach(() => {
   const orig = console.warn;

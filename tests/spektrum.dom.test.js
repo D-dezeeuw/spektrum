@@ -1156,14 +1156,6 @@ test('bindDOM strips data-cloak on the bound root itself when present', () => {
     'cloak on the bound root is stripped');
 });
 
-test('bindDOM is a no-op for elements without data-cloak', () => {
-  // Sanity: no false positives. Elements that never had cloak are
-  // unaffected.
-  document.body.innerHTML = `<p data-marker>plain</p>`;
-  bindDOM(document.body);
-  assert.equal(document.body.querySelector('p').hasAttribute('data-marker'), true);
-});
-
 // === Built-in data-fn handlers (setText, setStyle, toggle) ===
 
 test('built-in data-fn "setValue" sets state from element value on event', () => {

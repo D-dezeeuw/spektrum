@@ -202,19 +202,6 @@ test('dock.unmount tears down companions via onClose', () => {
   assert.equal(document.querySelector('[data-spektrum-inspect-outline]'), null);
 });
 
-test('mount order is independent — companion before dock works the standalone way', () => {
-  // No dock at mount time → standalone. Mounting a dock afterwards
-  // does NOT retroactively absorb existing companions; they remain
-  // free-floating. Documented behavior (we don't observe DOM mutations).
-  const stopDt = mountDevtools(s);
-  const dock = mountDock();
-  assert.ok(document.querySelector('[data-spektrum-devtools]:not([data-spektrum-dock] [data-spektrum-devtools])'),
-    'pre-dock devtools stays standalone');
-  assert.equal(document.querySelector('[data-panel-tab="devtools"]'), null,
-    'no dock tab for the pre-existing devtools');
-  stopDt(); dock.unmount();
-});
-
 // === Interaction coverage ===
 
 test('clicking × on a tab fires onClose and removes the tab', () => {

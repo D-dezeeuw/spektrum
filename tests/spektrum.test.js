@@ -1170,6 +1170,22 @@ test('attempt() + discard rewinds the cursor back to before the attempt', () => 
   assert.equal(s.appState.x, 1);
 });
 
+test('attempt() handle is single-shot — second settle is a no-op', () => {
+  // Guards a defensive commit() in a finally{} after discard() —
+  // without the guard, an orphan :commit checkpoint lands post-replay.
+  const s = createSpektrum();
+  s.setValue('x', 1); s.tick();
+  const h = s.attempt('once', () => { s.setValue('x', 2); });
+  s.tick();
+  h.discard();
+  const cursorAfterDiscard = s.cursor;
+  const historyLenAfter = s.history.length;
+  h.commit();   // second settle — must not append anything
+  h.discard();  // and again
+  assert.equal(s.cursor, cursorAfterDiscard, 'cursor unchanged by post-settle calls');
+  assert.equal(s.history.length, historyLenAfter, 'no orphan checkpoint appended');
+});
+
 test('defineFn(name, fn, meta) attaches metadata for describe()', () => {
   const s = createSpektrum();
   const noop = () => {};
@@ -1202,6 +1218,32 @@ test('refresh(path) re-runs the loader registered under that path', async () => 
   await new Promise(r => setTimeout(r, 0));
   s.tick();
   assert.equal(calls, before + 1, 'refresh ran the loader exactly once more');
+});
+
+test('addAsync skips the initial fetch when state already holds a settled load', async () => {
+  // Simulates the post-loadHistory shape: data already in state.
+  // Re-registering should bind the runner without refetching.
+  const s = createSpektrum();
+  s.setValue('user.data', { name: 'cached' });
+  s.tick();
+  let calls = 0;
+  s.addAsync('user', async () => { calls++; return { name: 'fresh' }; });
+  await new Promise(r => setTimeout(r, 0));
+  s.tick();
+  assert.equal(calls, 0, 'addAsync did NOT re-fetch over already-settled state');
+  await s.refresh('user');
+  await new Promise(r => setTimeout(r, 0));
+  s.tick();
+  assert.equal(calls, 1, 'refresh() forces a fetch as documented');
+});
+
+test('addAsync still fetches initially when no prior data/error is in state', async () => {
+  const s = createSpektrum();
+  let calls = 0;
+  s.addAsync('thing', async () => { calls++; return 'v'; });
+  await new Promise(r => setTimeout(r, 0));
+  s.tick();
+  assert.equal(calls, 1, 'first registration auto-runs');
 });
 
 test('refresh(path) returns undefined when path was never registered', () => {

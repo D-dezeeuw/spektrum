@@ -56,8 +56,24 @@
   refactor changed `data-fn` bodies from `el.dataset.id` to
   `resolvePath(el.dataset.id, sc)` to honor per-row scope, which the
   pre-tuning didn't anticipate. Net +77 B raw. Cap raised modestly
-  to 12.5625 kB raw (12,864 B); gz stays at 5.75 kB. Adjust caps
-  deliberately — every bump invites complacency. Trim before raising.
+  to 12.5625 kB raw (12,864 B); gz stays at 5.75 kB. Five engine
+  fixes land alongside in the same release window:
+    1. evalExpr regex matches chained `.\d+` runs in one pass
+       (`grid.1.0` → `grid[1][0]`) and skips float literals (so
+       `val + 1.5` is no longer false-positive normalized).
+    2. addAsync skips its initial fetch when state already carries a
+       settled `{data}`/`{error}` shape (post-`loadHistory` ergonomics
+       — `refresh(path)` still forces a fresh fetch).
+    3. `data-ref` cleanup only frees the slot if it still owns it, so
+       two elements sharing a name no longer wipe each other's entry.
+    4. `data-each` keyed mode warns on duplicate keys instead of
+       silently merging clones.
+    5. `attempt()` handle is single-shot — defensive `commit()` in a
+       `finally{}` after `discard()` no longer appends an orphan
+       checkpoint.
+  Combined +~200 B raw / +~32 B gz; cap raised to 12.875 kB raw
+  (13,184 B) and 5.875 kB gz (6,016 B). Adjust caps deliberately —
+  every bump invites complacency. Trim before raising.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -69,7 +85,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 12864, gz: 5888 },
+  { file: 'spektrum.min.js',          raw: 13184, gz: 6016 },
   { file: 'companions/spektrum-persist.min.js',  raw:  1024, gz:  576 },
   // 1.2 dock integration adds ~120 B for the [data-spektrum-dock]
   // detection branch + dockPanel.detach() in unmount. Standalone

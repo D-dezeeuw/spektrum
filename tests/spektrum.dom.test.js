@@ -175,6 +175,25 @@ test('{{expression}} evaluates JS, not just paths', () => {
   assert.equal(document.body.querySelector('p').textContent, '10');
 });
 
+test('{{expression}} normalizes chained numeric path segments (matrix indexing)', () => {
+  document.body.innerHTML = '<p>{{grid.1.0}}</p>';
+  setValue('grid', [[10, 20], [30, 40]]);
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('p').textContent, '30');
+});
+
+test('{{expression}} leaves float literals intact (no false-positive normalization)', () => {
+  // Regression: the dotted-numeric → bracket rewrite must not touch
+  // float literals (digit-prefixed `.\d`). If it did, `val + 1.5` would
+  // become `val + 1[5]`, throw at compile, and silently render ''.
+  document.body.innerHTML = '<p>{{val + 1.5}}</p>';
+  setValue('val', 10);
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('p').textContent, '11.5');
+});
+
 test('{{expression}} supports ternaries and method calls', () => {
   document.body.innerHTML = '<p>{{flag ? name.toUpperCase() : "none"}}</p>';
   setValue('flag', true);
@@ -405,6 +424,27 @@ test('reset() clears refs', () => {
   assert.ok(spektrum.refs.email);
   reset();
   assert.equal(spektrum.refs.email, undefined);
+});
+
+test('two elements sharing a data-ref name: later wins, destroying earlier does not wipe later', () => {
+  // Two refs share the name "x". Each lives under its own parent so we
+  // can bindDOM and destroy them independently — the engine walks
+  // descendants of `root`, not the root itself.
+  document.body.innerHTML =
+    '<section id="p1"><div data-ref="x">A</div></section>' +
+    '<section id="p2"><div data-ref="x">B</div></section>';
+  const p1 = document.getElementById('p1');
+  const p2 = document.getElementById('p2');
+  const b = p2.querySelector('[data-ref="x"]');
+  const destroyP1 = bindDOM(p1);
+  const destroyP2 = bindDOM(p2);
+  // Later bind wins on read.
+  assert.equal(spektrum.refs.x, b);
+  // Destroying the earlier element must not wipe the later element's ref.
+  destroyP1();
+  assert.equal(spektrum.refs.x, b);
+  destroyP2();
+  assert.equal(spektrum.refs.x, undefined);
 });
 
 // === data-intent (agent-native) ===
@@ -728,6 +768,28 @@ test('typing into a per-item input (data-model on item.note) preserves the array
     document.body.querySelectorAll('#basket li').length,
     2,
     'list still renders both rows',
+  );
+});
+
+test('data-each warns when keyed items collide on the same key', () => {
+  document.body.innerHTML = `
+    <ul data-each="items" data-as="item" data-key="item.id">
+      <li>{{item.label}}</li>
+    </ul>`;
+  const warnings = [];
+  const orig = console.warn;
+  console.warn = (...args) => warnings.push(args.join(' '));
+  try {
+    setValue('items', [
+      { id: 1, label: 'A' },
+      { id: 1, label: 'B' }, // collides with the first
+    ]);
+    bindDOM(document.body);
+    tick();
+  } finally { console.warn = orig; }
+  assert.ok(
+    warnings.some(w => w.includes('duplicate key') && w.includes('items')),
+    `expected a duplicate-key warning, got: ${JSON.stringify(warnings)}`,
   );
 });
 

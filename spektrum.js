@@ -157,10 +157,15 @@ const evalExpr = (expr) => {
   let fn = evalCache.get(expr);
   if (fn) return fn;
   try {
-    // Dotted-numeric segments (`users.0.name` from bindEach) → bracket
-    // notation so JS can parse. Inner try/catch so paths not yet in
-    // state render as undefined instead of throwing.
-    const normalized = expr.replace(/([a-zA-Z_$][\w$]*)\.(\d+)/g, '$1[$2]');
+    // notation so JS can parse. Match identifier-head + the full tail
+    // of chained `.\d+` segments so nested indices (`grid.1.0`) convert
+    // in one pass; the inner replace inside the callback only sees the
+    // dotted-numeric run, never a leading numeric literal (so float
+    // literals like `val + 1.5` aren't false-positives). Inner try/
+    // catch so paths not yet in state render as undefined instead of
+    // throwing.
+    const normalized = expr.replace(/([a-zA-Z_$][\w$]*)((?:\.\d+)+)/g,
+      (_, h, t) => h + t.replace(/\.(\d+)/g, '[$1]'));
     // `with (state) with (scope||{})` — scope is the INNER with so its
     // identifiers shadow state on collision (e.g. data-as="user" inside
     // a loop where state.user also exists — the loop variable wins).
@@ -510,7 +515,14 @@ export const createSpektrum = (opts = {}) => {
       finally { set('loading', false); }
     };
     asyncRunners[path] = run;
-    run();
+    // Skip the initial fetch when `${path}` already holds a settled
+    // load cycle — typically the case after `loadHistory` replays an
+    // earlier fetch. The runner stays registered so `refresh(path)`
+    // works; callers that want a fresh fetch on re-registration call
+    // it explicitly.
+    const cur = getPathObj(appState, path);
+    const settled = cur && typeof cur === 'object' && ('data' in cur || 'error' in cur);
+    if (!settled) run();
     return run;
   };
 
@@ -755,7 +767,10 @@ export const createSpektrum = (opts = {}) => {
     const name = el.dataset.ref;
     if (!name) return;
     refs[name] = el;
-    return () => { delete refs[name]; };
+    // Guard against two elements sharing a name: the later bind wins on
+    // read; without this check, destroying the earlier element would
+    // wipe the later one's entry. Only clear if we still own the slot.
+    return () => { if (refs[name] === el) delete refs[name]; };
   };
 
   /** data-intent="verb.noun" — semantic locator for agentic tooling.
@@ -972,6 +987,8 @@ export const createSpektrum = (opts = {}) => {
 
       for (let i = 0; i < items.length; i++) {
         const key = newKeys[i];
+        // Dup keys silently merge clones otherwise — surface them.
+        if (seen.has(key)) warn(`data-each="${arrayPath}" duplicate key ${JSON.stringify(key)}`);
         seen.add(key);
         let entry = cache.get(key);
         if (!entry) {
@@ -1211,10 +1228,13 @@ export const createSpektrum = (opts = {}) => {
     const start = cursor;
     checkpoint(`attempt:${name}`);
     const result = fn();
+    // `done` guards against double-settle: a defensive commit() in a
+    // finally{} after a discard() must not append an orphan checkpoint.
+    let done = false;
     return {
       result,
-      commit:  () => checkpoint(`attempt:${name}:commit`),
-      discard: () => replay(start),
+      commit:  () => { if (done) return; done = true; checkpoint(`attempt:${name}:commit`); },
+      discard: () => { if (done) return; done = true; replay(start); },
     };
   };
 

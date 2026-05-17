@@ -9,7 +9,7 @@ Spektrum's HTML directives. Author them in markup; the engine wires them up at `
 | `{{expression}}` in a text node | Interpolated text, auto-escaped. Full JS expression: `{{count + 1}}`, `{{user.name.toUpperCase()}}`. |
 | `:attr="expression"` on any element | Property write. Object form on `:class` toggles named classes: `:class="{active: x, error: y}"`. |
 | `data-if="expression"` | Show element when truthy, `display: none` when falsy. Children stay bound. |
-| `data-each="path" data-as="name"` | Render the array at `path`, cloning the first child as a template per item. The path-rewriter is whole-word string replace — it rewrites both code positions and string literals (see [trade-offs](trade-offs.md#rewritescope-rewrites-string-literals-too)). |
+| `data-each="path" data-as="name"` | Render the array at `path`, cloning a template per item. Two forms: container (`<ul data-each>…<li>` — directive on parent, first child is template) and `<template>` (directive on a `<template>` element; clones go into its parent before the `<template>` anchor — required inside `<table>` / `<select>`). The path-rewriter is whole-word string replace — rewrites both code positions and string literals (see [trade-offs](trade-offs.md#rewritescope-rewrites-string-literals-too)). |
 | `data-each ... data-key="expr"` | Keyed reconciliation. Items at the same key + index keep their DOM, listeners, focus, and selection. Without a key, the list rebuilds on each change (legacy behavior). |
 | `data-each ... data-key="expr" data-stable-key` | Reuse the *same* clone across reorder. Skips path rewriting on the cloned subtree, so reorder is genuinely free of UX cost (focus, scroll, input value, selection survive moves). Author opts in by promising the row's bindings don't reference `varName.*` paths — the engine warns at bind time if they do (see [trade-offs](trade-offs.md#data-each-re-clones-moved-items-default-keyed-mode)). |
 | `data-model="path"` | Two-way binding for `<input>` / `<select>` / checkboxes. State → element via `:value`/`:checked`, element → state on `input`/`change` event. |
@@ -21,9 +21,11 @@ Spektrum's HTML directives. Author them in markup; the engine wires them up at `
 
 Built-in `data-fn` handlers: `trigger`, `setValue`, `setText`, `setStyle`, `toggle`. Register your own with `defineFn(name, handler)`. Handler signature: `(el, state, delta, value, event?)`. The `event` argument is the DOM `Event` for `data-action="click"`-style bindings, or `undefined` for `data-action="cycle"` (subscription-driven, no event in scope).
 
-### `data-each` — container, not template
+### `data-each` — two forms
 
-`data-each` marks the **container**; its *first element child* is what gets cloned and repeated. This is the opposite of Vue's `v-for` and Alpine's `x-for`, which attach the directive to the element being repeated.
+`data-each` supports two authoring forms. Pick whichever fits the surrounding markup.
+
+**Container form** (legacy). `data-each` marks the **container**; its *first element child* is the template. Opposite of Vue's `v-for` and Alpine's `x-for`, which attach the directive to the element being repeated.
 
 ```html
 <!-- ❌ wrong: <li> is the container; its first element child is absent -->
@@ -34,6 +36,24 @@ Built-in `data-fn` handlers: `trigger`, `setValue`, `setText`, `setStyle`, `togg
   <li>{{item}}</li>
 </ul>
 ```
+
+**`<template>` form** (HTML5-spec-aligned). `data-each` lives on a `<template>` element; its `.content`'s first element child is the template. Clones go into the `<template>`'s **parent**, anchored before the `<template>` tag — so siblings (`<thead>`, `<tfoot>`, fixed rows, etc.) stay put.
+
+```html
+<ul>
+  <li class="hdr">Header</li>
+  <template data-each="items"><li>{{item}}</li></template>
+  <li class="ftr">Footer</li>
+</ul>
+```
+
+Use this form when:
+
+- **You're binding rows inside `<table>` / `<thead>` / `<tbody>` / `<select>`**. The HTML parser injects elements (e.g. `<tbody>` inside `<table>`) and rejects unexpected children — the container form silently mis-binds because `firstElementChild` ends up being the injected wrapper, not your row template. `<template>` content is parsed in a detached context that doesn't suffer this.
+- **You need zero pre-bind flicker.** The browser never renders `<template>` content, so the template row is invisible until `bindDOM()` runs. (`data-cloak` is not needed.)
+- **You want spec-aligned markup.** `<template>` is HTML5's defined element for "markup-as-data" — accessibility tools, linters, and screen readers already know to skip its contents.
+
+Both forms support the same modes (`data-key`, `data-as`, `data-stable-key`) and reconciliation behavior. Mixing forms in the same root is fine.
 
 `data-each` takes a **dotted path**, not an expression — unlike `data-if` and `:attr`, which evaluate full JS. For derived arrays, build a `computed` and bind that:
 

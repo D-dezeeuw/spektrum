@@ -731,6 +731,190 @@ test('typing into a per-item input (data-model on item.note) preserves the array
   );
 });
 
+// === <template data-each> form (additive, HTML5 spec-aligned) ===
+
+test('<template data-each> renders clones into the template parent (no-key)', () => {
+  // Clones go before the <template> element, leaving it in place as
+  // a positional anchor. Container form is the legacy; this form is
+  // for cases like <table> where the HTML parser would otherwise
+  // re-parent a data-each container's children.
+  document.body.innerHTML = `
+    <ul>
+      <template data-each="rows" data-as="row"><li>{{row.label}}</li></template>
+    </ul>`;
+  setValue('rows', [{ label: 'a' }, { label: 'b' }]);
+  bindDOM(document.body);
+  tick();
+  const lis = document.body.querySelectorAll('ul > li');
+  assert.equal(lis.length, 2);
+  assert.equal(lis[0].textContent, 'a');
+  assert.equal(lis[1].textContent, 'b');
+  // <template> stays in the DOM as the positional anchor.
+  assert.ok(document.body.querySelector('ul > template'));
+});
+
+test('<template data-each> appends/pops via the tail-diff path', () => {
+  document.body.innerHTML = `
+    <ul>
+      <template data-each="rows" data-as="row"><li>{{row.label}}</li></template>
+    </ul>`;
+  setValue('rows', [{ label: 'a' }]);
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelectorAll('ul > li').length, 1);
+
+  setValue('rows', [{ label: 'a' }, { label: 'b' }]);
+  tick();
+  assert.equal(document.body.querySelectorAll('ul > li').length, 2);
+
+  setValue('rows', [{ label: 'a' }]);
+  tick();
+  // Pop branch: cleanups[] and live[] shrink by one, last clone removed.
+  assert.equal(document.body.querySelectorAll('ul > li').length, 1);
+  assert.equal(document.body.querySelector('ul > li').textContent, 'a');
+});
+
+test('<template data-each> preserves sibling content in the host', () => {
+  // Clones live alongside <thead> / <tfoot> / etc., inserted before the
+  // <template> anchor. Siblings must survive every re-render path.
+  document.body.innerHTML = `
+    <ul>
+      <li class="hdr">header</li>
+      <template data-each="rows" data-as="row"><li>{{row.label}}</li></template>
+      <li class="ftr">footer</li>
+    </ul>`;
+  setValue('rows', [{ label: 'a' }, { label: 'b' }]);
+  bindDOM(document.body);
+  tick();
+  let lis = [...document.body.querySelectorAll('ul > li')];
+  assert.equal(lis.length, 4);
+  assert.equal(lis[0].className, 'hdr');
+  assert.equal(lis[1].textContent, 'a');
+  assert.equal(lis[2].textContent, 'b');
+  assert.equal(lis[3].className, 'ftr');
+
+  // Interior change → wipeAll. Header and footer must survive.
+  setValue('rows', [{ label: 'c' }]);
+  tick();
+  lis = [...document.body.querySelectorAll('ul > li')];
+  assert.equal(lis.length, 3);
+  assert.equal(lis[0].className, 'hdr');
+  assert.equal(lis[1].textContent, 'c');
+  assert.equal(lis[2].className, 'ftr');
+});
+
+test('<template data-each> works inside <table> where container form would mis-parse', () => {
+  // <table data-each>...<tr>...</table> container form fails because
+  // the HTML parser injects <tbody> between <table> and <tr>; the
+  // engine's firstElementChild sees the injected wrapper, not the
+  // intended <tr> template. The <template> form parses the row
+  // markup in a detached context, so the <tr> stays intact.
+  //
+  // Note: happy-dom's innerHTML parser is non-conforming for
+  // <template> inside <tbody> — it hoists the template out. Assemble
+  // the DOM programmatically here so the test exercises the engine,
+  // not the parser. Real browsers parse the markup correctly.
+  const table = document.createElement('table');
+  const tbody = document.createElement('tbody');
+  const tpl = document.createElement('template');
+  tpl.setAttribute('data-each', 'rows');
+  tpl.setAttribute('data-as', 'row');
+  tpl.innerHTML = '<tr><td>{{row.name}}</td></tr>';
+  tbody.appendChild(tpl);
+  table.appendChild(tbody);
+  document.body.appendChild(table);
+  setValue('rows', [{ name: 'alice' }, { name: 'bob' }]);
+  bindDOM(document.body);
+  tick();
+  const trs = document.body.querySelectorAll('table tr');
+  assert.equal(trs.length, 2);
+  assert.equal(trs[0].querySelector('td').textContent, 'alice');
+  assert.equal(trs[1].querySelector('td').textContent, 'bob');
+});
+
+test('<template data-each> with data-key preserves nodes across reorder', () => {
+  document.body.innerHTML = `
+    <ul>
+      <template data-each="rows" data-as="row" data-key="row.id"><li>{{row.id}}</li></template>
+    </ul>`;
+  setValue('rows', [{ id: 1 }, { id: 2 }, { id: 3 }]);
+  bindDOM(document.body);
+  tick();
+  const liById = new Map();
+  document.body.querySelectorAll('ul > li').forEach((li, i) => liById.set(i + 1, li));
+
+  // Reorder. Default keyed mode rebuilds moved items (paths are baked),
+  // but keys not in the new set should still be removed cleanly.
+  setValue('rows', [{ id: 3 }, { id: 1 }]);
+  tick();
+  const after = [...document.body.querySelectorAll('ul > li')];
+  assert.equal(after.length, 2);
+  assert.equal(after[0].textContent, '3');
+  assert.equal(after[1].textContent, '1');
+  // The <template> anchor must still be there.
+  assert.ok(document.body.querySelector('ul > template'));
+});
+
+test('<template data-each> data-stable-key reuses the same node across reorder', () => {
+  document.body.innerHTML = `
+    <ul>
+      <template data-each="rows" data-as="row" data-key="row.id" data-stable-key>
+        <li class="badge">{{currentTag}}</li>
+      </template>
+    </ul>`;
+  setValue('currentTag', 'pinned');
+  setValue('rows', [{ id: 1 }, { id: 2 }, { id: 3 }]);
+  bindDOM(document.body);
+  tick();
+  const liByIdBefore = new Map();
+  document.body.querySelectorAll('ul > li').forEach((li, i) => {
+    liByIdBefore.set([1, 2, 3][i], li);
+  });
+
+  setValue('rows', [{ id: 3 }, { id: 1 }]);
+  tick();
+  const after = [...document.body.querySelectorAll('ul > li')];
+  assert.equal(after.length, 2);
+  assert.equal(after[0], liByIdBefore.get(3),
+    'id=3 node reused — stable-key skips rebuild');
+  assert.equal(after[1], liByIdBefore.get(1),
+    'id=1 node reused — stable-key skips rebuild');
+});
+
+test('<template data-each> warns and bails when its parent is a DocumentFragment (no parentElement)', () => {
+  // A <template data-each> whose immediate parent is a DocumentFragment
+  // — e.g. authored inside another <template>'s .content — has
+  // parentNode (the fragment) but parentElement === null. Clones have
+  // nowhere to go; engine warns and bails instead of throwing.
+  const wrap = document.createElement('template');
+  wrap.innerHTML = '<template data-each="rows"><li>{{item}}</li></template>';
+  setValue('rows', [{ x: 1 }]);
+
+  const warns = [];
+  const origWarn = console.warn;
+  console.warn = (msg) => warns.push(String(msg));
+  try { bindDOM(wrap.content); tick(); } finally { console.warn = origWarn; }
+
+  assert.ok(warns.some(w => w.includes('parentElement')),
+    `expected parentElement warn; got: ${warns.join(' | ')}`);
+});
+
+test('<template data-each> with empty content warns (same as container form)', () => {
+  document.body.innerHTML = `
+    <ul>
+      <template data-each="rows"></template>
+    </ul>`;
+  setValue('rows', [{ x: 1 }]);
+
+  const warns = [];
+  const origWarn = console.warn;
+  console.warn = (msg) => warns.push(String(msg));
+  try { bindDOM(document.body); tick(); } finally { console.warn = origWarn; }
+
+  assert.ok(warns.some(w => w.includes('needs an element child to clone')),
+    `expected element-child warn; got: ${warns.join(' | ')}`);
+});
+
 // === Event modifiers ===
 
 test('data-action="click.prevent" calls preventDefault', () => {

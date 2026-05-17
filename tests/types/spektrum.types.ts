@@ -27,6 +27,7 @@ import spektrum, {
   type ExplainedEntry,
   type AttemptHandle,
   type BoundFn,
+  type IterationScope,
   type SpektrumOptions,
   type Spektrum,
   // Values: singleton state references
@@ -121,6 +122,14 @@ const handler: BoundFn = (el, state, delta, value, ev) => {
   void state; void delta; void ev;
 };
 defineFn('myFn', handler);
+
+// Scope-aware handler form (PR #2's data-each refactor added the trailing
+// `scope` param). Verifies the IterationScope type flows through.
+const scopedHandler: BoundFn = (el, state, delta, value, ev, scope) => {
+  const row: IterationScope | undefined = scope;
+  void el; void state; void delta; void value; void ev; void row;
+};
+defineFn('myScopedFn', scopedHandler);
 
 const meta: FnMeta = {
   description: 'set a flag',

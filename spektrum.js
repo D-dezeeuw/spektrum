@@ -348,13 +348,19 @@ export const createSpektrum = (opts = {}) => {
   const onRecord = sub(recordHandlers);
   const onFork   = sub(forkHandlers);
 
+  /** Route an exception through the registered onError handlers, or
+   *  fall back to a namespaced console.error. Shared by runSystem (one
+   *  call) and callFn (two — sync and async-rejection paths) so the
+   *  "[spektrum] " prefix and handler-fan-out check live in one place. */
+  const routeErr = (err, fn, msg) => {
+    if (errorHandlers.size) safeFire(errorHandlers, 'onError', err, fn);
+    else console.error('[spektrum] ' + msg, err);
+  };
+
   /** Run one system, routing exceptions through the error handlers. */
   const runSystem = (sys) => {
     try { sys.fn(appState, appStateDelta); }
-    catch (err) {
-      if (errorHandlers.size) safeFire(errorHandlers, 'onError', err, sys.fn);
-      else console.error('[spektrum] system threw', err);
-    }
+    catch (err) { routeErr(err, sys.fn, 'system threw'); }
   };
 
   /** Invoke a data-fn handler, routing sync throws AND async rejections
@@ -362,14 +368,10 @@ export const createSpektrum = (opts = {}) => {
    *  handler rejections land as unhandled-promise warnings and never
    *  reach the registered error path. */
   const callFn = (name, fn, ...args) => {
-    const onErr = (err, tag) => {
-      if (errorHandlers.size) safeFire(errorHandlers, 'onError', err, fn);
-      else console.error(`[spektrum] ${tag} data-fn "${name}"`, err);
-    };
     try {
       const r = fn(...args);
-      if (r?.then) r.catch(err => onErr(err, 'async'));
-    } catch (err) { onErr(err, 'sync'); }
+      if (r?.then) r.catch(err => routeErr(err, fn, `async data-fn "${name}"`));
+    } catch (err) { routeErr(err, fn, `sync data-fn "${name}"`); }
   };
 
   // --- Public mutators ---
@@ -712,24 +714,50 @@ export const createSpektrum = (opts = {}) => {
       for (const a of [...el.attributes]) a.value = sub(a.value);
   };
 
-  /** data-each list rendering. Three modes (no-key / keyed / keyed +
-   *  stable-key) are documented in the README directive table and the
-   *  "Known trade-offs" section. Per-clone `contain: layout style` is
-   *  set for perf isolation. */
+  /** data-each list rendering. Two authoring forms:
+   *
+   *    Container form (legacy):
+   *      <ul data-each="rows"><li>{{row.name}}</li></ul>
+   *      data-each is on the container; its first element child is the
+   *      template. Clones replace the template inside the container.
+   *
+   *    <template> form (additive, HTML5-spec-aligned):
+   *      <table><thead>…</thead>
+   *        <template data-each="rows"><tr><td>{{row.name}}</td></tr></template>
+   *      </table>
+   *      data-each is on a <template>; its content's first element
+   *      child is the template. Clones go into the <template>'s parent,
+   *      anchored before the <template> tag — works inside <table>,
+   *      <select>, <thead>, etc. where the HTML parser would otherwise
+   *      re-parent a stray container-form child. No pre-bind flicker
+   *      (the browser never renders <template> content).
+   *
+   *  Three reconciliation modes (no-key / keyed / keyed + stable-key)
+   *  are documented in docs/bindings.md and docs/trade-offs.md. Per-
+   *  clone `contain: layout style` is set for perf isolation. */
   const bindEach = (el) => {
-    const arrayPath = el.dataset.each;
+    const ds = el.dataset;
+    const arrayPath = ds.each;
     if (!arrayPath) return;
-    const varName = el.dataset.as || 'item';
-    const keyExpr = el.dataset.key;
+    const varName = ds.as || 'item';
+    const keyExpr = ds.key;
     const stableKey = el.hasAttribute('data-stable-key');
     // data-stable-key is a no-op without data-key — its whole purpose is
     // to opt into a path within the keyed branch. Author probably wants
     // the reorder-free behavior; surface the missing prerequisite.
     if (stableKey && !keyExpr) warn(`data-stable-key on "${arrayPath}" needs data-key`);
-    const templateChild = el.firstElementChild;
-    // data-each marks the *container*; its first element child is the
-    // template. A bare loop body (text-only, comment-only, whitespace)
-    // used to silent-no-op — surface it so the misuse is visible.
+    // <template> form: clones live in el.parentElement, anchored before
+    // el. Container form: clones live inside el. The host/anchor pair
+    // lets the rest of the function stay form-agnostic.
+    const isTpl = el.tagName === 'TEMPLATE';
+    const host = isTpl ? el.parentElement : el;
+    if (!host) {
+      warn(`data-each="${arrayPath}" <template> needs a parentElement`);
+      return;
+    }
+    const templateChild = (isTpl ? el.content : el).firstElementChild;
+    // data-each needs an element template — a bare loop body (text-only,
+    // comment-only, whitespace) used to silent-no-op. Surface the misuse.
     if (!templateChild) {
       warn(`data-each="${arrayPath}" needs an element child to clone`);
       return;
@@ -747,12 +775,29 @@ export const createSpektrum = (opts = {}) => {
       warn(`data-as="${varName}" shadows state.${varName}`);
     }
     const template = templateChild.cloneNode(true);
-    templateChild.remove();
+    // Container form: detach the inline template so it doesn't render
+    // alongside clones. Template form: <template>.content is non-rendered
+    // — nothing to detach, and el stays in the parent as a positional
+    // anchor for clone insertion.
+    if (!isTpl) templateChild.remove();
 
-    // Keyed cache: key -> { clone, cleanup, index }. Unkeyed mode keeps
-    // a flat cleanups[] and rebuilds on every change.
+    // `insertAt(clone, ref)` inserts within our region: container form
+    // appends/inserts inside host; template form inserts before the
+    // <template> anchor (or before `ref` if it's one of our clones).
+    const anchor = isTpl ? el : null;
+    const insertAt = (clone, ref) => host.insertBefore(clone, ref || anchor);
+
+    // Keyed cache: key -> { clone, cleanup, index }. Both forms also
+    // track `live` — the ordered list of clones we own — so wipeAll /
+    // pop / keyed-reorder target our region without touching sibling
+    // content in the template-form host.
     const cache = new Map();
     let cleanups = [];
+    let live = [];
+    const liveDrop = (clone) => {
+      const oi = live.indexOf(clone);
+      if (oi >= 0) live.splice(oi, 1);
+    };
 
     const buildClone = (i) => {
       const clone = template.cloneNode(true);
@@ -762,23 +807,25 @@ export const createSpektrum = (opts = {}) => {
     };
 
     const wipeAll = () => {
-      for (const e of cache.values()) e.cleanup();
+      for (const e of cache.values()) { e.cleanup(); e.clone.remove(); }
       cache.clear();
       callAll(cleanups);
+      for (const c of live) c.remove();
       cleanups = [];
-      el.replaceChildren();
+      live = [];
     };
 
-    // RFC §1 Option C: for the no-key path, track prior items so
-    // push/pop appends/removes only the tail. Identity match (===)
-    // over the shared prefix; interior change still rebuilds. Shared
-    // prefix is the 90% case (chat logs, append-only feeds).
+    // For the no-key path, track prior items so push/pop appends/removes
+    // only the tail. Identity match (===) over the shared prefix;
+    // interior change still rebuilds. Shared prefix is the 90% case
+    // (chat logs, append-only feeds).
     let prev = [];
     const appendFrom = (from, to) => {
       for (let i = from; i < to; i++) {
         const c = buildClone(i);
         cleanups.push(c.cleanup);
-        el.appendChild(c.clone);
+        live.push(c.clone);
+        insertAt(c.clone, null);
       }
     };
 
@@ -801,7 +848,7 @@ export const createSpektrum = (opts = {}) => {
         else if (pre === newN && newN < oldN) {
           while (cleanups.length > newN) {
             cleanups.pop()();
-            el.lastElementChild?.remove();
+            live.pop().remove();
           }
         } else {
           wipeAll();
@@ -828,6 +875,7 @@ export const createSpektrum = (opts = {}) => {
         if (entry && !stableKey && entry.index !== i) {
           entry.cleanup();
           entry.clone.remove();
+          liveDrop(entry.clone);
           entry = null;
         }
         if (!entry) {
@@ -835,8 +883,10 @@ export const createSpektrum = (opts = {}) => {
           cache.set(key, entry);
         }
         entry.index = i;
-        if (el.children[i] !== entry.clone) {
-          el.insertBefore(entry.clone, el.children[i] || null);
+        if (live[i] !== entry.clone) {
+          insertAt(entry.clone, live[i]);
+          liveDrop(entry.clone);
+          live.splice(i, 0, entry.clone);
         }
       }
 
@@ -844,6 +894,7 @@ export const createSpektrum = (opts = {}) => {
         if (!seen.has(key)) {
           entry.cleanup();
           entry.clone.remove();
+          liveDrop(entry.clone);
           cache.delete(key);
         }
       }
@@ -854,25 +905,31 @@ export const createSpektrum = (opts = {}) => {
    *  (DOM event listener). Extracted so bindDOM's main walk can
    *  treat it like every other per-element binder. */
   const bindAction = (el) => {
-    const action = el.dataset.action;
-    const handler = fns[el.dataset.fn];
+    const ds = el.dataset;
+    const action = ds.action;
+    const fnName = ds.fn;
+    const handler = fns[fnName];
     if (!handler) {
-      console.warn(`[spektrum] unknown data-fn "${el.dataset.fn}"`, el);
+      console.warn(`[spektrum] unknown data-fn "${fnName}"`, el);
       return;
     }
-    const value = parseValue(el.dataset.value);
-    const fnName = el.dataset.fn;
+    const value = parseValue(ds.value);
     if (action === 'cycle') {
       // Cycle subscribes to data-id as a path — without it, addSystem
       // would throw deep in topKeys computation. Fail at the bind site.
-      if (!el.dataset.id) return warn(`data-action="cycle" needs data-id`);
-      return addSystem([el.dataset.id], (state, delta) => callFn(fnName, handler, el, state, delta, value));
+      if (!ds.id) return warn(`data-action="cycle" needs data-id`);
+      return addSystem([ds.id], (state, delta) => callFn(fnName, handler, el, state, delta, value));
     }
     // data-action="click.prevent.stop.once" — first segment is the
     // event name; rest are flags. Mirrors Vue's v-on modifiers.
     const [eventName, ...modifiers] = action.split('.');
     const mods = new Set(modifiers);
     const has = m => mods.has(m);
+    // `rm` does double duty: the listener's own `.once` self-removal
+    // and the bindDOM cleanup return. Closes over `listener` and `opts`
+    // — both bound before any call site executes (event time / destroy
+    // time), so TDZ is not in play.
+    const rm = () => el.removeEventListener(eventName, listener, opts);
     const listener = (ev) => {
       for (const m of mods) {
         const g = KEY_GATE[m];
@@ -882,11 +939,11 @@ export const createSpektrum = (opts = {}) => {
       if (has('prevent')) ev.preventDefault();
       if (has('stop')) ev.stopPropagation();
       callFn(fnName, handler, el, appState, appStateDelta, value, ev);
-      if (has('once')) el.removeEventListener(eventName, listener, opts);
+      if (has('once')) rm();
     };
     const opts = { capture: has('capture'), passive: has('passive') };
     el.addEventListener(eventName, listener, opts);
-    return () => el.removeEventListener(eventName, listener, opts);
+    return rm;
   };
 
   // --- bindDOM: top-level scan ---

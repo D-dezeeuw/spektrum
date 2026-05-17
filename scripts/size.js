@@ -24,8 +24,21 @@
   refresh(path) keyed re-runner) selectively re-adds the warns that
   0.5.1 dropped — this time pinned to the highest-pain footguns
   surfaced by real-world feedback — and bumps the cap to 12 kB raw /
-  5.5 kB gz. Adjust caps deliberately — every bump invites complacency.
-  Trim before raising.
+  5.5 kB gz. The 1.2 batch adds <template data-each> as an additive
+  form alongside the legacy container form — HTML5-spec-aligned, no
+  pre-bind flicker, and the only correct way to bind data-each rows
+  inside <table> / <select> / <thead> (where the HTML parser would
+  otherwise re-parent a container-form child). Adds ~275 B raw /
+  ~30 B gz for the host/anchor split and unified live-clone tracking;
+  bumps the cap to 12.5 kB raw / 5.625 kB gz. The 1.3 trim pass (this
+  one) is the first cap *reduction* since 0.5.1: routeErr extraction
+  shares the error-routing pattern between runSystem and callFn,
+  bindAction/bindEach hoist el.dataset to a local, and bindAction's
+  removeEventListener (used twice — `.once` self-removal + cleanup
+  return) collapses into a single `rm` arrow. Net −108 B raw / −1 B
+  gz (gzip already deduped the "[spektrum] " prefix). Cap drops to
+  12.25 kB raw / 5.5625 kB gz. Adjust caps deliberately — every bump
+  invites complacency. Trim before raising.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -37,7 +50,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 12288, gz: 5632 },
+  { file: 'spektrum.min.js',          raw: 12544, gz: 5696 },
   { file: 'companions/spektrum-persist.min.js',  raw:  1024, gz:  576 },
   // 1.2 dock integration adds ~120 B for the [data-spektrum-dock]
   // detection branch + dockPanel.detach() in unmount. Standalone

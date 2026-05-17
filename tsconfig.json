@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": false,
+    "resolveJsonModule": false,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": false,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "spektrum.d.ts",
+    "companions/**/*.d.ts",
+    "tests/types/**/*.ts"
+  ]
+}

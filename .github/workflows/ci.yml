@@ -39,6 +39,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Type-check
+        # tsc --noEmit against spektrum.d.ts + companion .d.ts files +
+        # tests/types/. Catches drift between the hand-maintained type
+        # definitions and the JS public surface. See tsconfig.json.
+        run: npm run typecheck
+
       - name: Test
         run: npm test
 

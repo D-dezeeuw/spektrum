@@ -412,20 +412,39 @@ export const createSpektrum = (opts = {}) => {
   };
 
   // --- Public mutators ---
-
-  /** Record an additive numeric change. Multiple in one tick accumulate.
-   *  Empty path is rejected — silently writing to appState[''] used to
-   *  pollute state and bloat history with values no binding could read. */
-  const trigger = (id, path, value) => {
-    if (!path) return warn('trigger: empty path');
-    record({ id, path, value, op: 'add' });
-  };
+  //
+  // Two writes target appStateDelta from app code: an *absolute* set
+  // (`setValue`) and an *additive* accumulation (`addValue`). Both take
+  // the same `(path, value, id?)` argument order. `id` is the history
+  // label; when omitted it defaults to `set:<path>` or `add:<path>` so
+  // the entry is still locatable in the timeline.
+  //
+  // `trigger(id, path, value)` is the pre-1.0 additive name kept as a
+  // thin alias for back-compat. New code should prefer `addValue` for
+  // symmetry with `setValue`.
 
   /** Record an absolute set. `id` defaults to `set:<path>` when omitted. */
-  const setValue = (path, value, id) => {
-    if (!path) return warn('setValue: empty path');
-    record({ id: id || `set:${path}`, path, value, op: 'set' });
-  };
+  const setValue = (path, value, id) => path
+    ? record({ id: id || `set:${path}`, path, value, op: 'set' })
+    : warn('setValue: empty path');
+
+  /** Record an additive numeric change. Multiple writes in one tick
+   *  accumulate against the prior value (delta first, else state, else
+   *  0). `id` defaults to `add:<path>` when omitted. Empty path is
+   *  rejected — silently writing to appState[''] used to pollute state
+   *  and bloat history with values no binding could read. */
+  const addValue = (path, value, id) => path
+    ? record({ id: id || `add:${path}`, path, value, op: 'add' })
+    : warn('addValue: empty path');
+
+  /** Back-compat alias for `addValue`. Same semantics; argument order
+   *  differs (id first) for the pre-1.0 signature. Prefer `addValue`
+   *  in new code — it shares argument order with `setValue` so swapping
+   *  them is a one-character edit instead of a re-order. The empty-path
+   *  warn surfaces as `addValue: empty path` — intentional: the warn
+   *  names the real implementation, which doubles as a nudge toward
+   *  the non-deprecated spelling. */
+  const trigger = (id, path, value) => addValue(path, value, id);
 
   /** Tagged history marker. No state effect on replay; fires onRecord
    *  so autoSave catches it. See README "Checkpoints" for the replay
@@ -1209,8 +1228,15 @@ export const createSpektrum = (opts = {}) => {
   // `scope` is set by bindAction inside a data-each so built-ins can
   // resolve `data-id="item.X"` through the iteration's path map.
 
-  defineFn('trigger',  (el, _s, _d, v, _e, sc) => trigger (histId(el), resolvePath(el.dataset.id, sc), fnVal(el, v)));
   defineFn('setValue', (el, _s, _d, v, _e, sc) => setValue(resolvePath(el.dataset.id, sc), fnVal(el, v), histId(el)));
+  // `data-fn="trigger"` retained as an alias for `data-fn="addValue"`
+  // — same body, registered under both names by sharing the handler.
+  // Both forms read `data-id` through `resolvePath` so they resolve
+  // row-relative ids (`item.count`) to absolute state paths when
+  // dispatched from inside a `data-each`.
+  const addFn = (el, _s, _d, v, _e, sc) => addValue(resolvePath(el.dataset.id, sc), fnVal(el, v), histId(el));
+  defineFn('addValue', addFn);
+  defineFn('trigger',  addFn);
 
   defineFn('setText', (el, state, _d, _v, _e, sc) => {
     el.textContent = getPathObj(state, resolvePath(el.dataset.id, sc));
@@ -1233,7 +1259,7 @@ export const createSpektrum = (opts = {}) => {
     get cursor() { return cursor; },
     get replaying() { return replaying; },
     get checkpoints() { return checkpointsOf(); },
-    trigger, setValue, checkpoint, computed, addAsync, refresh,
+    setValue, addValue, trigger, checkpoint, computed, addAsync, refresh,
     addSystem, watch, removeSystem, defineFn, onError, onRecord, onFork,
     bindDOM, run, tick, replay, reset, resetState, serialize,
     describe, explain, attempt, findByIntent,
@@ -1246,7 +1272,7 @@ const _default = createSpektrum();
 export default _default;
 export const {
   appState, appStateDelta, history, snapshots, forks, refs, intents,
-  trigger, setValue, checkpoint, computed, addAsync, refresh,
+  setValue, addValue, trigger, checkpoint, computed, addAsync, refresh,
   addSystem, watch, removeSystem, defineFn, onError, onRecord, onFork,
   bindDOM, run, tick, replay, reset, resetState, serialize,
   describe, explain, attempt, findByIntent,

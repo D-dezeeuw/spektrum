@@ -9,7 +9,7 @@ import spektrum, {
   // state (objects mutable; cursor/replaying are getters on the default instance)
   appState, appStateDelta, history, snapshots, forks, refs, intents,
   // mutators
-  trigger, setValue, checkpoint, addAsync, refresh,
+  setValue, addValue, checkpoint, addAsync, refresh,
   // derived state
   computed,
   // subscriptions & hooks
@@ -46,6 +46,51 @@ defineFn('save', async (el) => {
 There is no `getState()` accessor — the exported reference *is* the accessor. For event-based `data-fn` handlers, the `state` arg passed to your handler is the same live reference (cycle-based handlers receive a snapshot — see [bindings](bindings.md#handler-state-argument)).
 
 For derived values that need to re-compute on dep change, use `computed(path, deps, fn)` rather than recomputing on every read; it writes the result back into state so bindings stay reactive.
+
+## Mutators: `setValue` vs `addValue`
+
+App code writes to state through exactly two mutators — an absolute set and an additive accumulator. They share an argument order so swapping one for the other is a one-character edit:
+
+```js
+setValue(path, value, id?)   // overwrite the value at `path`
+addValue(path, value, id?)   // accumulate (numeric add) onto `path`
+```
+
+| | `setValue` | `addValue` |
+| --- | --- | --- |
+| Semantics | absolute assign | numeric accumulation against the prior value |
+| Coalescing within a tick | last writer wins | values sum |
+| `id` default | `set:${path}` | `add:${path}` |
+| History op | `'set'` | `'add'` |
+
+Both record an entry into `history`; both materialise the write into `appStateDelta` before the next `tick()`; both are picked up by `replay(n)` deterministically.
+
+```js
+// counter
+setValue('count', 0);          // initial
+addValue('count', +1, 'inc');  // increment
+addValue('count', -1, 'dec');  // decrement
+```
+
+```js
+// settings panel
+setValue('user.theme', 'dark');
+setValue('user.notifications', true);
+```
+
+### Why two mutators
+
+Accumulators matter when multiple actors edit the same path within one tick. Two `setValue('x', 1)` and `setValue('x', 1)` in the same tick land `x = 1` (the second overwrites the first). Two `addValue('x', 1)` calls land `x = 2`. That's the only behavioral difference — pick the one that matches your intent.
+
+### `trigger(id, path, value)` is a deprecated alias
+
+The pre-1.0 spelling of the additive mutator was `trigger(id, path, value)` — same semantics, id-first argument order. It's preserved as a thin alias so existing markup and code keeps working:
+
+```js
+trigger('inc', 'count', 1);   // identical to addValue('count', 1, 'inc')
+```
+
+New code should prefer `addValue` — it shares an argument order with `setValue`, so the two are visually parallel and easy to swap. `data-fn="trigger"` in HTML continues to work alongside the new `data-fn="addValue"`.
 
 ## Refetching async resources
 

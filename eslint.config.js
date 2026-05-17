@@ -2,7 +2,11 @@
 // since the union of globals is small.
 export default [
   {
-    ignores: ['node_modules/**', 'spektrum.min.js'],
+    // Build / generated artifacts. `docs-site/**` is the TypeDoc
+    // output (gitignored too); `spektrum.min.js` is the engine build
+    // (`companions/*.min.js` already aren't tracked by ESLint because
+    // the build runs after lint in CI).
+    ignores: ['node_modules/**', 'spektrum.min.js', 'docs-site/**'],
   },
   {
     languageOptions: {

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": [
+    "spektrum.d.ts",
+    "companions/spektrum-inspect.d.ts",
+    "companions/spektrum-dock.d.ts"
+  ],
+  "out": "docs-site",
+  "name": "Spektrum API Reference",
+  "readme": "none",
+  "includeVersion": true,
+  "githubPages": false,
+  "excludeExternals": true,
+  "hideGenerator": true,
+  "navigationLinks": {
+    "GitHub": "https://github.com/D-dezeeuw/spektrum",
+    "npm": "https://www.npmjs.com/package/spektrum",
+    "Docs": "https://github.com/D-dezeeuw/spektrum/tree/main/docs"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "allowJs": false,
+    "checkJs": false,
+    "noEmit": true,
+    "skipLibCheck": false
+  }
+}

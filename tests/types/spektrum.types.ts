@@ -262,6 +262,7 @@ const _surfaceCheck: Spektrum = {
   get checkpoints() { return inst.checkpoints; },
   trigger: inst.trigger,
   setValue: inst.setValue,
+  addValue: inst.addValue,
   checkpoint: inst.checkpoint,
   computed: inst.computed,
   addAsync: inst.addAsync,

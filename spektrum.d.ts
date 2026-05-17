@@ -206,10 +206,26 @@ export interface Spektrum {
    */
   readonly checkpoints: CheckpointView[];
 
-  /** Record an additive numeric change. Multiple triggers in one tick accumulate. */
-  trigger(id: string, path: string, value: number): void;
-  /** Record an absolute set. `id` defaults to `set:${path}`. */
+  /**
+   * Record an absolute set. `id` defaults to `set:${path}` so the
+   * entry stays locatable in `history` and `explain()`. Pairs with
+   * `addValue` (same argument order) so authors can swap one for the
+   * other without re-ordering.
+   */
   setValue(path: string, value: any, id?: string): void;
+  /**
+   * Record an additive numeric change. Multiple `addValue`s on the
+   * same path within one tick accumulate against the prior value.
+   * `id` defaults to `add:${path}`.
+   */
+  addValue(path: string, value: number, id?: string): void;
+  /**
+   * @deprecated Use {@link Spektrum.addValue} — same semantics with
+   * a `(path, value, id?)` argument order that matches `setValue`.
+   * `trigger` (id-first) is the pre-1.0 spelling, kept as a thin alias
+   * for back-compat.
+   */
+  trigger(id: string, path: string, value: number): void;
   /**
    * Record a tagged checkpoint into history. Pure marker — replay
    * walks past it without state effect. Use to mark logically atomic
@@ -388,8 +404,10 @@ export const snapshots: Snapshot[];
 export const forks: ForkRecord[];
 export const refs: Record<string, Element>;
 export const intents: Record<string, Element[]>;
-export const trigger: Spektrum['trigger'];
 export const setValue: Spektrum['setValue'];
+export const addValue: Spektrum['addValue'];
+/** @deprecated Use {@link addValue}. See `Spektrum['trigger']`. */
+export const trigger: Spektrum['trigger'];
 export const checkpoint: Spektrum['checkpoint'];
 export const computed: Spektrum['computed'];
 export const addAsync: Spektrum['addAsync'];

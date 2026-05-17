@@ -14,3 +14,6 @@ notes/*
 # Misc
 *.tgz
 .DS_Store
+
+# CLAUDE
+.claude/settings.local.json

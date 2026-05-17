@@ -48,8 +48,16 @@
   data-as short-name + shadow warnings and the data-stable-key
   prerequisite warn. Cap raised to 12.5 kB raw / 5.75 kB gz to
   absorb the +289 B net (new scope plumbing minus rewriteScope and
-  the dropped warnings). Adjust caps deliberately — every bump
-  invites complacency. Trim before raising.
+  the dropped warnings). The 1.5 batch introduces `addValue(path,
+  value, id?)` and `data-fn="addValue"` (symmetric with `setValue`;
+  `trigger` becomes a thin alias). The mutator + data-fn were tuned
+  for +0 B against the pre-1.4 cap via ternary collapse and a shared
+  `addFn` reference between `addValue` and `trigger`; the 1.4 scope
+  refactor changed `data-fn` bodies from `el.dataset.id` to
+  `resolvePath(el.dataset.id, sc)` to honor per-row scope, which the
+  pre-tuning didn't anticipate. Net +77 B raw. Cap raised modestly
+  to 12.5625 kB raw (12,864 B); gz stays at 5.75 kB. Adjust caps
+  deliberately — every bump invites complacency. Trim before raising.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -61,7 +69,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 12800, gz: 5888 },
+  { file: 'spektrum.min.js',          raw: 12864, gz: 5888 },
   { file: 'companions/spektrum-persist.min.js',  raw:  1024, gz:  576 },
   // 1.2 dock integration adds ~120 B for the [data-spektrum-dock]
   // detection branch + dockPanel.detach() in unmount. Standalone

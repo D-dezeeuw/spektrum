@@ -33,7 +33,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "build": "esbuild spektrum.js --minify --format=esm --outdir=. --out-extension:.js=.min.js --legal-comments=none && esbuild companions/spektrum-persist.js companions/spektrum-devtools.js companions/spektrum-mcp.js companions/spektrum-agent.js companions/spektrum-inspect.js companions/spektrum-dock.js --minify --format=esm --outdir=companions --out-extension:.js=.min.js --legal-comments=none",
-    "size": "node scripts/size.js"
+    "size": "node scripts/size.js",
+    "docs": "typedoc"
   },
   "keywords": [
     "reactive",
@@ -62,6 +63,7 @@
     "@happy-dom/global-registrator": "~20.9.0",
     "esbuild": "^0.25.0",
     "eslint": "^9.0.0",
+    "typedoc": "^0.28.19",
     "typescript": "^5.9.3"
   }
 }

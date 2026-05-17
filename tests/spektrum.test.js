@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 
 import spektrum, {
   appState, appStateDelta, history, forks,
-  setValue, trigger, checkpoint, addSystem, watch, removeSystem,
+  setValue, addValue, trigger, checkpoint, addSystem, watch, removeSystem,
   computed, addAsync,
   tick, replay, reset, resetState, serialize,
   onError, onRecord, onFork,
@@ -49,6 +49,41 @@ test('trigger accumulates additive changes within a tick', () => {
   trigger('b', 'gas.value', -5);
   tick();
   assert.equal(getPathObj(appState, 'gas.value'), 105);
+});
+
+test('addValue is the harmonized additive mutator (same arg order as setValue)', () => {
+  // (path, value, id?) — id can be omitted, defaults to `add:${path}`.
+  setValue('gas.value', 100);
+  addValue('gas.value', +10);
+  addValue('gas.value', -5, 'manual-id');
+  tick();
+  assert.equal(getPathObj(appState, 'gas.value'), 105);
+  const adds = history.filter(e => e.op === 'add');
+  assert.equal(adds.length, 2);
+  assert.equal(adds[0].id, 'add:gas.value', 'default id is `add:${path}`');
+  assert.equal(adds[1].id, 'manual-id', 'caller-supplied id wins');
+});
+
+test('trigger and addValue produce identical state effects (back-compat alias)', () => {
+  // Same accumulation, different argument order.
+  setValue('a', 0);
+  setValue('b', 0);
+  trigger ('t1', 'a', 7);
+  addValue('b', 7, 't2');
+  tick();
+  assert.equal(getPathObj(appState, 'a'), 7);
+  assert.equal(getPathObj(appState, 'b'), 7);
+});
+
+test('addValue with empty path warns and does NOT record', () => {
+  const s = createSpektrum();
+  const warns = [];
+  const orig = console.warn;
+  console.warn = (m) => warns.push(m);
+  try { s.addValue('', 1); } finally { console.warn = orig; }
+  assert.equal(s.history.length, 0);
+  assert.ok(warns.some(w => w.includes('addValue') && w.includes('empty path')),
+    `expected empty-path warn; got: ${warns.join(' | ')}`);
 });
 
 test('tick merges and clears delta even with no subscribers', () => {
@@ -1191,12 +1226,16 @@ test('setValue with empty path warns and does NOT record', () => {
 });
 
 test('trigger with empty path warns and does NOT record', () => {
+  // Note: warn surfaces as `addValue: empty path` because trigger
+  // now forwards to addValue. Intentional — the warn names the real
+  // implementation and doubles as a nudge toward the non-deprecated
+  // spelling. See spektrum.js: trigger declaration.
   const s = createSpektrum();
   const warns = [];
   const orig = console.warn;
   console.warn = (m) => warns.push(m);
   try { s.trigger('id', '', 1); } finally { console.warn = orig; }
   assert.equal(s.history.length, 0);
-  assert.ok(warns.some(w => w.includes('trigger') && w.includes('empty path')),
+  assert.ok(warns.some(w => w.includes('addValue') && w.includes('empty path')),
     `expected empty-path warn; got: ${warns.join(' | ')}`);
 });

@@ -7,17 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **`data-each` now uses proper per-iteration scope** instead of whole-word text substitution. The loop variable, `$index`, `$first`, `$last`, and `$path` are real lexical bindings carried on a scope object through `extractPaths`/`evalExpr` (subscription paths translated via a `SCOPE_PATHS` Symbol-keyed map; eval uses `with (state) with (scope)` so the loop variable shadows same-named state keys).
-- **Keyed reorder always reuses the same DOM node.** A moved row's bindings are torn down and re-bound with a scope pointing at the new index; the clone (and any `<input>` state, focus, scroll position inside it) survives the move. This was previously opt-in via `data-stable-key`; that attribute is now silently accepted as a no-op for back-compat.
-- **`data-fn="trigger" / "setValue" / "setText" / "setStyle"` resolve `data-id` through scope.** Writing `data-id="row.count"` inside a `data-each` now targets the row's actual state path (e.g. `rows.3.count`). Built-ins gain an optional trailing `scope` argument; custom `data-fn` handlers can opt in to the same translation via the same arg (`(el, state, delta, value, event?, scope?)`).
-- **`bindModel="item.note"` inside `data-each` resolves to the row's state path,** so two-way input bindings target the right item without manual path computation.
-
 ### Added
 
 - **`$index`, `$first`, `$last`, `$path`** are first-class scope variables inside `data-each`. `$path` is the row's full state path as a string; the others are the index and its boundary flags.
 - **Nested `data-each`** sees outer scope variables (and aliases) without ceremony. The inner scope merges over the outer.
+- **`addValue(path, value, id?)`** — the harmonized additive mutator. Same semantics as `trigger` but with `setValue`'s argument order, so the two read naturally side-by-side and swap with a one-character edit. `id` defaults to `add:${path}` for history locatability.
+- **`data-fn="addValue"`** built-in handler, symmetric with `data-fn="setValue"`. The pre-existing `data-fn="trigger"` keeps working as an alias (handler is registered under both names by sharing the same function reference — zero duplication).
+- **`tsc --noEmit` gate in CI.** `tsconfig.json` + `tests/types/spektrum.types.ts` import every public export, exercise common usage patterns, and pin two `@ts-expect-error` negative cases. Breaks CI if the hand-maintained `.d.ts` files drift from the JS surface. `typescript` is a devDep only.
+- **Generated API reference site** — `npm run docs` builds [TypeDoc](https://typedoc.org/) HTML from the hand-maintained `spektrum.d.ts` / companion `.d.ts` files into `docs-site/` (gitignored). A new `.github/workflows/docs.yml` builds on every push and deploys to GitHub Pages from `main`; PRs build but do not deploy. `typedoc` is a devDep — the engine's zero-runtime-deps promise is unaffected.
+- **`CONTRIBUTING.md` docs-touchup checklist** under Coding conventions — closes the process gap that left stale `rewriteScope` / `data-stable-key` cross-references in `docs/` after the data-each refactor.
+
+### Changed
+
+- **`data-each` now uses proper per-iteration scope** instead of whole-word text substitution. The loop variable, `$index`, `$first`, `$last`, and `$path` are real lexical bindings carried on a scope object through `extractPaths`/`evalExpr` (subscription paths translated via a `scopePaths` WeakMap; eval uses `with (state) with (scope)` so the loop variable shadows same-named state keys).
+- **Keyed reorder always reuses the same DOM node.** A moved row's bindings are torn down and re-bound with a scope pointing at the new index; the clone (and any `<input>` state, focus, scroll position inside it) survives the move. This was previously opt-in via `data-stable-key`; that attribute is now silently accepted as a no-op for back-compat.
+- **`data-fn="trigger" / "setValue" / "addValue" / "setText" / "setStyle"` resolve `data-id` through scope.** Writing `data-id="row.count"` inside a `data-each` now targets the row's actual state path (e.g. `rows.3.count`). Built-ins gain an optional trailing `scope` argument; custom `data-fn` handlers can opt in to the same translation via the same arg (`(el, state, delta, value, event?, scope?)`).
+- **`bindModel="item.note"` inside `data-each` resolves to the row's state path,** so two-way input bindings target the right item without manual path computation.
+- `trigger(id, path, value)` is now documented as a **deprecated alias** for `addValue`. Same behavior, same back-compat surface — new code should prefer `addValue`. JSDoc `@deprecated` tag added in `spektrum.d.ts` so TypeScript users see the steer, and the rendered TypeDoc page marks the variable as deprecated.
+- The mutator empty-path warn from `trigger(...)` now surfaces as `addValue: empty path` (trigger forwards rather than carrying a duplicate guard). Intentional — the warn names the real implementation and doubles as a nudge toward the non-deprecated spelling.
+- `docs/api.md` gains a `## Mutators: setValue vs addValue` section explaining the absolute-vs-additive distinction, when each is appropriate, and the back-compat status of `trigger`.
 
 ### Removed
 
@@ -28,10 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
-- `EACH_HOST` Symbol stamped on the data-each host (container in container form, parent in `<template>` form) so `bindDOM`'s walks skip elements owned by an inner `bindEach`. The check is a manual ancestry walk that stops at the current walk root so inner calls still bind their own subtree.
+- `eachHosts` WeakSet of data-each host elements (container in container form, parent in `<template>` form) so `bindDOM`'s walks skip elements owned by an inner `bindEach`. The check is a manual ancestry walk that stops at the current walk root so inner calls still bind their own subtree.
 - `textTemplates` WeakMap remembers each text node's original template so a re-bind reads `{{…}}` and not the previously rendered result.
 - `addSystem` entries carry an `active: true` flag; unsub flips it to `false` and `tick()` skips inactive entries from the in-flight `toRun` snapshot. Without this, mid-tick teardown (bindEach reorder during a tick that already collected the old systems) would let stale systems write old paths back onto freshly re-bound elements.
-- Size: +289 B raw / +142 B gz net (12,455 → 12,744 raw, 5,661 → 5,803 gz). Cap raised to 12.5 kB raw / 5.75 kB gz. New scope plumbing minus deletions of `rewriteScope` and three dev warnings.
+- Net engine size impact across the release: +308 B raw / +133 B gz (12,455 → 12,763 raw, 5,661 → 5,794 gz). Cap raised to 12.5 kB raw / 5.75 kB gz. Net is the new scope plumbing + `addValue` minus deletions of `rewriteScope` and three dev warnings; mutators collapsed into single-expression ternaries and the `data-fn` handler shared between `addValue` and `trigger` to offset the addition.
 
 ## [1.0.0] — 2026-05-10
 

@@ -5,6 +5,10 @@ node_modules/
 spektrum.min.js
 companions/*.min.js
 
+# Generated TypeDoc HTML — built by `npm run docs` and deployed to
+# GitHub Pages via .github/workflows/docs.yml. Never committed.
+docs-site/
+
 # Working notes / drafts that live outside the published docs.
 # The folder's purpose is documented in notes/README.md (tracked); the
 # rest of the folder is contributor-local scratch space.

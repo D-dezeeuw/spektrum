@@ -1,0 +1,63 @@
+# Build the TypeDoc API reference from spektrum.d.ts (+ inspect/dock
+# companion .d.ts files) and deploy it to GitHub Pages. The .d.ts
+# files are hand-maintained and carry the canonical JSDoc — TypeDoc
+# is the renderer, not the source of truth.
+#
+# Trigger: every push to main. PRs build but do not deploy (catches
+# breakage before merge without bouncing the live site). Manual
+# workflow_dispatch is included for re-runs.
+#
+# Why split from CI: the docs build pulls in TypeDoc + TypeScript,
+# which is heavier than the engine's lint/test/build/size loop. The
+# site also publishes via a Pages-specific permission set (`pages:
+# write`, `id-token: write`) that the regular CI job doesn't need.
+
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one concurrent deploy. Cancel an in-flight build when a newer
+# commit lands on main so the live site reflects the latest tip.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Build API reference
+        run: npm run docs
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site
+
+  deploy:
+    # PRs build (above) but don't deploy — gates broken docs without
+    # leaking unmerged work to the live site.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

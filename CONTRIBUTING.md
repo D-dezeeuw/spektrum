@@ -28,6 +28,7 @@ spektrum.min.js        built artifact (gitignored; CI re-builds)
 companions/            opt-in subpath modules (devtools / persist / compile / mcp /
                        agent / inspect / dock) — each a single file + matching .min.js
 docs/                  reference + topical guides; see docs/README.md for the index
+docs-site/             TypeDoc-rendered API reference (gitignored; `npm run docs` builds)
 example/               demo wiring (index.html + app.js); two isolated instances
 tests/                 node:test + happy-dom; one file per concern
 scripts/size.js        zero-dep size-budget enforcer
@@ -79,6 +80,13 @@ GitHub, npm, and unpkg read them by exact name there.
   `tick()` is synchronous on purpose.
 - **Public API surface** lives in `spektrum.d.ts` — keep it in
   sync.
+- **Docs touchup after refactors.** When a refactor renames or
+  removes an internal helper or built-in (e.g. the old
+  `rewriteScope`, `data-stable-key`), grep `docs/` for references
+  before opening the PR — stale cross-links lie to readers. The
+  short ritual: `git diff --stat main…HEAD` to spot renamed
+  identifiers, then `grep -rn '<name>' docs/` for each. Same goes
+  for the `## Related` link blocks at the bottom of each doc page.
 - **Changelog.** Add a line under `## [Unreleased]` in
   `CHANGELOG.md`. The format follows
   [Keep a Changelog](https://keepachangelog.com/).

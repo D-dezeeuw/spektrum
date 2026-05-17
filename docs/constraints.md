@@ -58,7 +58,7 @@ The engine traverses with `Object.keys`, matches with regex, and walks the DOM w
 
 ## Auditability over abstraction
 
-Source comments explain *why*, not *what*. Every non-obvious decision has a `// …` paragraph nearby covering the constraint, the rejected alternative, or the bug that motivated it. Examples: the `rewriteScope` regex word-boundary discussion at [spektrum.js:680](../spektrum.js#L680), the `data-each` keyed-vs-stable-key trade-off at [spektrum.js:691](../spektrum.js#L691), the `tick()` 1024-iteration cap rationale at [spektrum.js:447](../spektrum.js#L447).
+Source comments explain *why*, not *what*. Every non-obvious decision has a `// …` paragraph nearby covering the constraint, the rejected alternative, or the bug that motivated it. Examples: the `scopePaths` / `eachHosts` WeakMap+WeakSet rationale for `data-each` iteration, the `with (state) with (scope)` shadow ordering in `evalExpr`, the `EACH_HOST`-equivalent ancestry check in `bindDOM`'s walks, and the `tick()` 1024-iteration cap rationale.
 
 Comments are bytes the bundle carries. We accept the cost.
 
@@ -97,6 +97,6 @@ A change that breaks any of these doesn't ship — even if it would be locally u
 ## Related
 
 - [Philosophy](philosophy.md) — vision, non-goals, the engine in three sentences
-- [Trade-offs](trade-offs.md) — specific design compromises (e.g. `rewriteScope`, keyed reconciliation modes, `with(state)`)
+- [Trade-offs](trade-offs.md) — specific design compromises (e.g. `with (state) with (scope)` ordering, no-key list rebuilds, sloppy-mode templates)
 - [Subpath modules](modules.md) — where opt-in functionality lives, since it can't live in core
 - [CSP guide](csp.md) — how `spektrum/compile` works around `new Function`

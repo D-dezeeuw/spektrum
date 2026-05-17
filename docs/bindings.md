@@ -176,5 +176,5 @@ Without help, the browser paints `{{count}}` literally in the DOM for one frame 
 ## Related
 
 - [Public API](api.md) — `bindDOM`, `defineFn`, `computed`, `addSystem`, etc.
-- [Trade-offs](trade-offs.md) — `data-each` reorder behavior, `rewriteScope` literal handling, `with(state)` rationale
+- [Trade-offs](trade-offs.md) — no-key list rebuilds, `with (state) with (scope)` ordering, sloppy-mode template trust model
 - [Agent-native workflow](../AGENTS.md) — `data-intent` + `findByIntent` in context

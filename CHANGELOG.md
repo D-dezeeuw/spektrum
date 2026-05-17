@@ -7,53 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [1.0.0] — 2026-05-17
 
-- **`$index`, `$first`, `$last`, `$path`** are first-class scope variables inside `data-each`. `$path` is the row's full state path as a string; the others are the index and its boundary flags.
-- **Nested `data-each`** sees outer scope variables (and aliases) without ceremony. The inner scope merges over the outer.
-- **`addValue(path, value, id?)`** — the harmonized additive mutator. Same semantics as `trigger` but with `setValue`'s argument order, so the two read naturally side-by-side and swap with a one-character edit. `id` defaults to `add:${path}` for history locatability.
-- **`data-fn="addValue"`** built-in handler, symmetric with `data-fn="setValue"`. The pre-existing `data-fn="trigger"` keeps working as an alias (handler is registered under both names by sharing the same function reference — zero duplication).
-- **`tsc --noEmit` gate in CI.** `tsconfig.json` + `tests/types/spektrum.types.ts` import every public export, exercise common usage patterns, and pin two `@ts-expect-error` negative cases. Breaks CI if the hand-maintained `.d.ts` files drift from the JS surface. `typescript` is a devDep only.
-- **Generated API reference site** — `npm run docs` builds [TypeDoc](https://typedoc.org/) HTML from the hand-maintained `spektrum.d.ts` / companion `.d.ts` files into `docs-site/` (gitignored). A new `.github/workflows/docs.yml` builds on every push and deploys to GitHub Pages from `main`; PRs build but do not deploy. `typedoc` is a devDep — the engine's zero-runtime-deps promise is unaffected.
-- **`CONTRIBUTING.md` docs-touchup checklist** under Coding conventions — closes the process gap that left stale `rewriteScope` / `data-stable-key` cross-references in `docs/` after the data-each refactor.
+**The 1.0 ship.** The agent-native surface, multi-subscriber hooks, and docs reorg that the 0.6 line built toward, plus the post-relabel batch that landed before tagging: proper `data-each` scope (`$index` / `$first` / `$last` / `$path`, nested scope, reuse-on-reorder), the `addValue` mutator, a `tsc --noEmit` `.d.ts`-drift gate, a TypeDoc-rendered API reference site, and five engine-correctness / DX fixes.
 
-### Changed
-
-- **`data-each` now uses proper per-iteration scope** instead of whole-word text substitution. The loop variable, `$index`, `$first`, `$last`, and `$path` are real lexical bindings carried on a scope object through `extractPaths`/`evalExpr` (subscription paths translated via a `scopePaths` WeakMap; eval uses `with (state) with (scope)` so the loop variable shadows same-named state keys).
-- **Keyed reorder always reuses the same DOM node.** A moved row's bindings are torn down and re-bound with a scope pointing at the new index; the clone (and any `<input>` state, focus, scroll position inside it) survives the move. This was previously opt-in via `data-stable-key`; that attribute is now silently accepted as a no-op for back-compat.
-- **`data-fn="trigger" / "setValue" / "addValue" / "setText" / "setStyle"` resolve `data-id` through scope.** Writing `data-id="row.count"` inside a `data-each` now targets the row's actual state path (e.g. `rows.3.count`). Built-ins gain an optional trailing `scope` argument; custom `data-fn` handlers can opt in to the same translation via the same arg (`(el, state, delta, value, event?, scope?)`).
-- **`bindModel="item.note"` inside `data-each` resolves to the row's state path,** so two-way input bindings target the right item without manual path computation.
-- `trigger(id, path, value)` is now documented as a **deprecated alias** for `addValue`. Same behavior, same back-compat surface — new code should prefer `addValue`. JSDoc `@deprecated` tag added in `spektrum.d.ts` so TypeScript users see the steer, and the rendered TypeDoc page marks the variable as deprecated.
-- The mutator empty-path warn from `trigger(...)` now surfaces as `addValue: empty path` (trigger forwards rather than carrying a duplicate guard). Intentional — the warn names the real implementation and doubles as a nudge toward the non-deprecated spelling.
-- `docs/api.md` gains a `## Mutators: setValue vs addValue` section explaining the absolute-vs-additive distinction, when each is appropriate, and the back-compat status of `trigger`.
-
-### Fixed
-
-- **`{{grid.1.0}}`-style chained numeric path segments** now convert to bracket notation in one pass — previously the first index converted (`grid.1.0` → `grid[1].0`) and the second left a parse error, silently rendering ``. The replacement also no longer touches digit-prefixed `.\d` runs in float literals: `{{val + 1.5}}` correctly evaluates to `11.5` instead of compile-throwing and rendering empty.
-- **`addAsync(path, loader)` skips its initial fetch when state already holds a settled `{data}` or `{error}` shape.** The common case is re-registering after `loadHistory` has replayed an earlier fetch — the old behavior double-fetched. The runner is still registered, so `refresh(path)` continues to force a fresh fetch on demand.
-- **`data-ref` cleanup only clears the slot if it still owns it.** Two elements sharing a name (last bind wins on read) no longer wipe each other's entry when one is destroyed.
-- **`data-each` keyed mode warns on duplicate keys** instead of silently merging clones into the first row — surfaces the bug at bind time rather than as confusing reorder behavior later.
-- **`attempt()` handle is single-shot** — a second `commit()`/`discard()` is a no-op. Guards a defensive `commit()` in a `finally{}` after `discard()`, which previously appended an orphan checkpoint past the replay point.
-
-### Removed
-
-- **`rewriteScope`** (~150 B) is gone — proper scope replaces the whole-word text-substitution mechanism.
-- **`data-as` short-name warning** (`data-as="t" rewrites \bt\b across template text/attrs`) is gone. With proper scope, the loop variable is lexically scoped and can't collide with unrelated identifiers in template text.
-- **`data-as` shadow warning** (`data-as="user" shadows state.user`) is gone. `with (state) with (scope)` makes the loop variable's shadow of a same-named state key well-defined and intentional, not a footgun.
-- **`data-stable-key needs data-key` warning** is gone. Keyed reorder always reuses now; the attribute is silently accepted for any HTML that still has it.
-
-### Internal
-
-- `eachHosts` WeakSet of data-each host elements (container in container form, parent in `<template>` form) so `bindDOM`'s walks skip elements owned by an inner `bindEach`. The check is a manual ancestry walk that stops at the current walk root so inner calls still bind their own subtree.
-- `textTemplates` WeakMap remembers each text node's original template so a re-bind reads `{{…}}` and not the previously rendered result.
-- `addSystem` entries carry an `active: true` flag; unsub flips it to `false` and `tick()` skips inactive entries from the in-flight `toRun` snapshot. Without this, mid-tick teardown (bindEach reorder during a tick that already collected the old systems) would let stale systems write old paths back onto freshly re-bound elements.
-- Net engine size impact across the release: +308 B raw / +133 B gz (12,455 → 12,763 raw, 5,661 → 5,794 gz). Cap raised to 12.5 kB raw / 5.75 kB gz. Net is the new scope plumbing + `addValue` minus deletions of `rewriteScope` and three dev warnings; mutators collapsed into single-expression ternaries and the `data-fn` handler shared between `addValue` and `trigger` to offset the addition.
-
-## [1.0.0] — 2026-05-10
-
-**The relabel.** Every blocker from the external 1.0-readiness review shipped in 0.5.0; the agent-native surface added in 0.6 went well beyond it. This release stamps the version that's been ready for months and packages it with a small ergonomic fix that's been overdue.
-
-The framing is unchanged: a tiny, deliberately auditable reactive engine with time-travel as a primitive and a first-class agent surface. ~11.5 kB minified, zero runtime dependencies, single file. The whole engine still fits in your head — and now in any LLM's context window in one tool call.
+The framing is unchanged: a tiny, deliberately auditable reactive engine with time-travel as a primitive and a first-class agent surface. ~13 kB minified, zero runtime dependencies, single file. The whole engine still fits in your head — and now in any LLM's context window in one tool call.
 
 ### Breaking changes
 
@@ -74,12 +32,42 @@ The framing is unchanged: a tiny, deliberately auditable reactive engine with ti
 - **`spektrum/mcp`** — SDK-agnostic MCP tool catalog. `createTools(spektrum)` returns plain JS tool definitions wireable into any MCP server SDK.
 - **`spektrum/agent`** — in-page LLM assistant. Floating chat panel that drives the engine via the agent surface. Supports Anthropic, OpenAI, and OpenRouter via a per-provider settings UI.
 - **`AGENTS.md`** at the repo root — agent workflow tutorial (orient → speculate → explain → commit). Covers the in-page panel and the MCP catalog.
+- **`$index`, `$first`, `$last`, `$path`** are first-class scope variables inside `data-each`. `$path` is the row's full state path as a string; the others are the index and its boundary flags.
+- **Nested `data-each`** sees outer scope variables (and aliases) without ceremony. The inner scope merges over the outer.
+- **`addValue(path, value, id?)`** — the harmonized additive mutator. Same semantics as `trigger` but with `setValue`'s argument order, so the two read naturally side-by-side and swap with a one-character edit. `id` defaults to `add:${path}` for history locatability.
+- **`data-fn="addValue"`** built-in handler, symmetric with `data-fn="setValue"`. The pre-existing `data-fn="trigger"` keeps working as an alias (handler is registered under both names by sharing the same function reference — zero duplication).
+- **`tsc --noEmit` gate in CI.** `tsconfig.json` + `tests/types/spektrum.types.ts` import every public export, exercise common usage patterns, and pin two `@ts-expect-error` negative cases. Breaks CI if the hand-maintained `.d.ts` files drift from the JS surface. `typescript` is a devDep only.
+- **Generated API reference site** — `npm run docs` builds [TypeDoc](https://typedoc.org/) HTML from the hand-maintained `spektrum.d.ts` / companion `.d.ts` files into `docs-site/` (gitignored). A new `.github/workflows/docs.yml` builds on every push and deploys to GitHub Pages from `main`; PRs build but do not deploy. `typedoc` is a devDep — the engine's zero-runtime-deps promise is unaffected.
+- **`CONTRIBUTING.md` docs-touchup checklist** under Coding conventions — closes the process gap that left stale `rewriteScope` / `data-stable-key` cross-references in `docs/` after the data-each refactor.
 
 ### Changed
 
 - **`extractPaths` regex now honors backslash-escaped quotes.** Previously a string literal with `\"` could leak identifiers as spurious subscriptions. Failure mode was benign over-subscription; the fix is ~20 bytes for a tighter guarantee.
 - **README slimmed from ~676 lines to ~120.** Reference material moved to `docs/`. The README is now the front door (pitch, quick start, install, showcase, docs index); the depth lives in eight focused topical files. Plain Markdown, no docs framework.
 - **Documentation index at `docs/README.md`** — GitHub renders it natively when you visit `/docs/`. Cross-linked via relative paths.
+- **`data-each` now uses proper per-iteration scope** instead of whole-word text substitution. The loop variable, `$index`, `$first`, `$last`, and `$path` are real lexical bindings carried on a scope object through `extractPaths`/`evalExpr` (subscription paths translated via a `scopePaths` WeakMap; eval uses `with (state) with (scope)` so the loop variable shadows same-named state keys).
+- **Keyed reorder always reuses the same DOM node.** A moved row's bindings are torn down and re-bound with a scope pointing at the new index; the clone (and any `<input>` state, focus, scroll position inside it) survives the move. This was previously opt-in via `data-stable-key`; that attribute is now silently accepted as a no-op for back-compat.
+- **`data-fn="trigger" / "setValue" / "addValue" / "setText" / "setStyle"` resolve `data-id` through scope.** Writing `data-id="row.count"` inside a `data-each` now targets the row's actual state path (e.g. `rows.3.count`). Built-ins gain an optional trailing `scope` argument; custom `data-fn` handlers can opt in to the same translation via the same arg (`(el, state, delta, value, event?, scope?)`).
+- **`bindModel="item.note"` inside `data-each` resolves to the row's state path,** so two-way input bindings target the right item without manual path computation.
+- `trigger(id, path, value)` is now documented as a **deprecated alias** for `addValue`. Same behavior, same back-compat surface — new code should prefer `addValue`. JSDoc `@deprecated` tag added in `spektrum.d.ts` so TypeScript users see the steer, and the rendered TypeDoc page marks the variable as deprecated.
+- The mutator empty-path warn from `trigger(...)` now surfaces as `addValue: empty path` (trigger forwards rather than carrying a duplicate guard). Intentional — the warn names the real implementation and doubles as a nudge toward the non-deprecated spelling.
+- `docs/api.md` gains a `## Mutators: setValue vs addValue` section explaining the absolute-vs-additive distinction, when each is appropriate, and the back-compat status of `trigger`.
+
+### Fixed
+
+- **`{{grid.1.0}}`-style chained numeric path segments** now convert to bracket notation in one pass — previously the first index converted (`grid.1.0` → `grid[1].0`) and the second left a parse error, silently rendering ``. The replacement also no longer touches digit-prefixed `.\d` runs in float literals: `{{val + 1.5}}` correctly evaluates to `11.5` instead of compile-throwing and rendering empty.
+- **`addAsync(path, loader)` skips its initial fetch when state already holds a settled `{data}` or `{error}` shape.** The common case is re-registering after `loadHistory` has replayed an earlier fetch — the old behavior double-fetched. The runner is still registered, so `refresh(path)` continues to force a fresh fetch on demand.
+- **`data-ref` cleanup only clears the slot if it still owns it.** Two elements sharing a name (last bind wins on read) no longer wipe each other's entry when one is destroyed.
+- **`data-each` keyed mode warns on duplicate keys** instead of silently merging clones into the first row — surfaces the bug at bind time rather than as confusing reorder behavior later.
+- **`attempt()` handle is single-shot** — a second `commit()`/`discard()` is a no-op. Guards a defensive `commit()` in a `finally{}` after `discard()`, which previously appended an orphan checkpoint past the replay point.
+
+### Removed
+
+- **Pre-1.0 status callout from the README.** The "feature-complete pre-1.0" framing has been true since 0.5.0; the 0.6 batch made it overdue. 1.0 means nothing about new capability — it means "we're confident the API surface is what we said it would be."
+- **`rewriteScope`** (~150 B) is gone — proper scope replaces the whole-word text-substitution mechanism.
+- **`data-as` short-name warning** (`data-as="t" rewrites \bt\b across template text/attrs`) is gone. With proper scope, the loop variable is lexically scoped and can't collide with unrelated identifiers in template text.
+- **`data-as` shadow warning** (`data-as="user" shadows state.user`) is gone. `with (state) with (scope)` makes the loop variable's shadow of a same-named state key well-defined and intentional, not a footgun.
+- **`data-stable-key needs data-key` warning** is gone. Keyed reorder always reuses now; the attribute is silently accepted for any HTML that still has it.
 
 ### Optimized
 
@@ -91,9 +79,12 @@ A pre-release optimization pass against the 1.0 snapshot — pure refactors, beh
 - **Built-in `data-fn` table form attempted** but reverted: measured at +7 B raw vs. the original 5 individual `defineFn(...)` calls. The loop overhead and object literal wrapper exceeded the bytes saved on the calls; original form kept.
 - **`safeFire` inlining attempted but skipped before implementation:** has 4 call sites (errorHandlers fires twice — system-throw and tick-overflow), inlining would have added ~170 B not saved.
 
-### Removed
+### Internal
 
-- **Pre-1.0 status callout from the README.** The "feature-complete pre-1.0" framing has been true since 0.5.0; the 0.6 batch made it overdue. 1.0 means nothing about new capability — it means "we're confident the API surface is what we said it would be."
+- `eachHosts` WeakSet of data-each host elements (container in container form, parent in `<template>` form) so `bindDOM`'s walks skip elements owned by an inner `bindEach`. The check is a manual ancestry walk that stops at the current walk root so inner calls still bind their own subtree.
+- `textTemplates` WeakMap remembers each text node's original template so a re-bind reads `{{…}}` and not the previously rendered result.
+- `addSystem` entries carry an `active: true` flag; unsub flips it to `false` and `tick()` skips inactive entries from the in-flight `toRun` snapshot. Without this, mid-tick teardown (bindEach reorder during a tick that already collected the old systems) would let stale systems write old paths back onto freshly re-bound elements.
+- Net engine size at 1.0.0 tag: **13,060 B raw / 5,920 B gz minified** (under the 12.875 kB raw / 5.875 kB gz cap). The post-relabel batch netted ~+600 B raw — new scope plumbing, `addValue`, the five engine fixes — partly offset by `rewriteScope` removal and three dev-warning deletions; mutators collapsed into single-expression ternaries and the `data-fn` handler shared between `addValue` and `trigger` to keep the addition tight.
 
 ## [0.5.1] — 2026-05-10
 

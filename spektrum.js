@@ -138,18 +138,20 @@ const cacheSet = (k, v) => {
   evalCache.set(k, v);
 };
 
-// Scope object carries per-iteration values (item, index, $path, …)
-// passed through the binders by bindEach. Path translation for
-// subscription extraction lives on a Symbol-keyed slot so user
-// expressions can't see or shadow it through `with`.
-const SCOPE_PATHS = Symbol();
-// Marker stamped on a data-each host (container element in container
-// form, parent element in <template> form). bindDOM's element + text
-// walks skip elements whose closest marked ancestor strictly between
-// them and the current root has this stamp — that way the outer walk
+// Per-iteration alias → state-path map for each scope object. Lives
+// outside the scope so it can't leak through `with(scope)` and so the
+// scope itself stays a clean record of just the user-visible fields
+// (item, index, $path, …). `scopePaths.get(scope)` reads the mapping;
+// `scopePaths.set(scope, {…})` writes it. WeakMap keying means an
+// abandoned clone's entry GCs alongside its scope object.
+const scopePaths = new WeakMap();
+// Set of data-each host elements (the container in container form,
+// the <template>'s parent in <template> form). bindDOM's element +
+// text walks skip nodes whose closest marked ancestor strictly between
+// them and the current root is in this set — that way the outer walk
 // doesn't re-enter clones owned by an inner bindEach, while the inner
 // bindDOM call on the clone itself still binds its own subtree.
-const EACH_HOST = Symbol();
+const eachHosts = new WeakSet();
 
 const evalExpr = (expr) => {
   let fn = evalCache.get(expr);
@@ -194,15 +196,15 @@ const RESERVED = /^(true|false|null|undefined|NaN|Infinity|Math|JSON|Date|Number
  *  regex honours backslash escapes — `"foo \"bar\" baz"` collapses
  *  cleanly without leaking `bar` as a subscription path.
  *
- *  When called inside a data-each iteration, `scope` carries a path
- *  map under `SCOPE_PATHS` mapping aliases (`item`) to state paths
- *  (`users.3`). Identifiers whose head matches an alias are rewritten
- *  to the state path; scope-only heads (numeric `index`, boolean
- *  `$first`, etc.) carry no path and are skipped — bindEach drives
- *  their re-renders explicitly on reorder. */
+ *  When called inside a data-each iteration, `scope` has a path map
+ *  in `scopePaths` mapping aliases (`item`) to state paths (`users.3`).
+ *  Identifiers whose head matches an alias are rewritten to the state
+ *  path; scope-only heads (numeric `index`, boolean `$first`, etc.)
+ *  carry no path and are skipped — bindEach drives their re-renders
+ *  explicitly on reorder. */
 const extractPaths = (expr, scope) => {
   const paths = new Set();
-  const map = scope?.[SCOPE_PATHS];
+  const map = scopePaths.get(scope);
   const stripped = expr.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, '""');
   for (const m of stripped.matchAll(IDENT)) {
     const id = m[1];
@@ -211,8 +213,8 @@ const extractPaths = (expr, scope) => {
     if (scope && head in scope) {
       // Aliased to a state path → translate. Scope-only value (no
       // path) → no subscription; bindEach owns the re-render. `map`
-      // is guaranteed an object here: every scope comes from makeScope
-      // and always carries SCOPE_PATHS; if scope is set, map is too.
+      // is guaranteed defined here: every scope comes from makeScope
+      // and always registers in scopePaths; if scope is set, map is too.
       const aliased = map[head];
       if (aliased) paths.add(aliased + id.slice(head.length));
       continue;
@@ -604,7 +606,7 @@ export const createSpektrum = (opts = {}) => {
    *  trigger/setValue/setText/setStyle handlers so authors can write
    *  `data-id="item.count"` and have it resolve to the row's path. */
   const resolvePath = (path, scope) => {
-    const map = scope?.[SCOPE_PATHS];
+    const map = scopePaths.get(scope);
     if (!map) return path;
     const head = path.split('.')[0];
     const aliased = map[head];
@@ -783,10 +785,12 @@ export const createSpektrum = (opts = {}) => {
    *     iteration metadata. Re-render is driven by bindEach explicitly
    *     on reorder (these aren't state paths so they don't trigger the
    *     normal subscription system).
-   *   - SCOPE_PATHS — symbol-keyed map from alias to state path
-   *     (`{item: 'users.3'}`). extractPaths reads this to translate
-   *     `item.name` into the subscription path `users.3.name`. The
-   *     symbol keeps it invisible to user expressions through `with`.
+   *  The alias → state-path map (`{item: 'users.3'}`) lives in the
+   *  module-level `scopePaths` WeakMap, not on the scope itself —
+   *  extractPaths reads it to translate `item.name` into the
+   *  subscription path `users.3.name`. Keeping it off the scope means
+   *  user expressions can't see or shadow it through `with`, and the
+   *  scope stays a pure record of just user-visible fields.
    *  Outer scope (nested data-each) is merged so inner expressions
    *  can read outer aliases. Inner aliases shadow on collision. */
   const makeScope = (outer, varName, i, items, arrayPath) => {
@@ -798,7 +802,7 @@ export const createSpektrum = (opts = {}) => {
     scope.$first = i === 0;
     scope.$last = i === items.length - 1;
     scope.$path = path;
-    scope[SCOPE_PATHS] = { ...(outer?.[SCOPE_PATHS] || {}), [varName]: path };
+    scopePaths.set(scope, { ...(scopePaths.get(outer) || {}), [varName]: path });
     return scope;
   };
 
@@ -862,7 +866,7 @@ export const createSpektrum = (opts = {}) => {
     // enclosing scan). Inner walks pass scope; their own root is the
     // clone, so the marker on the host outside the clone doesn't
     // false-positive on the clone's own children.
-    host[EACH_HOST] = true;
+    eachHosts.add(host);
 
     // `insertAt(clone, ref)` inserts within our region: container form
     // appends/inserts inside host; template form inserts before the
@@ -1071,7 +1075,7 @@ export const createSpektrum = (opts = {}) => {
     const ownedByEach = (n) => {
       let p = n.parentNode;
       while (p && p !== root) {
-        if (p[EACH_HOST]) return true;
+        if (eachHosts.has(p)) return true;
         p = p.parentNode;
       }
       return false;

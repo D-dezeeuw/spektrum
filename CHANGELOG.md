@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The mutator empty-path warn from `trigger(...)` now surfaces as `addValue: empty path` (trigger forwards rather than carrying a duplicate guard). Intentional — the warn names the real implementation and doubles as a nudge toward the non-deprecated spelling.
 - `docs/api.md` gains a `## Mutators: setValue vs addValue` section explaining the absolute-vs-additive distinction, when each is appropriate, and the back-compat status of `trigger`.
 
+### Fixed
+
+- **`{{grid.1.0}}`-style chained numeric path segments** now convert to bracket notation in one pass — previously the first index converted (`grid.1.0` → `grid[1].0`) and the second left a parse error, silently rendering ``. The replacement also no longer touches digit-prefixed `.\d` runs in float literals: `{{val + 1.5}}` correctly evaluates to `11.5` instead of compile-throwing and rendering empty.
+- **`addAsync(path, loader)` skips its initial fetch when state already holds a settled `{data}` or `{error}` shape.** The common case is re-registering after `loadHistory` has replayed an earlier fetch — the old behavior double-fetched. The runner is still registered, so `refresh(path)` continues to force a fresh fetch on demand.
+- **`data-ref` cleanup only clears the slot if it still owns it.** Two elements sharing a name (last bind wins on read) no longer wipe each other's entry when one is destroyed.
+- **`data-each` keyed mode warns on duplicate keys** instead of silently merging clones into the first row — surfaces the bug at bind time rather than as confusing reorder behavior later.
+- **`attempt()` handle is single-shot** — a second `commit()`/`discard()` is a no-op. Guards a defensive `commit()` in a `finally{}` after `discard()`, which previously appended an orphan checkpoint past the replay point.
+
 ### Removed
 
 - **`rewriteScope`** (~150 B) is gone — proper scope replaces the whole-word text-substitution mechanism.

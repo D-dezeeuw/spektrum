@@ -92,6 +92,22 @@ For `data-action`'s `data-value`, the value is read **once at bind time** and is
 defineFn('inc', (el, state) => setValue('count', state.count + 1));
 ```
 
+### Comparison operators in text-node mustaches
+
+HTML parsers split text content at bare `<` and `>` characters. A mustache like `{{count > 0 ? 'yes' : 'no'}}` in a text node can be broken into two text nodes by the parser, leaving neither with a complete `{{…}}` for the engine to bind. The behavior is environment-dependent — happy-dom always splits; modern browsers are more permissive but the boundary isn't guaranteed.
+
+Two safe forms:
+
+```html
+<!-- HTML entities in the template source -->
+<span>{{count &gt; 0 ? 'yes' : 'no'}}</span>
+
+<!-- Move the comparison into :attr / :class — attribute values are a single string and never split -->
+<span :class="count > 0 ? 'pos' : 'neg'">{{count}}</span>
+```
+
+The engine itself has no opinion here — this is parser behavior, not a Spektrum constraint.
+
 ### Handler `state` argument
 
 The `state` arg passed to a `defineFn` handler differs by action type:

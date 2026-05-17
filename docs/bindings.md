@@ -9,9 +9,9 @@ Spektrum's HTML directives. Author them in markup; the engine wires them up at `
 | `{{expression}}` in a text node | Interpolated text, auto-escaped. Full JS expression: `{{count + 1}}`, `{{user.name.toUpperCase()}}`. |
 | `:attr="expression"` on any element | Property write. Object form on `:class` toggles named classes: `:class="{active: x, error: y}"`. |
 | `data-if="expression"` | Show element when truthy, `display: none` when falsy. Children stay bound. |
-| `data-each="path" data-as="name"` | Render the array at `path`, cloning a template per item. Two forms: container (`<ul data-each>…<li>` — directive on parent, first child is template) and `<template>` (directive on a `<template>` element; clones go into its parent before the `<template>` anchor — required inside `<table>` / `<select>`). The path-rewriter is whole-word string replace — rewrites both code positions and string literals (see [trade-offs](trade-offs.md#rewritescope-rewrites-string-literals-too)). |
-| `data-each ... data-key="expr"` | Keyed reconciliation. Items at the same key + index keep their DOM, listeners, focus, and selection. Without a key, the list rebuilds on each change (legacy behavior). |
-| `data-each ... data-key="expr" data-stable-key` | Reuse the *same* clone across reorder. Skips path rewriting on the cloned subtree, so reorder is genuinely free of UX cost (focus, scroll, input value, selection survive moves). Author opts in by promising the row's bindings don't reference `varName.*` paths — the engine warns at bind time if they do (see [trade-offs](trade-offs.md#data-each-re-clones-moved-items-default-keyed-mode)). |
+| `data-each="path" data-as="name"` | Render the array at `path`, cloning a template per item. Two forms: container (`<ul data-each>…<li>` — directive on parent, first child is template) and `<template>` (directive on a `<template>` element; clones go into its parent before the `<template>` anchor — required inside `<table>` / `<select>`). The loop variable `name` (default `item`) is a lexical scope binding — not a text substitution — so it can't collide with state or other identifiers. |
+| `data-each ... data-key="expr"` | Keyed reconciliation. Items keyed identically keep their DOM, listeners, focus, and uncommitted input state across reorder (the same clone is reused; bindings re-subscribe to the new index). Without a key, the no-key path appends/pops the tail and rebuilds on interior changes. |
+| Scope variables inside `data-each` | The loop variable (`item` or whatever `data-as` declares), plus `$index`, `$first`, `$last`, `$path`. `$path` is the row's full state path as a string (useful for `data-id="{{$path}}.completed"`). `data-stable-key` is accepted as a no-op for back-compat — every keyed row reuses across reorder by default. |
 | `data-model="path"` | Two-way binding for `<input>` / `<select>` / checkboxes. State → element via `:value`/`:checked`, element → state on `input`/`change` event. |
 | `data-model="path.<modifiers>"` | Trailing dot-separated modifiers, chainable (Vue-style). `.lazy` commits on `change` instead of `input`; `.number` coerces via `parseFloat` (NaN → original string); `.trim` trims whitespace before write. Example: `data-model="query.trim.lazy"`. The names are reserved suffixes — see footnote below. |
 | `data-ref="name"` | Expose the element on `instance.refs.name` for imperative access (`spektrum.refs.email.focus()`). |
@@ -53,7 +53,7 @@ Use this form when:
 - **You need zero pre-bind flicker.** The browser never renders `<template>` content, so the template row is invisible until `bindDOM()` runs. (`data-cloak` is not needed.)
 - **You want spec-aligned markup.** `<template>` is HTML5's defined element for "markup-as-data" — accessibility tools, linters, and screen readers already know to skip its contents.
 
-Both forms support the same modes (`data-key`, `data-as`, `data-stable-key`) and reconciliation behavior. Mixing forms in the same root is fine.
+Both forms support the same modes (`data-key`, `data-as`) and reconciliation behavior. Mixing forms in the same root is fine.
 
 `data-each` takes a **dotted path**, not an expression — unlike `data-if` and `:attr`, which evaluate full JS. For derived arrays, build a `computed` and bind that:
 
@@ -70,9 +70,9 @@ If the path resolves to a non-array value (other than `undefined`, which is norm
 
 ### `data-as` naming
 
-`data-as` is substituted into the cloned subtree by **whole-word string replace** (see [trade-offs](trade-offs.md#rewritescope-rewrites-string-literals-too)). Short or common names will rewrite unrelated text and attribute values. The engine warns at bind time for names ≤2 characters, common identifiers (`index`, `key`, `value`, `name`, `el`, `fn`, `id`, `data`), and names that collide with top-level state keys.
+`data-as` declares a real lexical scope binding inside the iteration — `with (state) with (scope)` puts it on the inner with-block, so it shadows same-named state keys for the duration of the row's bindings. Pick any name that reads well (`row`, `chip`, `node`, `user`, `t`). No length, character, or collision restrictions; the scope is per-iteration only and never touches outer state.
 
-Recommended: longer, distinctive names (`row`, `chip`, `node`) or a leading-underscore convention for short ones (`_t`, `_n` — the boundary doesn't match `_`).
+`$index`, `$first`, `$last`, `$path` are reserved scope variables and shouldn't be used as `data-as` names.
 
 ### `{{…}}` is text-node only
 

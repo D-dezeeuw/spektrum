@@ -30,14 +30,25 @@
   inside <table> / <select> / <thead> (where the HTML parser would
   otherwise re-parent a container-form child). Adds ~275 B raw /
   ~30 B gz for the host/anchor split and unified live-clone tracking;
-  bumps the cap to 12.5 kB raw / 5.625 kB gz. The 1.3 trim pass (this
-  one) is the first cap *reduction* since 0.5.1: routeErr extraction
-  shares the error-routing pattern between runSystem and callFn,
-  bindAction/bindEach hoist el.dataset to a local, and bindAction's
+  bumps the cap to 12.5 kB raw / 5.625 kB gz. The 1.3 trim pass is the
+  first cap *reduction* since 0.5.1: routeErr extraction shares the
+  error-routing pattern between runSystem and callFn, bindAction/
+  bindEach hoist el.dataset to a local, and bindAction's
   removeEventListener (used twice — `.once` self-removal + cleanup
   return) collapses into a single `rm` arrow. Net −108 B raw / −1 B
-  gz (gzip already deduped the "[spektrum] " prefix). Cap drops to
-  12.25 kB raw / 5.5625 kB gz. Adjust caps deliberately — every bump
+  gz; cap dropped to 12.25 kB raw / 5.5625 kB gz. The 1.4 data-each
+  refactor replaces rewriteScope with proper per-iteration scope
+  (with(state) with(scope), SCOPE_PATHS Symbol for path translation,
+  EACH_HOST marker on the data-each container so outer walks skip
+  clone subtrees, textTemplates WeakMap so re-bind reads the original
+  template not its rendered result, `active` flag on systems so mid-
+  tick teardown is honored). Keyed reorder now ALWAYS reuses the
+  clone — data-stable-key becomes a no-op for back-compat. Adds
+  $path / $index / $first / $last as scope variables; removes the
+  data-as short-name + shadow warnings and the data-stable-key
+  prerequisite warn. Cap raised to 12.5 kB raw / 5.75 kB gz to
+  absorb the +289 B net (new scope plumbing minus rewriteScope and
+  the dropped warnings). Adjust caps deliberately — every bump
   invites complacency. Trim before raising.
 */
 
@@ -50,7 +61,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 12544, gz: 5696 },
+  { file: 'spektrum.min.js',          raw: 12800, gz: 5888 },
   { file: 'companions/spektrum-persist.min.js',  raw:  1024, gz:  576 },
   // 1.2 dock integration adds ~120 B for the [data-spektrum-dock]
   // detection branch + dockPanel.detach() in unmount. Standalone

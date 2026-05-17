@@ -915,6 +915,146 @@ test('<template data-each> with empty content warns (same as container form)', (
     `expected element-child warn; got: ${warns.join(' | ')}`);
 });
 
+// === Per-iteration scope vars ($path, $index, $first, $last) ===
+
+test('$index renders the row index and updates on reorder', () => {
+  document.body.innerHTML = `
+    <ul data-each="rows" data-key="row.id" data-as="row">
+      <li>{{$index}}-{{row.id}}</li>
+    </ul>`;
+  setValue('rows', [{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+  bindDOM(document.body);
+  tick();
+  let lis = [...document.body.querySelectorAll('li')];
+  assert.deepEqual(lis.map(l => l.textContent), ['0-a', '1-b', '2-c']);
+
+  // Reverse — keyed clones reused; $index re-renders via re-bind.
+  setValue('rows', [{ id: 'c' }, { id: 'b' }, { id: 'a' }]);
+  tick();
+  lis = [...document.body.querySelectorAll('li')];
+  assert.deepEqual(lis.map(l => l.textContent), ['0-c', '1-b', '2-a']);
+});
+
+test('$first / $last flip on the appropriate row', () => {
+  document.body.innerHTML = `
+    <ul data-each="rows" data-key="row.id" data-as="row">
+      <li>{{row.id}}:{{$first}}/{{$last}}</li>
+    </ul>`;
+  setValue('rows', [{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+  bindDOM(document.body);
+  tick();
+  const lis = [...document.body.querySelectorAll('li')];
+  assert.equal(lis[0].textContent, 'a:true/false');
+  assert.equal(lis[1].textContent, 'b:false/false');
+  assert.equal(lis[2].textContent, 'c:false/true');
+});
+
+test('$path is the row\'s full state path', () => {
+  document.body.innerHTML = `
+    <ul data-each="rows" data-key="row.id" data-as="row">
+      <li>{{$path}}</li>
+    </ul>`;
+  setValue('rows', [{ id: 'a' }, { id: 'b' }]);
+  bindDOM(document.body);
+  tick();
+  const lis = [...document.body.querySelectorAll('li')];
+  assert.equal(lis[0].textContent, 'rows.0');
+  assert.equal(lis[1].textContent, 'rows.1');
+});
+
+test('keyed reorder reuses the same <input> element (focus / value survive)', () => {
+  // The headline win of proper scope: a moved row keeps its DOM node,
+  // so an input mid-edit doesn't get torn down. Previously this
+  // required opting into data-stable-key + accepting stale paths.
+  document.body.innerHTML = `
+    <ul data-each="rows" data-key="row.id" data-as="row">
+      <li><input data-model="row.note"></li>
+    </ul>`;
+  setValue('rows', [{ id: 'a', note: '' }, { id: 'b', note: '' }]);
+  bindDOM(document.body);
+  tick();
+
+  const inputA = document.body.querySelector('li:nth-child(1) input');
+  inputA.value = 'typing';
+  inputA.dispatchEvent(new Event('input'));
+  tick();
+
+  // Reorder: row 'a' moves to position 1.
+  setValue('rows', [appState.rows[1], appState.rows[0]]);
+  tick();
+
+  const lisAfter = [...document.body.querySelectorAll('li')];
+  const inputsAfter = lisAfter.map(li => li.querySelector('input'));
+  // The same DOM node that held row 'a' is now at index 1; its value
+  // survives the reorder, and its model write now targets rows.1.note.
+  assert.strictEqual(inputsAfter[1], inputA, 'same input element reused');
+  assert.equal(inputA.value, 'typing');
+  assert.equal(appState.rows[1].id, 'a');
+  assert.equal(appState.rows[1].note, 'typing');
+});
+
+test('data-as="user" no longer collides with state.user (proper lexical scope)', () => {
+  // Pre-scope, the loop variable was a whole-word text substitution, so
+  // an outer state key with the same name caused rewrites. Now `with(scope)`
+  // is on top of `with(state)` — inner shadow wins, outer state untouched.
+  setValue('user', { id: 999, name: 'outer' });
+  setValue('rows', [{ id: 1, name: 'inner-1' }, { id: 2, name: 'inner-2' }]);
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="user" data-key="user.id">
+      <li>{{user.name}}</li>
+    </ul>`;
+  bindDOM(document.body);
+  tick();
+  const lis = [...document.body.querySelectorAll('li')];
+  assert.deepEqual(lis.map(l => l.textContent), ['inner-1', 'inner-2']);
+  // Outer state.user untouched (no rewriteScope clobbering).
+  assert.equal(appState.user.id, 999);
+  assert.equal(appState.user.name, 'outer');
+});
+
+test('nested data-each: inner row sees outer scope variables', () => {
+  document.body.innerHTML = `
+    <ul data-each="groups" data-as="group" data-key="group.id">
+      <li>
+        <h3>{{group.title}}</h3>
+        <ul data-each="group.items" data-as="item" data-key="item.id">
+          <li>{{group.title}}-{{item.label}}</li>
+        </ul>
+      </li>
+    </ul>`;
+  setValue('groups', [
+    { id: 1, title: 'Fruit',  items: [{ id: 11, label: 'apple' }, { id: 12, label: 'banana' }] },
+    { id: 2, title: 'Veggie', items: [{ id: 21, label: 'carrot' }] },
+  ]);
+  bindDOM(document.body);
+  tick();
+
+  const inner = [...document.body.querySelectorAll('ul ul li')];
+  assert.deepEqual(inner.map(l => l.textContent),
+    ['Fruit-apple', 'Fruit-banana', 'Veggie-carrot']);
+});
+
+test('data-fn="trigger" inside data-each resolves data-id through scope', () => {
+  // data-id="row.count" + scope { row: 'rows.0' } → trigger writes to rows.0.count.
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-key="row.id">
+      <li>
+        <span>{{row.count}}</span>
+        <button data-action="click" data-fn="trigger" data-id="row.count" data-value="1" data-name="inc"></button>
+      </li>
+    </ul>`;
+  setValue('rows', [{ id: 'a', count: 0 }, { id: 'b', count: 0 }]);
+  bindDOM(document.body);
+  tick();
+
+  const btns = document.body.querySelectorAll('button');
+  btns[1].dispatchEvent(new Event('click'));
+  tick();
+  assert.equal(appState.rows[1].count, 1, 'click on second row increments rows.1.count, not state.row.count');
+  assert.equal(appState.rows[0].count, 0);
+  assert.ok(!('row' in appState), 'no phantom state.row created by unresolved path');
+});
+
 // === Event modifiers ===
 
 test('data-action="click.prevent" calls preventDefault', () => {
@@ -1529,35 +1669,11 @@ test('data-each stays silent when path is undefined (normal pre-population)', ()
   assert.equal(warns.length, 0, `expected no warns; got: ${warns.join(' | ')}`);
 });
 
-test('data-as warns on short or common variable names', () => {
-  // 'item' is the silent default — anything shorter/common rewrites
-  // \\b<name>\\b across template text/attrs (rewriteScope footgun).
-  document.body.innerHTML = `<ul data-each="rows" data-as="t"><li>{{t.name}}</li></ul>`;
-  setValue('rows', [{ name: 'a' }]);
-  const warns = captureWarns(() => bindDOM(document.body));
-  assert.ok(warns.some(w => w.includes('data-as="t"') && w.includes('short/common')),
-    `expected short-name warn; got: ${warns.join(' | ')}`);
-});
-
-test('data-as default ("item") does NOT warn', () => {
-  // The implicit default is silent — only explicit short/common names
-  // are flagged. 'item' is the documented, expected loop variable.
-  document.body.innerHTML = `<ul data-each="rows"><li>{{item.name}}</li></ul>`;
-  setValue('rows', [{ name: 'a' }]);
-  const warns = captureWarns(() => bindDOM(document.body));
-  assert.equal(warns.length, 0, `expected no warns for default; got: ${warns.join(' | ')}`);
-});
-
-test('data-as warns when the name shadows an existing state key', () => {
-  // Collision rewrites references to state.<name> inside the loop
-  // subtree — a particularly hard footgun to debug.
-  setValue('user', { id: 1 });
-  document.body.innerHTML = `<ul data-each="rows" data-as="user"><li>{{user.id}}</li></ul>`;
-  setValue('rows', [{ id: 1 }]);
-  const warns = captureWarns(() => { bindDOM(document.body); tick(); });
-  assert.ok(warns.some(w => w.includes('shadows state.user')),
-    `expected shadow warn; got: ${warns.join(' | ')}`);
-});
+// data-as short-name / shadow warnings were retired with rewriteScope:
+// with proper per-iteration scope, the loop variable is a lexically
+// scoped value, not a whole-word text replacement, so short or common
+// names no longer rewrite unrelated identifiers and shadowing a state
+// key is a normal `with` precedence (inner scope wins).
 
 // === async data-fn error routing (1.1 DX batch) ===
 
@@ -1649,23 +1765,10 @@ test('callFn fallback for cycle action without onError also reaches console.erro
 
 // === DX warnings, follow-up (F-A, F-B) ===
 
-test('data-stable-key without data-key warns at bind time', () => {
-  // Stable-key only takes effect inside the keyed branch — without
-  // data-key it silently falls through to the default rebuild path.
-  document.body.innerHTML = `<ul data-each="rows" data-stable-key><li>{{item}}</li></ul>`;
-  setValue('rows', [{ id: 1 }]);
-  const warns = captureWarns(() => { bindDOM(document.body); tick(); });
-  assert.ok(warns.some(w => w.includes('data-stable-key') && w.includes('needs data-key')),
-    `expected stable-key warn; got: ${warns.join(' | ')}`);
-});
-
-test('data-stable-key with data-key does NOT warn', () => {
-  // The valid combination is silent.
-  document.body.innerHTML = `<ul data-each="rows" data-key="item.id" data-stable-key><li>{{item.id}}</li></ul>`;
-  setValue('rows', [{ id: 1 }]);
-  const warns = captureWarns(() => { bindDOM(document.body); tick(); });
-  assert.equal(warns.length, 0, `expected no warns; got: ${warns.join(' | ')}`);
-});
+// data-stable-key prerequisite warning was retired: the keyed branch
+// now always reuses clones across reorder (path bindings re-subscribe
+// to the new index via scope), so data-stable-key has nothing left to
+// opt into. The attribute is accepted silently for back-compat.
 
 test('data-action="cycle" without data-id warns and does not crash', () => {
   // Pre-guard: addSystem([undefined]) threw `Cannot read properties of

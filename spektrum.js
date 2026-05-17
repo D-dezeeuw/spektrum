@@ -138,6 +138,19 @@ const cacheSet = (k, v) => {
   evalCache.set(k, v);
 };
 
+// Scope object carries per-iteration values (item, index, $path, …)
+// passed through the binders by bindEach. Path translation for
+// subscription extraction lives on a Symbol-keyed slot so user
+// expressions can't see or shadow it through `with`.
+const SCOPE_PATHS = Symbol();
+// Marker stamped on a data-each host (container element in container
+// form, parent element in <template> form). bindDOM's element + text
+// walks skip elements whose closest marked ancestor strictly between
+// them and the current root has this stamp — that way the outer walk
+// doesn't re-enter clones owned by an inner bindEach, while the inner
+// bindDOM call on the clone itself still binds its own subtree.
+const EACH_HOST = Symbol();
+
 const evalExpr = (expr) => {
   let fn = evalCache.get(expr);
   if (fn) return fn;
@@ -146,8 +159,12 @@ const evalExpr = (expr) => {
     // notation so JS can parse. Inner try/catch so paths not yet in
     // state render as undefined instead of throwing.
     const normalized = expr.replace(/([a-zA-Z_$][\w$]*)\.(\d+)/g, '$1[$2]');
-    const compiled = new Function('state', `with (state) { return (${normalized}); }`);
-    fn = (state) => { try { return compiled(state); } catch { return undefined; } };
+    // `with (state) with (scope||{})` — scope is the INNER with so its
+    // identifiers shadow state on collision (e.g. data-as="user" inside
+    // a loop where state.user also exists — the loop variable wins).
+    // `||{}` covers binders invoked outside a data-each (no scope).
+    const compiled = new Function('state', 'scope', `with (state) with (scope||{}) { return (${normalized}); }`);
+    fn = (state, scope) => { try { return compiled(state, scope); } catch { return undefined; } };
   } catch (err) {
     // Strict CSP without a precompiled entry, or malformed expression.
     warn('invalid expression: "' + expr + '" ' + err);
@@ -175,13 +192,29 @@ const RESERVED = /^(true|false|null|undefined|NaN|Infinity|Math|JSON|Date|Number
  *  before scanning so identifiers inside quotes (e.g. `kind === 'foo'`)
  *  don't leak into the path set as spurious subscriptions. The strip
  *  regex honours backslash escapes — `"foo \"bar\" baz"` collapses
- *  cleanly without leaking `bar` as a subscription path. */
-const extractPaths = (expr) => {
+ *  cleanly without leaking `bar` as a subscription path.
+ *
+ *  When called inside a data-each iteration, `scope` carries a path
+ *  map under `SCOPE_PATHS` mapping aliases (`item`) to state paths
+ *  (`users.3`). Identifiers whose head matches an alias are rewritten
+ *  to the state path; scope-only heads (numeric `index`, boolean
+ *  `$first`, etc.) carry no path and are skipped — bindEach drives
+ *  their re-renders explicitly on reorder. */
+const extractPaths = (expr, scope) => {
   const paths = new Set();
+  const map = scope?.[SCOPE_PATHS];
   const stripped = expr.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`/g, '""');
   for (const m of stripped.matchAll(IDENT)) {
     const id = m[1];
-    if (RESERVED.test(id.split('.')[0])) continue;
+    const head = id.split('.')[0];
+    if (RESERVED.test(head)) continue;
+    if (scope && head in scope) {
+      // Aliased to a state path → translate. Scope-only value (no
+      // path) → no subscription; bindEach owns the re-render.
+      const aliased = map?.[head];
+      if (aliased) paths.add(aliased + id.slice(head.length));
+      continue;
+    }
     paths.add(id);
   }
   return [...paths];
@@ -405,11 +438,17 @@ export const createSpektrum = (opts = {}) => {
 
   /** Subscribe `fn` to one or more paths. Returns an unsubscribe.
    *  topKeys is precomputed so tick() can pre-filter systems whose
-   *  subscriptions don't intersect the delta's top-level keys. */
+   *  subscriptions don't intersect the delta's top-level keys. The
+   *  `active` flag lets tick() skip systems that were unsubscribed
+   *  mid-tick — bindEach's reorder path tears down and re-binds a
+   *  clone's systems while a `toRun` snapshot is already in flight,
+   *  and without this guard the stale systems would write old paths
+   *  back over the freshly-bound element. */
   const addSystem = (paths, fn) => {
-    const entry = { paths, fn, topKeys: paths.map(p => p.split('.')[0]) };
+    const entry = { paths, fn, topKeys: paths.map(p => p.split('.')[0]), active: true };
     systems.push(entry);
     return () => {
+      entry.active = false;
       const i = systems.indexOf(entry);
       ~i && systems.splice(i, 1);
     };
@@ -488,7 +527,7 @@ export const createSpektrum = (opts = {}) => {
       );
       deepMerge(appState, appStateDelta);
       clearObject(appStateDelta);
-      for (const sys of toRun) runSystem(sys);
+      for (const sys of toRun) if (sys.active) runSystem(sys);
     }
   };
 
@@ -557,37 +596,65 @@ export const createSpektrum = (opts = {}) => {
   // Each returns an unsubscribe (or undefined). bindDOM collects them
   // and returns a destroy function for the whole tree.
 
+  /** Translate a state path through the iteration scope. `item.count`
+   *  with scope `{ item: 'users.3' }` becomes `users.3.count`. Used by
+   *  bindModel (model writes target real state) and the built-in
+   *  trigger/setValue/setText/setStyle handlers so authors can write
+   *  `data-id="item.count"` and have it resolve to the row's path. */
+  const resolvePath = (path, scope) => {
+    const map = scope?.[SCOPE_PATHS];
+    if (!map) return path;
+    const head = path.split('.')[0];
+    const aliased = map[head];
+    return aliased ? aliased + path.slice(head.length) : path;
+  };
+
   /** Register a system + fire one initial render against a snapshot of
    *  appState ⊕ appStateDelta, so bindings see post-first-tick values
-   *  immediately (no flicker between bind time and the first tick). */
-  const bindReactive = (paths, render) => {
-    const unsub = addSystem(paths, render);
-    render(stateSnapshot(), appStateDelta);
+   *  immediately (no flicker between bind time and the first tick).
+   *  `scope` (when present) is passed to render so expressions can
+   *  read iteration variables (`item`, `index`, `$path`, …). */
+  const bindReactive = (paths, render, scope) => {
+    const wrapped = scope
+      ? (state, delta) => render(state, delta, scope)
+      : render;
+    const unsub = addSystem(paths, wrapped);
+    wrapped(stateSnapshot(), appStateDelta);
     return unsub;
   };
 
   /** {{expression}} in a text node. Each placeholder is JS evaluated
    *  against state; bare paths are the simplest case. Re-runs when any
-   *  referenced path appears in the delta. */
-  const bindText = (node) => {
-    const template = node.textContent;
+   *  referenced path appears in the delta.
+   *
+   *  Remembers the original template on the node — first render rewrites
+   *  textContent to the result, so without this a re-bind (data-each
+   *  reorder) would read the prior result as the new template and bail.
+   *  WeakMap keyed by the text node, scoped to this instance. */
+  const textTemplates = new WeakMap();
+  const bindText = (node, scope) => {
+    let template = textTemplates.get(node);
+    if (template === undefined) {
+      template = node.textContent;
+      textTemplates.set(node, template);
+    }
     if (!template.includes('{{')) return;
     const paths = new Set();
     for (const m of template.matchAll(MUSTACHE)) {
-      for (const p of extractPaths(m[1].trim())) paths.add(p);
+      for (const p of extractPaths(m[1].trim(), scope)) paths.add(p);
     }
-    return bindReactive([...paths], (state) => {
+    return bindReactive([...paths], (state, _delta, sc) => {
       node.textContent = template.replace(MUSTACHE, (_, e) => {
-        const v = evalExpr(e.trim())(state);
+        const v = evalExpr(e.trim())(state, sc);
         return v == null ? '' : String(v);
       });
-    });
+    }, scope);
   };
 
   /** :attr="expression". Property write (not setAttribute). `:class` /
    *  `:className` route through applyClass(). URL-bearing attributes
    *  rewrite javascript:-scheme strings to '#'. */
-  const bindAttrs = (el) => {
+  const bindAttrs = (el, scope) => {
     const unsubs = [];
     for (const a of [...el.attributes]) {
       if (a.name[0] !== ':') continue;
@@ -595,24 +662,24 @@ export const createSpektrum = (opts = {}) => {
       if (!expr) continue;
       const isClass = prop === 'class' || prop === 'className';
       const isUrl = /^(href|src|action|formaction|background|cite|poster|data)$/.test(prop);
-      unsubs.push(bindReactive(extractPaths(expr), (state) => {
-        let v = evalExpr(expr)(state);
+      unsubs.push(bindReactive(extractPaths(expr, scope), (state, _delta, sc) => {
+        let v = evalExpr(expr)(state, sc);
         if (isClass) return applyClass(el, v);
         if (isUrl && typeof v === 'string' && JS_SCHEME.test(v)) v = '#';
         el[prop] = v;
-      }));
+      }, scope));
     }
     return unsubs.length && (() => callAll(unsubs));
   };
 
   /** data-if="expression". Truthy → shown; falsy → display: none.
    *  Children stay bound (Vue v-show semantics, not v-if). */
-  const bindIf = (el) => {
+  const bindIf = (el, scope) => {
     const expr = el.dataset.if;
     if (!expr) return;
-    return bindReactive(extractPaths(expr), (state) => {
-      el.style.display = evalExpr(expr)(state) ? '' : 'none';
-    });
+    return bindReactive(extractPaths(expr, scope), (state, _delta, sc) => {
+      el.style.display = evalExpr(expr)(state, sc) ? '' : 'none';
+    }, scope);
   };
 
   /** data-model="path" — two-way input binding. Detects checkboxes
@@ -626,8 +693,11 @@ export const createSpektrum = (opts = {}) => {
    *  Chainable: `data-model="query.trim.lazy"`. The modifier names are
    *  reserved suffixes — if your state has a leaf literally named
    *  `lazy`/`number`/`trim`, route through `data-action="input"` +
-   *  `setValue` directly. */
-  const bindModel = (el) => {
+   *  `setValue` directly.
+   *
+   *  Inside a data-each, the path is resolved through scope so
+   *  `data-model="item.value"` writes to the row's actual state path. */
+  const bindModel = (el, scope) => {
     const raw = el.dataset.model;
     if (!raw) return;
     const parts = raw.split('.');
@@ -635,7 +705,7 @@ export const createSpektrum = (opts = {}) => {
     while (/^(lazy|number|trim)$/.test(parts.at(-1))) {
       mods.add(parts.pop());
     }
-    const path = parts.join('.');
+    const path = resolvePath(parts.join('.'), scope);
     if (!path) return;
     const isCheckbox = el.type === 'checkbox';
     const eventName = (mods.has('lazy') || isCheckbox) ? 'change' : 'input';
@@ -703,15 +773,31 @@ export const createSpektrum = (opts = {}) => {
     return addSystem(deps, derive);
   };
 
-  /** Replace whole-word occurrences of `varName` with `prefix` in every
-   *  text node and attribute value under `root`. Used by bindEach to
-   *  convert per-item template paths (`user.name` → `users.3.name`). */
-  const rewriteScope = (root, varName, prefix) => {
-    const re = new RegExp(`\\b${varName}\\b`, 'g');
-    const sub = (s) => s.includes(varName) ? s.replace(re, prefix) : s;
-    walkTextNodes(root, (n) => { n.textContent = sub(n.textContent); });
-    for (const el of [root, ...root.querySelectorAll('*')])
-      for (const a of [...el.attributes]) a.value = sub(a.value);
+  /** Construct the per-iteration scope object for a data-each clone.
+   *  Carries:
+   *   - the loop variable (`varName` → current item value), so
+   *     `with(scope)` resolves bare references at eval time.
+   *   - `index` / `$index` / `$first` / `$last` / `$path` — read-only
+   *     iteration metadata. Re-render is driven by bindEach explicitly
+   *     on reorder (these aren't state paths so they don't trigger the
+   *     normal subscription system).
+   *   - SCOPE_PATHS — symbol-keyed map from alias to state path
+   *     (`{item: 'users.3'}`). extractPaths reads this to translate
+   *     `item.name` into the subscription path `users.3.name`. The
+   *     symbol keeps it invisible to user expressions through `with`.
+   *  Outer scope (nested data-each) is merged so inner expressions
+   *  can read outer aliases. Inner aliases shadow on collision. */
+  const makeScope = (outer, varName, i, items, arrayPath) => {
+    const path = arrayPath + '.' + i;
+    const scope = outer ? { ...outer } : {};
+    scope[varName] = items[i];
+    scope.index = i;
+    scope.$index = i;
+    scope.$first = i === 0;
+    scope.$last = i === items.length - 1;
+    scope.$path = path;
+    scope[SCOPE_PATHS] = { ...(outer?.[SCOPE_PATHS] || {}), [varName]: path };
+    return scope;
   };
 
   /** data-each list rendering. Two authoring forms:
@@ -721,7 +807,7 @@ export const createSpektrum = (opts = {}) => {
    *      data-each is on the container; its first element child is the
    *      template. Clones replace the template inside the container.
    *
-   *    <template> form (additive, HTML5-spec-aligned):
+   *    <template> form (HTML5-spec-aligned):
    *      <table><thead>…</thead>
    *        <template data-each="rows"><tr><td>{{row.name}}</td></tr></template>
    *      </table>
@@ -732,20 +818,20 @@ export const createSpektrum = (opts = {}) => {
    *      re-parent a stray container-form child. No pre-bind flicker
    *      (the browser never renders <template> content).
    *
-   *  Three reconciliation modes (no-key / keyed / keyed + stable-key)
-   *  are documented in docs/bindings.md and docs/trade-offs.md. Per-
-   *  clone `contain: layout style` is set for perf isolation. */
-  const bindEach = (el) => {
+   *  Reconciliation modes (no-key vs keyed) are documented in
+   *  docs/bindings.md. Keyed mode now ALWAYS reuses the same DOM clone
+   *  across reorder; on index change the clone's bindings are torn
+   *  down and re-bound with a fresh scope (path subscriptions update
+   *  to point at the new index, focus/scroll/input state survive).
+   *  Per-clone `contain: layout style` is set for perf isolation.
+   *  `data-stable-key` is accepted as a no-op for back-compat with
+   *  pre-scope authoring; reuse-on-reorder is now the default. */
+  const bindEach = (el, outerScope) => {
     const ds = el.dataset;
-    const arrayPath = ds.each;
+    const arrayPath = resolvePath(ds.each, outerScope);
     if (!arrayPath) return;
     const varName = ds.as || 'item';
     const keyExpr = ds.key;
-    const stableKey = el.hasAttribute('data-stable-key');
-    // data-stable-key is a no-op without data-key — its whole purpose is
-    // to opt into a path within the keyed branch. Author probably wants
-    // the reorder-free behavior; surface the missing prerequisite.
-    if (stableKey && !keyExpr) warn(`data-stable-key on "${arrayPath}" needs data-key`);
     // <template> form: clones live in el.parentElement, anchored before
     // el. Container form: clones live inside el. The host/anchor pair
     // lets the rest of the function stay form-agnostic.
@@ -762,24 +848,19 @@ export const createSpektrum = (opts = {}) => {
       warn(`data-each="${arrayPath}" needs an element child to clone`);
       return;
     }
-    // data-as substitution is whole-word string replace (rewriteScope);
-    // short or common names will rewrite unrelated text/attributes in
-    // the template subtree. 'item' is the silent default; flag the rest.
-    if (varName !== 'item' && (varName.length <= 2 || /^(index|key|value|name|el|fn|id|data)$/.test(varName))) {
-      warn(`data-as="${varName}" is short/common — rewrites \\b${varName}\\b across template text/attrs`);
-    }
-    // Check the delta too — bindDOM commonly runs before the first
-    // tick, so setValue('user', …) before bind leaves the key in
-    // appStateDelta only. A merged check catches both cases.
-    if (varName !== 'item' && (varName in appState || varName in appStateDelta)) {
-      warn(`data-as="${varName}" shadows state.${varName}`);
-    }
     const template = templateChild.cloneNode(true);
     // Container form: detach the inline template so it doesn't render
     // alongside clones. Template form: <template>.content is non-rendered
     // — nothing to detach, and el stays in the parent as a positional
     // anchor for clone insertion.
     if (!isTpl) templateChild.remove();
+
+    // Mark the host so bindDOM's outer walks skip clone descendants
+    // (they're bound by the per-clone bindDOM call below, not by the
+    // enclosing scan). Inner walks pass scope; their own root is the
+    // clone, so the marker on the host outside the clone doesn't
+    // false-positive on the clone's own children.
+    host[EACH_HOST] = true;
 
     // `insertAt(clone, ref)` inserts within our region: container form
     // appends/inserts inside host; template form inserts before the
@@ -799,11 +880,11 @@ export const createSpektrum = (opts = {}) => {
       if (oi >= 0) live.splice(oi, 1);
     };
 
-    const buildClone = (i) => {
+    const buildClone = (i, items) => {
       const clone = template.cloneNode(true);
       if (clone.style && !clone.style.contain) clone.style.contain = 'layout style';
-      if (!stableKey) rewriteScope(clone, varName, arrayPath + '.' + i);
-      return { clone, cleanup: bindDOM(clone) };
+      const scope = makeScope(outerScope, varName, i, items, arrayPath);
+      return { clone, cleanup: bindDOM(clone, scope) };
     };
 
     const wipeAll = () => {
@@ -820,9 +901,9 @@ export const createSpektrum = (opts = {}) => {
     // interior change still rebuilds. Shared prefix is the 90% case
     // (chat logs, append-only feeds).
     let prev = [];
-    const appendFrom = (from, to) => {
+    const appendFrom = (from, to, items) => {
       for (let i = from; i < to; i++) {
-        const c = buildClone(i);
+        const c = buildClone(i, items);
         cleanups.push(c.cleanup);
         live.push(c.clone);
         insertAt(c.clone, null);
@@ -844,7 +925,7 @@ export const createSpektrum = (opts = {}) => {
         const oldN = prev.length, newN = items.length;
         let pre = 0;
         while (pre < oldN && pre < newN && prev[pre] === items[pre]) pre++;
-        if (pre === oldN && newN > oldN) appendFrom(oldN, newN);
+        if (pre === oldN && newN > oldN) appendFrom(oldN, newN, items);
         else if (pre === newN && newN < oldN) {
           while (cleanups.length > newN) {
             cleanups.pop()();
@@ -852,7 +933,7 @@ export const createSpektrum = (opts = {}) => {
           }
         } else {
           wipeAll();
-          appendFrom(0, newN);
+          appendFrom(0, newN, items);
         }
         prev = items.slice();
         return;
@@ -861,26 +942,24 @@ export const createSpektrum = (opts = {}) => {
       // Keyed path. Evaluate the key expression with the item bound
       // under `varName` so authors can write data-key="item.id".
       const keyFn = evalExpr(keyExpr);
-      const newKeys = items.map(item => keyFn({ [varName]: item }));
+      const newKeys = items.map(item => keyFn(state, { [varName]: item }));
       const seen = new Set();
 
       for (let i = 0; i < items.length; i++) {
         const key = newKeys[i];
         seen.add(key);
         let entry = cache.get(key);
-        // Default keyed mode bakes paths at clone time, so a moved
-        // index needs a fresh clone. data-stable-key promises the
-        // bindings don't depend on the index — the same clone is
-        // reused. Unmoved items always pay zero.
-        if (entry && !stableKey && entry.index !== i) {
-          entry.cleanup();
-          entry.clone.remove();
-          liveDrop(entry.clone);
-          entry = null;
-        }
         if (!entry) {
-          entry = buildClone(i);
+          entry = buildClone(i, items);
           cache.set(key, entry);
+        } else if (entry.index !== i) {
+          // Same clone, new position: tear down old bindings (paths were
+          // baked to the old index) and re-bind with a scope pointed at
+          // the new index. DOM identity preserved, so focus/scroll/input
+          // state survives the move. This is what data-stable-key used
+          // to opt into; it's now the default.
+          entry.cleanup();
+          entry.cleanup = bindDOM(entry.clone, makeScope(outerScope, varName, i, items, arrayPath));
         }
         entry.index = i;
         if (live[i] !== entry.clone) {
@@ -903,8 +982,12 @@ export const createSpektrum = (opts = {}) => {
 
   /** data-action — `cycle` (subscription) or `event[.modifier]*`
    *  (DOM event listener). Extracted so bindDOM's main walk can
-   *  treat it like every other per-element binder. */
-  const bindAction = (el) => {
+   *  treat it like every other per-element binder.
+   *
+   *  Inside a data-each, scope is passed to callFn as the trailing
+   *  argument so built-ins (trigger, setValue, setText, setStyle) can
+   *  resolve `data-id="item.X"` to the row's actual state path. */
+  const bindAction = (el, scope) => {
     const ds = el.dataset;
     const action = ds.action;
     const fnName = ds.fn;
@@ -918,7 +1001,8 @@ export const createSpektrum = (opts = {}) => {
       // Cycle subscribes to data-id as a path — without it, addSystem
       // would throw deep in topKeys computation. Fail at the bind site.
       if (!ds.id) return warn(`data-action="cycle" needs data-id`);
-      return addSystem([ds.id], (state, delta) => callFn(fnName, handler, el, state, delta, value));
+      const idPath = resolvePath(ds.id, scope);
+      return addSystem([idPath], (state, delta) => callFn(fnName, handler, el, state, delta, value, undefined, scope));
     }
     // data-action="click.prevent.stop.once" — first segment is the
     // event name; rest are flags. Mirrors Vue's v-on modifiers.
@@ -938,7 +1022,7 @@ export const createSpektrum = (opts = {}) => {
       if (has('self') && ev.target !== el) return;
       if (has('prevent')) ev.preventDefault();
       if (has('stop')) ev.stopPropagation();
-      callFn(fnName, handler, el, appState, appStateDelta, value, ev);
+      callFn(fnName, handler, el, appState, appStateDelta, value, ev, scope);
       if (has('once')) rm();
     };
     const opts = { capture: has('capture'), passive: has('passive') };
@@ -962,35 +1046,61 @@ export const createSpektrum = (opts = {}) => {
    *      absent, so the cost of "ask every element" is just the
    *      hasAttribute check. data-cloak is stripped on the same pass.
    */
-  const bindDOM = (root) => {
+  const bindDOM = (root, scope) => {
     root = root || document;
-    if (boundRoots.has(root)) return () => {};
-    boundRoots.add(root);
+    // Idempotency keys on root identity. For data-each clones, scope is
+    // present and reorder re-binds the same clone with a new scope, so
+    // the WeakSet check would falsely short-circuit — skip it on scoped
+    // calls (bindEach's reorder path takes care of teardown explicitly).
+    if (!scope) {
+      if (boundRoots.has(root)) return () => {};
+      boundRoots.add(root);
+    }
     const unsubs = [];
     // Every cleanup goes into both the local list (for this destroy())
     // and the instance-level allCleanups (for reset()'s drain).
     const collect = (u) => { if (u) { unsubs.push(u); allCleanups.add(u); } };
 
+    // True when `n` lives under a data-each host strictly between it
+    // and the current walk root — i.e. owned by an inner bindEach,
+    // which will (or has already) bound its clone subtree on its own.
+    // Walking from parent (not n itself) so the host element itself
+    // still gets its own :attrs / data-if / data-cloak processed.
+    const ownedByEach = (n) => {
+      let p = n.parentNode;
+      while (p && p !== root) {
+        if (p[EACH_HOST]) return true;
+        p = p.parentNode;
+      }
+      return false;
+    };
+
     // contains() guard: skip data-each elements that were detached by
-    // an outer bindEach earlier in this same loop iteration.
+    // an outer bindEach earlier in this same loop iteration. Nested
+    // data-each: outer's scope passes through here so the inner binder
+    // can resolve its arrayPath through the outer's path map.
     for (const el of root.querySelectorAll('[data-each]')) {
-      if (!root.contains(el)) continue;
-      collect(bindEach(el));
+      if (!root.contains(el) || ownedByEach(el)) continue;
+      collect(bindEach(el, scope));
     }
 
-    walkTextNodes(root, (n) => collect(bindText(n)));
+    walkTextNodes(root, (n) => {
+      if (ownedByEach(n)) return;
+      collect(bindText(n, scope));
+    });
 
     // Single walk over every descendant. Replaces 5 separate
     // querySelectorAll calls (one per directive) plus the dedicated
     // data-cloak strip pass — same behavior, fewer tree traversals.
     for (const el of root.querySelectorAll('*')) {
-      collect(bindAttrs(el));
+      if (ownedByEach(el)) continue;
+      collect(bindAttrs(el, scope));
       const ds = el.dataset;
-      if (ds.if     !== undefined) collect(bindIf(el));
-      if (ds.model  !== undefined) collect(bindModel(el));
+      if (ds.if     !== undefined) collect(bindIf(el, scope));
+      if (ds.model  !== undefined) collect(bindModel(el, scope));
       if (ds.ref    !== undefined) collect(bindRef(el));
       if (ds.intent !== undefined) collect(bindIntent(el));
-      if (ds.action !== undefined) collect(bindAction(el));
+      if (ds.action !== undefined) collect(bindAction(el, scope));
       el.removeAttribute('data-cloak');
     }
     // root itself wasn't in the walk above (querySelectorAll excludes
@@ -1089,16 +1199,19 @@ export const createSpektrum = (opts = {}) => {
   const findByIntent = (name) => intents[name]?.slice() || [];
 
   // --- Built-in fns (registered per instance) ---
+  // Signature: (el, state, delta, value, event?, scope?). The trailing
+  // `scope` is set by bindAction inside a data-each so built-ins can
+  // resolve `data-id="item.X"` through the iteration's path map.
 
-  defineFn('trigger',  (el, _s, _d, v) => trigger (histId(el), el.dataset.id, fnVal(el, v)));
-  defineFn('setValue', (el, _s, _d, v) => setValue(el.dataset.id, fnVal(el, v), histId(el)));
+  defineFn('trigger',  (el, _s, _d, v, _e, sc) => trigger (histId(el), resolvePath(el.dataset.id, sc), fnVal(el, v)));
+  defineFn('setValue', (el, _s, _d, v, _e, sc) => setValue(resolvePath(el.dataset.id, sc), fnVal(el, v), histId(el)));
 
-  defineFn('setText', (el, state) => {
-    el.textContent = getPathObj(state, el.dataset.id);
+  defineFn('setText', (el, state, _d, _v, _e, sc) => {
+    el.textContent = getPathObj(state, resolvePath(el.dataset.id, sc));
   });
 
-  defineFn('setStyle', (el, state) => {
-    const v = getPathObj(state, el.dataset.id);
+  defineFn('setStyle', (el, state, _d, _v, _e, sc) => {
+    const v = getPathObj(state, resolvePath(el.dataset.id, sc));
     el.style[el.dataset.prop] = `${v}${el.dataset.suffix || ''}`;
   });
 

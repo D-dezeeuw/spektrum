@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`data-each` now uses proper per-iteration scope** instead of whole-word text substitution. The loop variable, `$index`, `$first`, `$last`, and `$path` are real lexical bindings carried on a scope object through `extractPaths`/`evalExpr` (subscription paths translated via a `SCOPE_PATHS` Symbol-keyed map; eval uses `with (state) with (scope)` so the loop variable shadows same-named state keys).
+- **Keyed reorder always reuses the same DOM node.** A moved row's bindings are torn down and re-bound with a scope pointing at the new index; the clone (and any `<input>` state, focus, scroll position inside it) survives the move. This was previously opt-in via `data-stable-key`; that attribute is now silently accepted as a no-op for back-compat.
+- **`data-fn="trigger" / "setValue" / "setText" / "setStyle"` resolve `data-id` through scope.** Writing `data-id="row.count"` inside a `data-each` now targets the row's actual state path (e.g. `rows.3.count`). Built-ins gain an optional trailing `scope` argument; custom `data-fn` handlers can opt in to the same translation via the same arg (`(el, state, delta, value, event?, scope?)`).
+- **`bindModel="item.note"` inside `data-each` resolves to the row's state path,** so two-way input bindings target the right item without manual path computation.
+
+### Added
+
+- **`$index`, `$first`, `$last`, `$path`** are first-class scope variables inside `data-each`. `$path` is the row's full state path as a string; the others are the index and its boundary flags.
+- **Nested `data-each`** sees outer scope variables (and aliases) without ceremony. The inner scope merges over the outer.
+
+### Removed
+
+- **`rewriteScope`** (~150 B) is gone — proper scope replaces the whole-word text-substitution mechanism.
+- **`data-as` short-name warning** (`data-as="t" rewrites \bt\b across template text/attrs`) is gone. With proper scope, the loop variable is lexically scoped and can't collide with unrelated identifiers in template text.
+- **`data-as` shadow warning** (`data-as="user" shadows state.user`) is gone. `with (state) with (scope)` makes the loop variable's shadow of a same-named state key well-defined and intentional, not a footgun.
+- **`data-stable-key needs data-key` warning** is gone. Keyed reorder always reuses now; the attribute is silently accepted for any HTML that still has it.
+
+### Internal
+
+- `EACH_HOST` Symbol stamped on the data-each host (container in container form, parent in `<template>` form) so `bindDOM`'s walks skip elements owned by an inner `bindEach`. The check is a manual ancestry walk that stops at the current walk root so inner calls still bind their own subtree.
+- `textTemplates` WeakMap remembers each text node's original template so a re-bind reads `{{…}}` and not the previously rendered result.
+- `addSystem` entries carry an `active: true` flag; unsub flips it to `false` and `tick()` skips inactive entries from the in-flight `toRun` snapshot. Without this, mid-tick teardown (bindEach reorder during a tick that already collected the old systems) would let stale systems write old paths back onto freshly re-bound elements.
+- Size: +289 B raw / +142 B gz net (12,455 → 12,744 raw, 5,661 → 5,803 gz). Cap raised to 12.5 kB raw / 5.75 kB gz. New scope plumbing minus deletions of `rewriteScope` and three dev warnings.
+
 ## [1.0.0] — 2026-05-10
 
 **The relabel.** Every blocker from the external 1.0-readiness review shipped in 0.5.0; the agent-native surface added in 0.6 went well beyond it. This release stamps the version that's been ready for months and packages it with a small ergonomic fix that's been overdue.

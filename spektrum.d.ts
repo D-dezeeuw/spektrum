@@ -117,6 +117,16 @@ export interface AttemptHandle<T = any> {
   discard(): void;
 }
 
+/**
+ * Per-iteration scope passed to handlers triggered inside a `data-each`.
+ * Carries the loop variable (named by `data-as`, defaulting to `item`),
+ * `index` / `$index` / `$first` / `$last` / `$path`, and any outer
+ * scope variables from a parent `data-each`. Pass it to `setValue`-style
+ * helpers via the engine's resolvers, or read it directly for custom
+ * routing decisions.
+ */
+export type IterationScope = Record<string, any>;
+
 export type BoundFn = (
   el: HTMLElement,
   state: State,
@@ -127,7 +137,14 @@ export type BoundFn = (
    * Available for `data-action="event[.modifier]*"` bindings;
    * `undefined` for `data-action="cycle"` (subscription-driven, no event).
    */
-  event?: Event
+  event?: Event,
+  /**
+   * The per-iteration scope, when the handler fires from inside a
+   * `data-each`. Built-in handlers (`trigger`, `setValue`, `setText`,
+   * `setStyle`) use this to resolve `data-id="row.count"` to the row's
+   * actual state path. `undefined` outside a `data-each`.
+   */
+  scope?: IterationScope
 ) => void;
 
 export interface SpektrumOptions {

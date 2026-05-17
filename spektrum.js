@@ -210,8 +210,10 @@ const extractPaths = (expr, scope) => {
     if (RESERVED.test(head)) continue;
     if (scope && head in scope) {
       // Aliased to a state path → translate. Scope-only value (no
-      // path) → no subscription; bindEach owns the re-render.
-      const aliased = map?.[head];
+      // path) → no subscription; bindEach owns the re-render. `map`
+      // is guaranteed an object here: every scope comes from makeScope
+      // and always carries SCOPE_PATHS; if scope is set, map is too.
+      const aliased = map[head];
       if (aliased) paths.add(aliased + id.slice(head.length));
       continue;
     }

@@ -935,6 +935,30 @@ test('$index renders the row index and updates on reorder', () => {
   assert.deepEqual(lis.map(l => l.textContent), ['0-c', '1-b', '2-a']);
 });
 
+test('templates that reference only scope-only vars subscribe to nothing', () => {
+  // {{$index}} alone has no state path — extractPaths returns []. The
+  // resulting system has empty `paths`, so the tick filter's `.some()`
+  // short-circuits to false and the system never fires after the
+  // initial render. Re-rendering on reorder is driven by bindEach's
+  // re-bind, not by the subscription system. This test pins that
+  // branch (s.paths empty + s.topKeys empty) under coverage.
+  document.body.innerHTML = `
+    <ul data-each="rows" data-key="row.id" data-as="row">
+      <li>{{$index}}</li>
+    </ul>`;
+  setValue('rows', [{ id: 'a' }, { id: 'b' }]);
+  bindDOM(document.body);
+  tick();
+  const lis = [...document.body.querySelectorAll('li')];
+  assert.deepEqual(lis.map(l => l.textContent), ['0', '1']);
+  // Mutating a row field shouldn't fire the scope-only-vars system —
+  // only the bindEach outer system, which sees identical keys/order
+  // and does nothing. The text node stays at its initial render.
+  setValue('rows.0.id', 'a-changed');
+  tick();
+  assert.equal(lis[0].textContent, '0');
+});
+
 test('$first / $last flip on the appropriate row', () => {
   document.body.innerHTML = `
     <ul data-each="rows" data-key="row.id" data-as="row">
@@ -1032,6 +1056,23 @@ test('nested data-each: inner row sees outer scope variables', () => {
   const inner = [...document.body.querySelectorAll('ul ul li')];
   assert.deepEqual(inner.map(l => l.textContent),
     ['Fruit-apple', 'Fruit-banana', 'Veggie-carrot']);
+});
+
+test('data-fn inside data-each leaves non-aliased paths untouched (outer-state)', () => {
+  // resolvePath's aliased=false branch: the data-id head isn't the row
+  // alias, so the path passes through verbatim and writes to outer state.
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-key="row.id">
+      <li><button data-action="click" data-fn="trigger" data-id="counter" data-value="1" data-name="bump"></button></li>
+    </ul>`;
+  setValue('counter', 0);
+  setValue('rows', [{ id: 'a' }, { id: 'b' }]);
+  bindDOM(document.body);
+  tick();
+  document.body.querySelector('button').dispatchEvent(new Event('click'));
+  tick();
+  assert.equal(appState.counter, 1, 'data-id="counter" writes to outer state, not rows.0.counter');
+  assert.equal(appState.rows[0].id, 'a', 'no phantom row mutation');
 });
 
 test('data-fn="trigger" inside data-each resolves data-id through scope', () => {

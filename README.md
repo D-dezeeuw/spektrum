@@ -91,6 +91,7 @@ The depth lives in [`docs/`](docs/). Single source of truth, plain Markdown.
 | --- | --- | --- | --- |
 | **SKYo** | Hourly weather, single page | [d-dezeeuw.github.io/hourly-weather](https://d-dezeeuw.github.io/hourly-weather/) | [github.com/D-dezeeuw/hourly-weather](https://github.com/D-dezeeuw/hourly-weather) |
 | **Devworld26 guide** | Conference schedule navigator | [d-dezeeuw.github.io/my-confs](https://d-dezeeuw.github.io/my-confs/) | [github.com/D-dezeeuw/my-confs](https://github.com/D-dezeeuw/my-confs) |
+| **Subgenre Playlists** | Spotify playlist builder with AI track suggestions, SSE-streamed search, nested subgenre/track state | — | [github.com/D-dezeeuw/spotify-subgenre-playlists](https://github.com/D-dezeeuw/spotify-subgenre-playlists) |
 | **Spektrum demo** | Counter + basket reference, two isolated instances, devtools, persist, inspect, agent | [d-dezeeuw.github.io/spektrum/example](https://d-dezeeuw.github.io/spektrum/example/) | [example/](example/) |
 
 Shipped something on Spektrum? Open a PR adding it here.

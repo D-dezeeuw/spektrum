@@ -401,4 +401,25 @@ test('attempt.start with the "add" op is also gated on protected paths', () => {
   assert.match(res.error, /protected: secret/);
 });
 
+test('attempt.start with guard set but no action matching runs the attempt normally', () => {
+  // Exercises the pre-check loop's fall-through: protectedPaths is
+  // active, every action is inspected, none match, and the attempt
+  // actually starts and mutates state. Also confirms `checkpoint` ops
+  // are intentionally not gated (they don't write a path).
+  const gt = gatedTools(['llm']);
+  const res = gatedBy(gt, 'spektrum.attempt.start').handler({
+    name: 'safe',
+    actions: [
+      { op: 'set', path: 'cart.x', value: 1 },
+      { op: 'add', id: 'inc', path: 'count', value: 5 },
+      { op: 'checkpoint', name: 'mid' },
+    ],
+  });
+  s.tick();
+  assert.equal(res.ok, true);
+  assert.equal(s.appState.cart.x, 1);
+  assert.equal(s.appState.count, 5);
+  assert.ok(s.checkpoints.some(c => c.id === 'mid'));
+});
+
 });

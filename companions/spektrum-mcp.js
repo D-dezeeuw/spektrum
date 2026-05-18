@@ -45,7 +45,22 @@
 
 const NO_INPUT = { type: 'object', properties: {}, additionalProperties: false };
 
-const ok = (data) => ({ ok: true, data });
+const ok  = (data)  => ({ ok: true,  data });
+const err = (error) => ({ ok: false, error });
+
+/** Build a path guard from `protectedPaths`. String entries match the
+ *  full dotted path OR a dot-segment prefix (so `'llm'` covers
+ *  `llm.apiKey`, `llm.provider`, etc., but not `llmFoo`). RegExp
+ *  entries are tested as-is. Returns null when no patterns supplied —
+ *  caller skips the gate. */
+const buildGuard = (patterns) => {
+  if (!patterns || !patterns.length) return null;
+  return (path) => patterns.some(p =>
+    typeof p === 'string'
+      ? path === p || path.startsWith(p + '.')
+      : p.test(path)
+  );
+};
 
 /**
  * Build the MCP tool catalog for a Spektrum instance.
@@ -53,10 +68,12 @@ const ok = (data) => ({ ok: true, data });
  * @param {object} spektrum - the engine instance to expose
  * @param {object} [opts]
  * @param {string} [opts.prefix='spektrum.'] - namespace prepended to every tool name
+ * @param {Array<string|RegExp>} [opts.protectedPaths] - paths that mutation tools (setValue, trigger, and the inline set/add ops inside attempt.start) refuse to write. String entries match exact path or dot-segment prefix; RegExp entries are tested as-is. Denied writes return `{ ok: false, error: 'protected: <path>' }` and the engine is never called. Reads, describe, explain, replay, etc. are unaffected. The in-page agent companion forwards its own `protectedPaths` opt here.
  * @returns {Array<{name: string, description: string, inputSchema: object, handler: (args: object) => any}>}
  */
 export const createTools = (spektrum, opts = {}) => {
   const prefix = opts.prefix ?? 'spektrum.';
+  const guard  = buildGuard(opts.protectedPaths);
   const t = (name, description, inputSchema, handler) => ({
     name: prefix + name, description, inputSchema, handler,
   });
@@ -98,7 +115,11 @@ export const createTools = (spektrum, opts = {}) => {
         required: ['path'],
         additionalProperties: false,
       },
-      ({ path, value, id }) => { spektrum.setValue(path, value, id); return ok({ cursor: spektrum.cursor }); }),
+      ({ path, value, id }) => {
+        if (guard && guard(path)) return err(`protected: ${path}`);
+        spektrum.setValue(path, value, id);
+        return ok({ cursor: spektrum.cursor });
+      }),
 
     t('trigger',
       'Record an additive numeric change at the given path.',
@@ -112,7 +133,11 @@ export const createTools = (spektrum, opts = {}) => {
         required: ['id', 'path', 'value'],
         additionalProperties: false,
       },
-      ({ id, path, value }) => { spektrum.trigger(id, path, value); return ok({ cursor: spektrum.cursor }); }),
+      ({ id, path, value }) => {
+        if (guard && guard(path)) return err(`protected: ${path}`);
+        spektrum.trigger(id, path, value);
+        return ok({ cursor: spektrum.cursor });
+      }),
 
     t('checkpoint',
       'Mark a tagged boundary in history. Pure marker — replay walks past it without state effect.',
@@ -154,6 +179,13 @@ export const createTools = (spektrum, opts = {}) => {
         additionalProperties: false,
       },
       ({ name, actions }) => {
+        if (guard) {
+          for (const a of actions) {
+            if ((a.op === 'set' || a.op === 'add') && guard(a.path)) {
+              return err(`protected: ${a.path}`);
+            }
+          }
+        }
         const handle = spektrum.attempt(name, () => {
           for (const a of actions) {
             if (a.op === 'set') spektrum.setValue(a.path, a.value, a.id);

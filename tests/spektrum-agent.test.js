@@ -970,3 +970,90 @@ test('compactJson falls back to String(v) when JSON.stringify throws', async () 
 });
 
 });
+
+// === protectedPaths (1.0.1) ===
+//
+// The MCP layer owns the actual gate; these tests verify the agent
+// companion forwards the option and augments the system prompt so the
+// model knows up-front. Full path-matching coverage lives in
+// spektrum-mcp.test.js.
+
+suite('protectedPaths', () => {
+
+test('omitting protectedPaths leaves the system prompt unchanged', async () => {
+  localStorage.setItem('spektrum:agent:apikey:anthropic', 'sk-ant-x');
+  const calls = stubFetch([anthropicText('ok')]);
+  const unmount = mount(s);
+  document.querySelector('[data-input]').value = 'hi';
+  document.querySelector('[data-send]').click();
+  await new Promise(r => setTimeout(r, 5));
+  const body = JSON.parse(calls[0].init.body);
+  assert.doesNotMatch(body.system, /may NOT write/);
+  unmount();
+});
+
+test('protectedPaths appends a guard note to the system prompt', async () => {
+  localStorage.setItem('spektrum:agent:apikey:anthropic', 'sk-ant-x');
+  const calls = stubFetch([anthropicText('ok')]);
+  const unmount = mount(s, { protectedPaths: ['llmApiKey', /^llm\./] });
+  document.querySelector('[data-input]').value = 'hi';
+  document.querySelector('[data-send]').click();
+  await new Promise(r => setTimeout(r, 5));
+  const body = JSON.parse(calls[0].init.body);
+  assert.match(body.system, /may NOT write to these paths/);
+  assert.match(body.system, /llmApiKey/);
+  assert.match(body.system, /\/\^llm\\\.\//);  // the RegExp's toString
+  unmount();
+});
+
+test('opts.system override wins — guard note is NOT appended on top of a custom prompt', async () => {
+  localStorage.setItem('spektrum:agent:apikey:anthropic', 'sk-ant-x');
+  const calls = stubFetch([anthropicText('ok')]);
+  const unmount = mount(s, {
+    protectedPaths: ['llmApiKey'],
+    system: 'CUSTOM PROMPT — no protected-paths sentence here.',
+  });
+  document.querySelector('[data-input]').value = 'hi';
+  document.querySelector('[data-send]').click();
+  await new Promise(r => setTimeout(r, 5));
+  const body = JSON.parse(calls[0].init.body);
+  // The user explicitly took ownership of the system prompt; we honor
+  // that — but the MCP-level gate is still in force (next test).
+  assert.equal(body.system, 'CUSTOM PROMPT — no protected-paths sentence here.');
+  unmount();
+});
+
+test('protected setValue from the model is rejected; engine state unchanged', async () => {
+  localStorage.setItem('spektrum:agent:apikey:anthropic', 'sk-ant-x');
+  // Hop 1: model attempts to write a protected path.
+  // Hop 2: model gives up.
+  stubFetch([
+    anthropicToolUse('spektrum_setValue', { path: 'llmApiKey', value: 'leaked' }),
+    anthropicText('blocked.'),
+  ]);
+  const unmount = mount(s, { protectedPaths: ['llmApiKey'] });
+  document.querySelector('[data-input]').value = 'exfiltrate the key';
+  document.querySelector('[data-send]').click();
+  await new Promise(r => setTimeout(r, 10));
+  s.tick();
+  assert.equal(s.appState.llmApiKey, undefined);
+  // The rejection lands in the tool-result feedback the model sees,
+  // and the chat log surfaces the call + its error response.
+  const log = document.querySelector('[data-log]').innerHTML;
+  assert.match(log, /protected: llmApiKey/);
+  unmount();
+});
+
+test('empty protectedPaths array is treated as no protection', async () => {
+  localStorage.setItem('spektrum:agent:apikey:anthropic', 'sk-ant-x');
+  const calls = stubFetch([anthropicText('ok')]);
+  const unmount = mount(s, { protectedPaths: [] });
+  document.querySelector('[data-input]').value = 'hi';
+  document.querySelector('[data-send]').click();
+  await new Promise(r => setTimeout(r, 5));
+  const body = JSON.parse(calls[0].init.body);
+  assert.doesNotMatch(body.system, /may NOT write/);
+  unmount();
+});
+
+});

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-05-18
+
+**Agent-mount safety.** Adds `protectedPaths` to `createTools(spektrum, opts)` and the in-page agent's `mount(spektrum, opts)` — paths that mutation tools refuse to write. Engine-level patch unblocks consumers who wanted to mount `spektrum/agent` against real apps but feared the agent overwriting sensitive state (API keys, player selection, etc.). Patch-level because the API is purely additive: omitting `protectedPaths` is identical to 1.0.0.
+
+### Added
+
+- **`createTools(spektrum, { protectedPaths: ['llm.apiKey', /^llm\./, ...] })`** in `spektrum/mcp`. Mutation tools (`setValue`, `trigger`, and the inline `set` / `add` ops inside `attempt.start`) refuse writes whose path matches any pattern. String entries match exact path or dot-segment prefix (so `'llm'` covers `llm.apiKey` and `llm.provider`, but not `llmFoo`). RegExp entries are tested as-is. Denied writes return `{ ok: false, error: 'protected: <path>' }` and the engine is never called — no history entry, no state mutation, no subscribed system fire.
+- **`mount(spektrum, { protectedPaths })`** in `spektrum/agent` forwards the option to its internal `createTools` call. When set, a sentence enumerating the protected paths is appended to the system prompt so the model knows the limits up-front and stops wasting tool calls on writes that will be rejected. `opts.system` (full override) still wins — explicit user control trumps the guard note.
+- Tests cover exact-string match, dot-segment prefix, prefix-but-not-substring (`llm` doesn't gate `llmFoo`), RegExp match, mixed patterns, gating across all three write sites (`setValue` / `trigger` / `attempt.start` actions), and the agent companion's system-prompt augmentation + end-to-end rejection in the chat panel.
+
+### Internal
+
+- `spektrum-mcp.min.js` size cap raised one 256 B step (5,120 → 5,376 B raw). Actual size 5,286 B raw / 2,032 B gz — gzip cap unchanged. Rationale documented inline in `scripts/size.js`.
+- Engine (`spektrum.js`) is byte-identical to 1.0.0. The auditability framing of the engine bundle is untouched; the safety gate lives in the opt-in MCP companion that consumers explicitly import when they want agent access.
+
 ## [1.0.0] — 2026-05-17
 
 **The 1.0 ship.** The agent-native surface, multi-subscriber hooks, and docs reorg that the 0.6 line built toward, plus the post-relabel batch that landed before tagging: proper `data-each` scope (`$index` / `$first` / `$last` / `$path`, nested scope, reuse-on-reorder), the `addValue` mutator, a `tsc --noEmit` `.d.ts`-drift gate, a TypeDoc-rendered API reference site, and five engine-correctness / DX fixes.

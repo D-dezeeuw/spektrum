@@ -91,7 +91,13 @@ const TARGETS = [
   // detection branch + dockPanel.detach() in unmount. Standalone
   // behavior unchanged; cap raised once to absorb the integration.
   { file: 'companions/spektrum-devtools.min.js', raw:  3328, gz: 1664 },
-  { file: 'companions/spektrum-mcp.min.js',      raw:  5120, gz: 2048 },
+  // 1.0.1 protectedPaths gate: createTools(s, { protectedPaths: [...] })
+  // adds a buildGuard() matcher (string-prefix or RegExp) and three
+  // tool-handler check sites (setValue, trigger, attempt.start's
+  // inline ops). +166 B raw after minification; gzip stays under the
+  // existing cap. One 256 B cap step (5120 → 5376) to absorb the
+  // new code with ~90 B headroom for future MCP additions.
+  { file: 'companions/spektrum-mcp.min.js',      raw:  5376, gz: 2048 },
   { file: 'companions/spektrum-agent.min.js',    raw: 13312, gz: 5120 },
   // Inspect Phase 1 + Lint (element inspector with hover tooltip +
   // outline overlay, three-tab panel, mutation tracer with filter, and

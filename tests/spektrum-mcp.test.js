@@ -303,3 +303,102 @@ test('findByIntent describes element-shaped objects without a dataset', () => {
 });
 
 });
+
+// === protectedPaths gate (1.0.1) ===
+
+suite('protectedPaths', () => {
+
+const gatedTools = (patterns) => createTools(s, { protectedPaths: patterns });
+const gatedBy = (gt, name) => gt.find(t => t.name === name);
+
+test('no protectedPaths → write tools behave normally (default)', () => {
+  // Catalog built in beforeEach with no opts; this just asserts that
+  // *not* passing protectedPaths leaves writes ungated even for
+  // sensitive-looking names that would otherwise look protected.
+  byName('spektrum.setValue').handler({ path: 'apiKey', value: 'secret' });
+  s.tick();
+  assert.equal(s.appState.apiKey, 'secret');
+});
+
+test('exact-string match denies setValue and skips the engine call', () => {
+  const gt = gatedTools(['apiKey']);
+  const res = gatedBy(gt, 'spektrum.setValue').handler({ path: 'apiKey', value: 'hacked' });
+  s.tick();
+  assert.deepEqual(res, { ok: false, error: 'protected: apiKey' });
+  assert.equal(s.appState.apiKey, undefined);
+  assert.equal(s.history.length, 0);
+});
+
+test('dot-segment prefix match covers nested paths (llm covers llm.apiKey)', () => {
+  const gt = gatedTools(['llm']);
+  const res = gatedBy(gt, 'spektrum.setValue').handler({ path: 'llm.apiKey', value: 'x' });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /protected: llm\.apiKey/);
+  s.tick();
+  assert.equal(s.appState.llm, undefined);
+});
+
+test('prefix match does NOT swallow same-prefix unrelated keys (llm vs llmFoo)', () => {
+  const gt = gatedTools(['llm']);
+  const res = gatedBy(gt, 'spektrum.setValue').handler({ path: 'llmFoo', value: 1 });
+  s.tick();
+  assert.equal(res.ok, true);
+  assert.equal(s.appState.llmFoo, 1);
+});
+
+test('RegExp pattern is honored', () => {
+  const gt = gatedTools([/^llm\./]);
+  const a = gatedBy(gt, 'spektrum.setValue').handler({ path: 'llm.apiKey', value: 'x' });
+  const b = gatedBy(gt, 'spektrum.setValue').handler({ path: 'cart.total', value: 5 });
+  s.tick();
+  assert.equal(a.ok, false);
+  assert.equal(b.ok, true);
+  assert.equal(s.appState.cart.total, 5);
+});
+
+test('mixed string + RegExp patterns both apply', () => {
+  const gt = gatedTools(['playerSelection', /^llm\./]);
+  const x = gatedBy(gt, 'spektrum.setValue').handler({ path: 'playerSelection', value: 1 });
+  const y = gatedBy(gt, 'spektrum.setValue').handler({ path: 'llm.model', value: 'gpt' });
+  assert.equal(x.ok, false);
+  assert.equal(y.ok, false);
+});
+
+test('trigger is gated the same way as setValue', () => {
+  const gt = gatedTools(['locked']);
+  s.setValue('locked', 10); s.tick();
+  const res = gatedBy(gt, 'spektrum.trigger').handler({ id: 'inc', path: 'locked', value: 5 });
+  s.tick();
+  assert.deepEqual(res, { ok: false, error: 'protected: locked' });
+  assert.equal(s.appState.locked, 10);  // unchanged
+});
+
+test('attempt.start refuses to start when any action targets a protected path', () => {
+  const gt = gatedTools(['llm']);
+  const beforeCursor = s.cursor;
+  const res = gatedBy(gt, 'spektrum.attempt.start').handler({
+    name: 'mixed',
+    actions: [
+      { op: 'set', path: 'cart.x', value: 1 },
+      { op: 'set', path: 'llm.apiKey', value: 'leak' },
+    ],
+  });
+  s.tick();
+  assert.deepEqual(res, { ok: false, error: 'protected: llm.apiKey' });
+  // The attempt never ran — neither the allowed nor the denied write
+  // landed, and the cursor never moved past the prior tip.
+  assert.equal(s.appState.cart, undefined);
+  assert.equal(s.cursor, beforeCursor);
+});
+
+test('attempt.start with the "add" op is also gated on protected paths', () => {
+  const gt = gatedTools(['secret']);
+  const res = gatedBy(gt, 'spektrum.attempt.start').handler({
+    name: 'add-secret',
+    actions: [{ op: 'add', id: 'inc', path: 'secret', value: 1 }],
+  });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /protected: secret/);
+});
+
+});

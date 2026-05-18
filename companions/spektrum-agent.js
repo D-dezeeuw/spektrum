@@ -238,13 +238,18 @@ const PROVIDERS = {
  * @param {Element} [opts.parent=document.body]
  * @param {string} [opts.title='spektrum agent']
  * @param {string} [opts.system] - override the system prompt entirely.
+ * @param {Array<string|RegExp>} [opts.protectedPaths] - paths the agent may not write. Forwarded to the internal createTools() call; denied writes return an error to the model. When set, a sentence enumerating the protected paths is appended to the system prompt so the model knows up-front (saves wasted tool calls). Use to keep agent-driven mutations out of sensitive state like API keys.
  * @returns {() => void} unmount
  */
 export const mount = (spektrum, opts = {}) => {
   const parent = opts.parent || document.body;
   const position = opts.position || 'bottom-left';
   const title = opts.title || 'spektrum agent';
-  const system = opts.system || SYSTEM_PROMPT;
+  const protectedPaths = opts.protectedPaths;
+  const guardNote = protectedPaths && protectedPaths.length
+    ? `\n\nYou may NOT write to these paths (writes will be rejected): ${protectedPaths.map(p => p instanceof RegExp ? p.toString() : p).join(', ')}. Don't attempt them.`
+    : '';
+  const system = opts.system || (SYSTEM_PROMPT + guardNote);
 
   // Provider + key + model are stored per-provider so switching back
   // doesn't lose anything. Initial values: explicit opts override
@@ -260,8 +265,10 @@ export const mount = (spektrum, opts = {}) => {
   const currentModel = () => localStorage.getItem(modelOf(provider)) || PROVIDERS[provider].defaultModel;
 
   // Build the tool catalog once. We translate dotted MCP names to
-  // API-legal underscored names for both providers.
-  const tools = createTools(spektrum).map(t => ({
+  // API-legal underscored names for both providers. `protectedPaths`
+  // forwards straight to the MCP layer — that's where the gate lives;
+  // the in-page panel just surfaces the option and the prompt note.
+  const tools = createTools(spektrum, { protectedPaths }).map(t => ({
     name: toApiName(t.name),
     description: t.description,
     inputSchema: t.inputSchema,

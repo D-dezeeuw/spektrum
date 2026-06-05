@@ -94,8 +94,17 @@
        from guard clauses can't smuggle a monkey-patched console.warn
        return value into a cleanup collector.
   Net +~255 B raw / +~95 B gz; cap raised to 13.125 kB raw (13,440 B)
-  and 5.969 kB gz (6,112 B). Adjust caps deliberately — every bump
-  invites complacency. Trim before raising.
+  and 5.969 kB gz (6,112 B). The production-hardening pass adds a
+  `deepClone` helper used at both snapshot boundaries: stored snapshots
+  (and the state replay() restores from one) now own their whole object
+  graph instead of aliasing live arrays via deepMerge, so a direct
+  `appState.list.push(x)` — or an in-place sub-path merge during replay
+  — can no longer reach back and corrupt a snapshot. This is a
+  time-travel *correctness* fix, not a feature, but it costs bytes:
+  +~159 B raw / +~47 B gz. One 256 B raw step (13,440 → 13,696) and a
+  128 B gz step (6,112 → 6,240) absorb it with ~95 B raw / ~80 B gz
+  headroom. Adjust caps deliberately — every bump invites complacency.
+  Trim before raising.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -107,7 +116,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 13440, gz: 6112 },
+  { file: 'spektrum.min.js',          raw: 13696, gz: 6240 },
   { file: 'companions/spektrum-persist.min.js',  raw:  1024, gz:  576 },
   // 1.2 dock integration adds ~120 B for the [data-spektrum-dock]
   // detection branch + dockPanel.detach() in unmount. Standalone

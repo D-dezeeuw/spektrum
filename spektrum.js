@@ -102,6 +102,24 @@ const deepMerge = (target, source) => {
   return target;
 };
 
+// Structural deep copy of the supported state shape (plain objects +
+// arrays; primitives — including NaN/Infinity — pass through by
+// reference-or-value). deepMerge clones plain objects but shares array
+// references (line above), so a snapshot built from it would still
+// alias live arrays. Stored snapshots use this to own their whole
+// object graph: a later direct mutation of live state, or an in-place
+// sub-path merge during replay, then can't reach back and corrupt
+// them. Skips prototype slots, same as deepMerge.
+const deepClone = (v) => {
+  if (Array.isArray(v)) return v.map(deepClone);
+  if (v && typeof v === 'object') {
+    const o = {};
+    for (const k of Object.keys(v)) if (SAFE_KEY(k)) o[k] = deepClone(v[k]);
+    return o;
+  }
+  return v;
+};
+
 const clearObject = (obj) => {
   /* Drop every own key on `obj` in place. */
   for (const k of Object.keys(obj)) delete obj[k];
@@ -366,8 +384,11 @@ export const createSpektrum = (opts = {}) => {
     cursor = history.length;
     if (snapshotEvery && history.length % snapshotEvery === 0) {
       // record() is pre-tick; capture state ⊕ delta so the snapshot
-      // reflects what replay() will land on at this index.
-      snapshots.push({ index: history.length, state: stateSnapshot() });
+      // reflects what replay() will land on at this index. deepClone so
+      // the stored snapshot owns its arrays — otherwise a later direct
+      // `appState.list.push(x)` (or an in-place sub-path merge) would
+      // mutate the snapshot and replay would restore corrupted state.
+      snapshots.push({ index: history.length, state: deepClone(stateSnapshot()) });
     }
     if (historyLimit && history.length > historyLimit) {
       // Amortize splice cost: drop chunk = max(1, limit/16) at a time,
@@ -615,7 +636,11 @@ export const createSpektrum = (opts = {}) => {
     // Skip ahead to the latest snapshot ≤ n.
     let startIdx = 0;
     const sn = snapshots.findLast(s => s.index <= n);
-    if (sn) { deepMerge(appState, sn.state); cursor = startIdx = sn.index; }
+    // deepClone the snapshot into appState: deepMerge shares array
+    // references, so without the clone a post-replay sub-path write
+    // (which merges in place) would mutate the stored snapshot and
+    // poison every future replay through it.
+    if (sn) { deepMerge(appState, deepClone(sn.state)); cursor = startIdx = sn.index; }
 
     for (let i = startIdx; i < n; i++) {
       applyEntry(history[i]);

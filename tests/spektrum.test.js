@@ -756,6 +756,42 @@ test('snapshotEvery captures snapshots for fast replay', () => {
   assert.equal(getPathObj(a.appState, 'x'), 12);
 });
 
+test('stored snapshots own their arrays — direct mutation cannot corrupt them', () => {
+  const a = createSpektrum({ snapshotEvery: 1 });
+  a.setValue('list', [1, 2]);
+  a.tick();
+  // Snapshot at index 1 captured {list:[1,2]}. The stored copy must be
+  // independent of live state.
+  assert.notEqual(a.snapshots[0].state.list, a.appState.list,
+    'snapshot array must not be the same reference as live state');
+  // Mutate live state directly, bypassing the setValue/addValue API.
+  a.appState.list.push(999);
+  // Replaying back to the snapshot must restore the recorded [1,2],
+  // not the unrecorded [1,2,999].
+  a.replay(1);
+  assert.deepEqual(a.appState.list, [1, 2],
+    'replay-from-snapshot must not see a post-capture direct mutation');
+});
+
+test('replay-from-snapshot is repeatable — a post-replay sub-path write cannot poison it', () => {
+  const a = createSpektrum({ snapshotEvery: 1 });
+  a.setValue('list', [1, 2]);
+  a.tick();                 // snapshot@1 = {list:[1,2]}
+  a.setValue('count', 0);
+  a.tick();
+  a.replay(1);
+  assert.deepEqual(a.appState.list, [1, 2]);
+  // In-place sub-path write — deepMerge mutates the array in place.
+  a.setValue('list.0', 99);
+  a.tick();
+  assert.equal(a.appState.list[0], 99);
+  // The stored snapshot must be untouched, so a second replay still
+  // lands on the original.
+  a.replay(1);
+  assert.deepEqual(a.appState.list, [1, 2],
+    'snapshot must survive an in-place write to state restored from it');
+});
+
 test('snapshots stay aligned with history after replay+truncate', () => {
   const a = createSpektrum({ snapshotEvery: 2 });
   for (let i = 1; i <= 6; i++) a.setValue('x', i);

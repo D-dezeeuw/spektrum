@@ -120,9 +120,13 @@ export interface ExplainedEntry extends HistoryEntry {
 export interface AttemptHandle<T = any> {
   /** Whatever the attempt callback returned (often a Promise). */
   result: T;
+  /** The `AbortSignal` passed to the attempt callback. `discard()`
+   *  aborts it, so async speculative work wired to it is cancelled. */
+  signal: AbortSignal;
   /** Mark the attempt as committed in history (records a checkpoint). */
   commit(): void;
-  /** Replay back to before the attempt; the entries land on `forks` on the next mutation. */
+  /** Replay back to before the attempt (aborting `signal`); the entries
+   *  land on `forks` on the next mutation. */
   discard(): void;
 }
 
@@ -373,7 +377,7 @@ export interface Spektrum {
    * (rewind cursor). `fn` may return a value or a Promise — the
    * caller awaits and decides.
    */
-  attempt<T = any>(name: string, fn: () => T): AttemptHandle<T>;
+  attempt<T = any>(name: string, fn: (signal: AbortSignal) => T): AttemptHandle<T>;
 
   /**
    * Locate elements by their declared `data-intent`. Returns a copy

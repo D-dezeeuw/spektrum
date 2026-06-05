@@ -1295,20 +1295,28 @@ export const createSpektrum = (opts = {}) => {
    *  entries to `forks` on the next mutation). `fn` may return a value
    *  or a Promise — the caller awaits and decides.
    *
-   *    const h = spektrum.attempt('apply-edit', () => editFn());
+   *  `fn` receives an `AbortSignal`. discard() aborts it, so async
+   *  speculative work (a fetch, a timer) can be cancelled instead of
+   *  landing writes after the rewind. Wiring it is optional — `fn`
+   *  ignoring the arg keeps the old behavior. The signal is also on
+   *  the handle (`h.signal`).
+   *
+   *    const h = spektrum.attempt('apply-edit', (signal) => editFn(signal));
    *    if (await validate(h.result)) h.commit(); else h.discard();
    */
   const attempt = (name, fn) => {
     const start = cursor;
     checkpoint(`attempt:${name}`);
-    const result = fn();
+    const ac = new AbortController();
+    const result = fn(ac.signal);
     // `done` guards against double-settle: a defensive commit() in a
     // finally{} after a discard() must not append an orphan checkpoint.
     let done = false;
     return {
       result,
+      signal: ac.signal,
       commit:  () => { if (done) return; done = true; checkpoint(`attempt:${name}:commit`); },
-      discard: () => { if (done) return; done = true; replay(start); },
+      discard: () => { if (done) return; done = true; ac.abort(); replay(start); },
     };
   };
 

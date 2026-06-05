@@ -201,6 +201,14 @@ if (await h.result) h.commit(); else h.discard();
 
 `commit()` records an `<name>:commit` checkpoint. `discard()` rewinds the cursor; the speculative entries land on `forks` on the next mutation.
 
+`fn` receives an `AbortSignal` (also exposed as `h.signal`); `discard()` aborts it, so in-flight async work wired to the signal is cancelled rather than landing a write after the rewind:
+
+```js
+const h = spektrum.attempt('apply-edit', (signal) =>
+  fetch('/validate', { signal }).then(r => r.json()));
+if ((await h.result).ok) h.commit(); else h.discard();   // discard() aborts the fetch
+```
+
 ### `findByIntent(name)`
 
 Returns elements with `data-intent="<name>"`. Returns a copy so iteration doesn't race the registry.

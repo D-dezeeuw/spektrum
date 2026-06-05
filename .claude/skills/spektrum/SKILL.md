@@ -361,7 +361,7 @@ if (await validate(h.result)) h.commit();   // records :commit checkpoint
 else                          h.discard();  // replays back; entries go to `forks`
 ```
 
-Nesting is safe. Discarded branches survive on `forks` (capped by `forkLimit`, default 50). `discard()` rewinds **engine state only** — side effects (network, console, third-party state) are not undone.
+Nesting is safe. Discarded branches survive on `forks` (capped by `forkLimit`, default 50). `discard()` rewinds **engine state**; completed side effects (console, sent network) are not undone, but `fn` receives an `AbortSignal` (also `h.signal`) that `discard()` aborts — wire it into fetches/timers to cancel in-flight work: `attempt('edit', (signal) => fetch(url, { signal }))`.
 
 ### 4. Explain — `explain(opts?)`
 

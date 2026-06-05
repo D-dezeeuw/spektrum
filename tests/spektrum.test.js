@@ -1253,6 +1253,36 @@ test('attempt() handle is single-shot — second settle is a no-op', () => {
   assert.equal(s.history.length, historyLenAfter, 'no orphan checkpoint appended');
 });
 
+test('attempt() passes an AbortSignal that discard() aborts', () => {
+  const s = createSpektrum();
+  let received;
+  const h = s.attempt('async-edit', (signal) => { received = signal; });
+  assert.ok(received instanceof AbortSignal, 'fn receives an AbortSignal');
+  assert.equal(received, h.signal, 'handle exposes the same signal');
+  assert.equal(h.signal.aborted, false, 'signal starts un-aborted');
+  h.discard();
+  assert.equal(h.signal.aborted, true, 'discard() aborts the signal');
+});
+
+test('attempt() commit does NOT abort the signal', () => {
+  const s = createSpektrum();
+  const h = s.attempt('keep', (signal) => signal);
+  h.commit();
+  assert.equal(h.signal.aborted, false, 'commit leaves the signal live');
+});
+
+test('attempt() AbortSignal actually cancels a wired async fn on discard', async () => {
+  const s = createSpektrum();
+  // A fn that resolves only if it is NOT aborted; rejects/settles to a
+  // sentinel when aborted — proving discard() reaches in-flight work.
+  const h = s.attempt('fetchish', (signal) => new Promise((resolve) => {
+    if (signal.aborted) return resolve('aborted');
+    signal.addEventListener('abort', () => resolve('aborted'), { once: true });
+  }));
+  h.discard();
+  assert.equal(await h.result, 'aborted', 'in-flight async work observes the abort');
+});
+
 test('defineFn(name, fn, meta) attaches metadata for describe()', () => {
   const s = createSpektrum();
   const noop = () => {};

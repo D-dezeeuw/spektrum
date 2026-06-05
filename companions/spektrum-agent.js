@@ -239,7 +239,7 @@ const PROVIDERS = {
  * @param {string} [opts.title='spektrum agent']
  * @param {string} [opts.system] - override the system prompt entirely.
  * @param {Array<string|RegExp>} [opts.protectedPaths] - paths the agent may not write. Forwarded to the internal createTools() call; denied writes return an error to the model. When set, a sentence enumerating the protected paths is appended to the system prompt so the model knows up-front (saves wasted tool calls). Use to keep agent-driven mutations out of sensitive state like API keys.
- * @param {boolean} [opts.allowAllPaths] - explicit acknowledgement that the agent may write anywhere. Forwarded to createTools() to silence the unrestricted-write safety warning when full access is intended.
+ * @param {boolean} [opts.allowAllPaths] - opt into unrestricted writes. The agent is read-only by default (state-writing tools are rejected and the system prompt says so); pass `protectedPaths` to allow all but specific paths, or `allowAllPaths: true` to allow every write. Forwarded to createTools(); ignored when `protectedPaths` is set.
  * @returns {() => void} unmount
  */
 export const mount = (spektrum, opts = {}) => {

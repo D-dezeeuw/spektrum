@@ -24,7 +24,10 @@ const byName = (name) => tools.find(t => t.name === name);
 beforeEach(() => {
   document.body.innerHTML = '';
   s = createSpektrum();
-  tools = createTools(s);
+  // allowAllPaths acknowledges the ungated catalog so the harness
+  // doesn't trip the unrestricted-write safety warning on every test.
+  // The warning itself is covered in the 'safe-by-default' suite.
+  tools = createTools(s, { allowAllPaths: true });
 });
 
 // === Catalog shape ===
@@ -50,14 +53,14 @@ test('createTools returns the full catalog with default "spektrum." prefix', () 
 });
 
 test('opts.prefix overrides the namespace on every tool', () => {
-  const t = createTools(s, { prefix: 'app/' });
+  const t = createTools(s, { prefix: 'app/', allowAllPaths: true });
   assert.ok(t.every(x => x.name.startsWith('app/')));
   assert.ok(t.find(x => x.name === 'app/getState'));
 });
 
 test('opts.prefix="" produces unprefixed names', () => {
   // The `??` default only kicks in for nullish; empty string passes through.
-  const t = createTools(s, { prefix: '' });
+  const t = createTools(s, { prefix: '', allowAllPaths: true });
   assert.ok(t.find(x => x.name === 'getState'));
 });
 
@@ -312,9 +315,9 @@ const gatedTools = (patterns) => createTools(s, { protectedPaths: patterns });
 const gatedBy = (gt, name) => gt.find(t => t.name === name);
 
 test('no protectedPaths → write tools behave normally (default)', () => {
-  // Catalog built in beforeEach with no opts; this just asserts that
-  // *not* passing protectedPaths leaves writes ungated even for
-  // sensitive-looking names that would otherwise look protected.
+  // Catalog built in beforeEach (allowAllPaths, so still ungated); this
+  // asserts that *not* passing protectedPaths leaves writes ungated even
+  // for sensitive-looking names that would otherwise look protected.
   byName('spektrum.setValue').handler({ path: 'apiKey', value: 'secret' });
   s.tick();
   assert.equal(s.appState.apiKey, 'secret');
@@ -421,5 +424,52 @@ test('attempt.start with guard set but no action matching runs the attempt norma
   assert.equal(s.appState.count, 5);
   assert.ok(s.checkpoints.some(c => c.id === 'mid'));
 });
+
+});
+
+// === safe-by-default posture ===
+// Writes stay ungated by default (no breaking change), but creating an
+// unguarded catalog without consciously acknowledging it warns loudly.
+suite('safe-by-default', () => {
+
+const captureWarn = (fn) => {
+  const warns = [];
+  const orig = console.warn;
+  console.warn = (m) => warns.push(String(m));
+  try { fn(); } finally { console.warn = orig; }
+  return warns;
+};
+
+test('ungated catalog (no protectedPaths, no allowAllPaths) warns', () => {
+  const warns = captureWarn(() => createTools(s));
+  assert.ok(
+    warns.some(w => w.includes('[spektrum/mcp]') && w.includes('protectedPaths')),
+    `expected an unrestricted-write warning; got: ${warns.join(' | ')}`,
+  );
+});
+
+test('allowAllPaths: true acknowledges and silences the warning', () => {
+  const warns = captureWarn(() => createTools(s, { allowAllPaths: true }));
+  assert.deepEqual(warns, [], 'allowAllPaths should silence the warning');
+});
+
+test('protectedPaths present silences the warning (the gate speaks for itself)', () => {
+  const warns = captureWarn(() => createTools(s, { protectedPaths: ['apiKey'] }));
+  assert.deepEqual(warns, [], 'a gated catalog should not warn');
+});
+
+test('ungated catalog still grants full write access (no behavior break)', () => {
+  const t = captureWarnTools();
+  t.find(x => x.name === 'spektrum.setValue').handler({ path: 'apiKey', value: 'secret' });
+  s.tick();
+  assert.equal(s.appState.apiKey, 'secret');
+});
+
+// Build an ungated catalog while swallowing the (expected) warning.
+function captureWarnTools() {
+  let t;
+  captureWarn(() => { t = createTools(s); });
+  return t;
+}
 
 });

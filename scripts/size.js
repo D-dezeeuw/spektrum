@@ -119,7 +119,14 @@ const TARGETS = [
   // inline ops). +166 B raw after minification; gzip stays under the
   // existing cap. One 256 B cap step (5120 → 5376) to absorb the
   // new code with ~90 B headroom for future MCP additions.
-  { file: 'companions/spektrum-mcp.min.js',      raw:  5376, gz: 2048 },
+  // 1.0.2 safe-by-default: an ungated catalog (no protectedPaths)
+  // now warns unless the caller passes { allowAllPaths: true } to
+  // acknowledge it — closing the "forgot the gate, shipped full write
+  // authority" foot-gun without a breaking change. The warn() string
+  // dominates the cost (+~107 B raw / +~90 B gz over the trimmed
+  // message); one 256 B raw step (5376 → 5632) and a 192 B gz step
+  // (2048 → 2240) absorb it with ~150 B raw / ~100 B gz headroom.
+  { file: 'companions/spektrum-mcp.min.js',      raw:  5632, gz: 2240 },
   { file: 'companions/spektrum-agent.min.js',    raw: 13312, gz: 5120 },
   // Inspect Phase 1 + Lint (element inspector with hover tooltip +
   // outline overlay, three-tab panel, mutation tracer with filter, and

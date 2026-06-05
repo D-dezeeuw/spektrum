@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.2] — 2026-06-05
 
-**Production-hardening patch.** Five engine-correctness fixes plus a focused pass on the issues a production-readiness audit surfaced: a real time-travel snapshot fix, safe-by-default agent writes, cancellable speculative async, complete companion types, and an error-code drift gate that actually gates. All additive or bug-fix; no breaking changes.
+*Never tagged or published to npm on its own — these changes ship as part of 1.1.0. Kept as a separate section for a granular record of the hardening pass.*
+
+**Production-hardening patch.** Five engine-correctness fixes plus a focused pass on the issues a production-readiness audit surfaced: a real time-travel snapshot fix, cancellable speculative async (`attempt()` `AbortSignal`), complete companion types, and an error-code drift gate that actually gates. All additive or bug-fix; no breaking changes.
 
 ### Fixed
 

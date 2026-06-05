@@ -524,6 +524,37 @@ test('computed mid-tick read-through: sibling system sees fresh value (regressio
   assert.equal(observed, 14, 'sibling read sees the just-computed value');
 });
 
+test('computed rejects self-referential deps at registration (E_COMPUTED_SELF_DEP)', () => {
+  // Pre-guard: `computed('ui.recording', ['ui.recording'], …)` registered
+  // silently and then re-fed its own delta every iteration of the next
+  // tick — burning the 1024-iteration cap and finally hitting
+  // clearObject(appStateDelta), which silently dropped other systems'
+  // pending writes queued in the same tick. The guard refuses the
+  // registration so the loop can never form.
+  assert.throws(() => computed('ui.recording', ['ui.recording'], () => true), (err) => {
+    assert.equal(err.code, 'E_COMPUTED_SELF_DEP');
+    assert.match(err.message, /overlapping path/);
+    return true;
+  }, 'exact self-dep is refused');
+
+  // Ancestor dep (write `a.b`, read `a`) — any mutation under `a` would
+  // re-fire the deriver, which writes back under `a` and re-arms itself.
+  assert.throws(() => computed('a.b', ['a'], (s) => s.a),
+    err => err.code === 'E_COMPUTED_SELF_DEP',
+    'ancestor dep overlap is refused');
+
+  // Descendant dep (write `a`, read `a.b`) — the whole-object write
+  // includes `a.b`, so the deriver would re-trigger on its own output.
+  assert.throws(() => computed('a', ['a.b'], (s) => ({ b: s.a?.b })),
+    err => err.code === 'E_COMPUTED_SELF_DEP',
+    'descendant dep overlap is refused');
+
+  // Sibling paths (different leaf under shared parent) must still work
+  // — the guard is on path overlap, not parent-key collision.
+  assert.doesNotThrow(() => computed('a.b', ['a.c'], (s) => s.a?.c),
+    'sibling deps under a shared parent are NOT self-deps');
+});
+
 // === watch (public alias for addSystem) ===
 
 test('watch is a 1:1 alias of addSystem', () => {
@@ -723,6 +754,42 @@ test('snapshotEvery captures snapshots for fast replay', () => {
   assert.equal(getPathObj(a.appState, 'x'), 8);
   a.replay(12);
   assert.equal(getPathObj(a.appState, 'x'), 12);
+});
+
+test('stored snapshots own their arrays — direct mutation cannot corrupt them', () => {
+  const a = createSpektrum({ snapshotEvery: 1 });
+  a.setValue('list', [1, 2]);
+  a.tick();
+  // Snapshot at index 1 captured {list:[1,2]}. The stored copy must be
+  // independent of live state.
+  assert.notEqual(a.snapshots[0].state.list, a.appState.list,
+    'snapshot array must not be the same reference as live state');
+  // Mutate live state directly, bypassing the setValue/addValue API.
+  a.appState.list.push(999);
+  // Replaying back to the snapshot must restore the recorded [1,2],
+  // not the unrecorded [1,2,999].
+  a.replay(1);
+  assert.deepEqual(a.appState.list, [1, 2],
+    'replay-from-snapshot must not see a post-capture direct mutation');
+});
+
+test('replay-from-snapshot is repeatable — a post-replay sub-path write cannot poison it', () => {
+  const a = createSpektrum({ snapshotEvery: 1 });
+  a.setValue('list', [1, 2]);
+  a.tick();                 // snapshot@1 = {list:[1,2]}
+  a.setValue('count', 0);
+  a.tick();
+  a.replay(1);
+  assert.deepEqual(a.appState.list, [1, 2]);
+  // In-place sub-path write — deepMerge mutates the array in place.
+  a.setValue('list.0', 99);
+  a.tick();
+  assert.equal(a.appState.list[0], 99);
+  // The stored snapshot must be untouched, so a second replay still
+  // lands on the original.
+  a.replay(1);
+  assert.deepEqual(a.appState.list, [1, 2],
+    'snapshot must survive an in-place write to state restored from it');
 });
 
 test('snapshots stay aligned with history after replay+truncate', () => {
@@ -1186,6 +1253,36 @@ test('attempt() handle is single-shot — second settle is a no-op', () => {
   assert.equal(s.history.length, historyLenAfter, 'no orphan checkpoint appended');
 });
 
+test('attempt() passes an AbortSignal that discard() aborts', () => {
+  const s = createSpektrum();
+  let received;
+  const h = s.attempt('async-edit', (signal) => { received = signal; });
+  assert.ok(received instanceof AbortSignal, 'fn receives an AbortSignal');
+  assert.equal(received, h.signal, 'handle exposes the same signal');
+  assert.equal(h.signal.aborted, false, 'signal starts un-aborted');
+  h.discard();
+  assert.equal(h.signal.aborted, true, 'discard() aborts the signal');
+});
+
+test('attempt() commit does NOT abort the signal', () => {
+  const s = createSpektrum();
+  const h = s.attempt('keep', (signal) => signal);
+  h.commit();
+  assert.equal(h.signal.aborted, false, 'commit leaves the signal live');
+});
+
+test('attempt() AbortSignal actually cancels a wired async fn on discard', async () => {
+  const s = createSpektrum();
+  // A fn that resolves only if it is NOT aborted; rejects/settles to a
+  // sentinel when aborted — proving discard() reaches in-flight work.
+  const h = s.attempt('fetchish', (signal) => new Promise((resolve) => {
+    if (signal.aborted) return resolve('aborted');
+    signal.addEventListener('abort', () => resolve('aborted'), { once: true });
+  }));
+  h.discard();
+  assert.equal(await h.result, 'aborted', 'in-flight async work observes the abort');
+});
+
 test('defineFn(name, fn, meta) attaches metadata for describe()', () => {
   const s = createSpektrum();
   const noop = () => {};
@@ -1280,4 +1377,39 @@ test('trigger with empty path warns and does NOT record', () => {
   assert.equal(s.history.length, 0);
   assert.ok(warns.some(w => w.includes('addValue') && w.includes('empty path')),
     `expected empty-path warn; got: ${warns.join(' | ')}`);
+});
+
+// === EngineErrorCode drift gate ===
+// The .d.ts EngineErrorCode union and docs/api.md are hand-maintained,
+// so they can silently fall out of sync with the codes the engine
+// actually throws. This is the *real* drift gate the audit asked for:
+// it scans the engine source for every `code = 'E_…'` assignment and
+// fails if the set diverges from the documented list. tsc only checks
+// the type is self-consistent (see tests/types/spektrum.types.ts'
+// exhaustiveness switch); only this catches a NEW code added to the JS
+// that nobody added to the type/docs.
+test('every engine error code is registered in EngineErrorCode + docs', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const dir = fileURLToPath(new URL('.', import.meta.url));
+  const engineSrc = readFileSync(dir + '../spektrum.js', 'utf8');
+  const dtsSrc = readFileSync(dir + '../spektrum.d.ts', 'utf8');
+  const apiSrc = readFileSync(dir + '../docs/api.md', 'utf8');
+
+  // Codes the engine assigns: `(err.)code = 'E_…'` or `code: 'E_…'`.
+  const thrown = new Set(
+    [...engineSrc.matchAll(/\bcode\s*[:=]\s*'(E_[A-Z_]+)'/g)].map((m) => m[1]),
+  );
+  assert.ok(thrown.size >= 2, `expected to find engine error codes; found ${[...thrown]}`);
+
+  for (const code of thrown) {
+    assert.ok(
+      dtsSrc.includes(`'${code}'`),
+      `error code '${code}' is thrown in spektrum.js but missing from EngineErrorCode in spektrum.d.ts`,
+    );
+    assert.ok(
+      apiSrc.includes(code),
+      `error code '${code}' is thrown in spektrum.js but undocumented in docs/api.md`,
+    );
+  }
 });

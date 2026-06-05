@@ -45,9 +45,18 @@ export type SystemFn = (state: State, delta: State) => void;
  *
  *  - `E_TICK_OVERFLOW`: tick fan-out exceeded 1024 iterations and
  *    the delta was discarded. Indicates a runaway feedback cycle
- *    between systems.
+ *    between systems. Routed through `onError`.
+ *  - `E_COMPUTED_SELF_DEP`: `computed(path, deps, fn)` was registered
+ *    with a dep that overlaps its own output path (equal, ancestor, or
+ *    descendant), which would feed its own delta and loop. Thrown
+ *    synchronously from `computed()` at registration time — caught at
+ *    your call site, not routed through `onError`.
+ *
+ * This union is kept in lockstep with the engine by a source-scan
+ * drift gate (see tests/spektrum.test.js) that fails CI if spektrum.js
+ * assigns a `code` not listed here.
  */
-export type EngineErrorCode = 'E_TICK_OVERFLOW';
+export type EngineErrorCode = 'E_TICK_OVERFLOW' | 'E_COMPUTED_SELF_DEP';
 
 /**
  * Errors received by `onError`. Engine-originated errors carry a
@@ -111,9 +120,13 @@ export interface ExplainedEntry extends HistoryEntry {
 export interface AttemptHandle<T = any> {
   /** Whatever the attempt callback returned (often a Promise). */
   result: T;
+  /** The `AbortSignal` passed to the attempt callback. `discard()`
+   *  aborts it, so async speculative work wired to it is cancelled. */
+  signal: AbortSignal;
   /** Mark the attempt as committed in history (records a checkpoint). */
   commit(): void;
-  /** Replay back to before the attempt; the entries land on `forks` on the next mutation. */
+  /** Replay back to before the attempt (aborting `signal`); the entries
+   *  land on `forks` on the next mutation. */
   discard(): void;
 }
 
@@ -364,7 +377,7 @@ export interface Spektrum {
    * (rewind cursor). `fn` may return a value or a Promise — the
    * caller awaits and decides.
    */
-  attempt<T = any>(name: string, fn: () => T): AttemptHandle<T>;
+  attempt<T = any>(name: string, fn: (signal: AbortSignal) => T): AttemptHandle<T>;
 
   /**
    * Locate elements by their declared `data-intent`. Returns a copy

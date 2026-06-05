@@ -1,0 +1,62 @@
+/**
+ * Type declarations for `spektrum/agent` — the in-page agent panel.
+ * Mounts a chat surface wired to an LLM provider whose tool layer is
+ * the `spektrum/mcp` catalog, so the model reads and drives the live
+ * instance through the public, time-travel-recorded API.
+ *
+ * Source of truth: `companions/spektrum-agent.js`. When the runtime
+ * shape changes, update this file in the same commit.
+ *
+ * Security: this hands an LLM write access to your app state. Pass
+ * `protectedPaths` to fence off sensitive paths, or `allowAllPaths`
+ * to consciously allow everything.
+ */
+
+import type { Spektrum } from '../spektrum.js';
+import type { PathPattern } from './spektrum-mcp.js';
+
+/** Corner the agent panel docks to (when not hosted in a dock). */
+export type AgentPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+/** Supported LLM providers. The user can switch in the panel. */
+export type AgentProvider = 'anthropic' | 'openai' | 'openrouter';
+
+/** Options for {@link mount}. */
+export interface AgentOptions {
+  /** Default provider; user can switch in the panel. */
+  provider?: AgentProvider;
+  /** API key for the chosen provider. If omitted, the panel prompts
+   *  and stores it in `localStorage`. */
+  apiKey?: string;
+  /** Model id; the provider default applies if omitted. */
+  model?: string;
+  /** Corner for the panel. Defaults to `'bottom-left'`. Ignored when
+   *  a dock owns layout. */
+  position?: AgentPosition;
+  /** Mount target. Defaults to `document.body`. */
+  parent?: Element;
+  /** Panel title. Defaults to `'spektrum agent'`. */
+  title?: string;
+  /** Override the system prompt entirely. */
+  system?: string;
+  /**
+   * Paths the agent may not write. Forwarded to the internal
+   * `createTools()` call; denied writes return an error to the model,
+   * and (when set) a sentence enumerating the protected paths is
+   * appended to the system prompt so the model doesn't waste tool
+   * calls attempting them.
+   */
+  protectedPaths?: PathPattern[];
+  /**
+   * Explicit acknowledgement that the agent may write anywhere.
+   * Required to silence the safety warning when no `protectedPaths`
+   * are supplied. Forwarded to `createTools()`.
+   */
+  allowAllPaths?: boolean;
+}
+
+/**
+ * Mount the agent panel for an instance. Returns an `unmount()` that
+ * removes the panel and detaches from the dock if it was hosted there.
+ */
+export function mount(spektrum: Spektrum, opts?: AgentOptions): () => void;

@@ -334,7 +334,7 @@ The agent surface gives an agent the same authority any caller of `setValue` / `
 
 - Don't expose the MCP catalog to an untrusted agent on an untrusted transport. Local stdio MCP, internal tools, in-page supervisors — fine. Open to the internet without auth — not fine.
 - Templates are still author-written, even with `spektrum/compile`. Don't compile agent-generated templates from untrusted text — the eval model (`with(state)` inside `new Function`) is unchanged.
-- `attempt().discard()` rewinds the cursor. It does **not** undo side effects your fn caused outside the engine (network calls, console output, third-party state). Speculative execution is for engine state, not the world.
+- `attempt().discard()` rewinds the cursor. It does **not** undo side effects your fn already completed outside the engine (a console line printed, an email sent). It *can* cancel in-flight async work: `fn` receives an `AbortSignal` (also on the handle as `h.signal`) and `discard()` aborts it, so a fetch wired to the signal is cancelled instead of landing a write after the rewind — `attempt('edit', (signal) => fetch(url, { signal }))`. Speculative execution rolls back engine state; wire the signal to roll back the work in progress.
 - The MCP `attempt.start` tool keeps the speculative handle in a server-side map keyed by attempt id. If your server restarts mid-attempt, the handle is lost — discard manually via `replay(cursorBefore)` if needed.
 
 ---

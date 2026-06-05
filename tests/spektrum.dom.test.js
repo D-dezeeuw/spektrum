@@ -1883,3 +1883,137 @@ test('data-action="cycle" without data-id warns and does not crash', () => {
   assert.ok(warns.some(w => w.includes('data-action="cycle"') && w.includes('data-id')),
     `expected cycle/data-id warn; got: ${warns.join(' | ')}`);
 });
+
+// === :attr — kebab-case (aria-*) routes through setAttribute ===
+// Pre-fix: `:aria-pressed="…"` assigned `el['aria-pressed'] = v`, which
+// is an invisible JS expando — never reaches the DOM, accessibility
+// trees see the static attribute (or no attribute). The fix detects a
+// hyphen in the property name and uses setAttribute / removeAttribute.
+
+test(':aria-pressed updates the DOM attribute (not a JS expando)', () => {
+  document.body.innerHTML = '<button :aria-pressed="recording">mic</button>';
+  setValue('recording', false);
+  bindDOM(document.body);
+  tick();
+  const btn = document.body.querySelector('button');
+  assert.equal(btn.getAttribute('aria-pressed'), 'false',
+    'initial false reflects as attribute "false" (valid ARIA tri-state)');
+
+  setValue('recording', true);
+  tick();
+  assert.equal(btn.getAttribute('aria-pressed'), 'true',
+    'true value writes through to the attribute, not an expando');
+});
+
+test(':aria-* removes the attribute when value is null/undefined', () => {
+  document.body.innerHTML = '<div :aria-label="label">x</div>';
+  setValue('label', 'hello');
+  bindDOM(document.body);
+  tick();
+  const div = document.body.querySelector('div');
+  assert.equal(div.getAttribute('aria-label'), 'hello');
+
+  setValue('label', null);
+  tick();
+  assert.equal(div.hasAttribute('aria-label'), false,
+    'null clears the attribute so screen readers see absence, not "null"');
+});
+
+// === :attr inside data-each — regression coverage ===
+// Pre-fix the engine had ZERO tests covering :attr bindings inside
+// data-each iterations. Subscription rewiring on keyed reorder is
+// load-bearing (entry.cleanup() + rebind w/ fresh scope), and silent
+// failures here look exactly like "the binding stopped working" without
+// any console trail.
+
+test(':innerHTML inside data-each renders per-row HTML and reacts', () => {
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row">
+      <li :innerHTML="row.html"></li>
+    </ul>`;
+  setValue('rows', [{ html: '<b>one</b>' }, { html: '<i>two</i>' }]);
+  bindDOM(document.body);
+  tick();
+  const lis = document.body.querySelectorAll('li');
+  assert.equal(lis[0].innerHTML, '<b>one</b>');
+  assert.equal(lis[1].innerHTML, '<i>two</i>');
+
+  setValue('rows.0.html', '<u>updated</u>');
+  tick();
+  assert.equal(document.body.querySelectorAll('li')[0].innerHTML, '<u>updated</u>',
+    ':innerHTML re-fires when its row-scoped path mutates');
+});
+
+test(':class inside data-each toggles per-row classes', () => {
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-key="row.id">
+      <li :class="{active: row.on}">x</li>
+    </ul>`;
+  setValue('rows', [{ id: 1, on: true }, { id: 2, on: false }]);
+  bindDOM(document.body);
+  tick();
+  const lis = document.body.querySelectorAll('li');
+  assert.equal(lis[0].classList.contains('active'), true);
+  assert.equal(lis[1].classList.contains('active'), false);
+
+  setValue('rows.1.on', true);
+  tick();
+  assert.equal(document.body.querySelectorAll('li')[1].classList.contains('active'), true,
+    'per-row :class subscription re-fires on its own path');
+});
+
+test(':aria-pressed inside data-each survives keyed reorder', () => {
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-key="row.id">
+      <li :aria-pressed="row.pressed">x</li>
+    </ul>`;
+  setValue('rows', [
+    { id: 'a', pressed: true },
+    { id: 'b', pressed: false },
+  ]);
+  bindDOM(document.body);
+  tick();
+  let lis = document.body.querySelectorAll('li');
+  const liA = lis[0], liB = lis[1];
+  assert.equal(liA.getAttribute('aria-pressed'), 'true');
+  assert.equal(liB.getAttribute('aria-pressed'), 'false');
+
+  // Reverse — keyed mode reuses the same DOM nodes but rebinds scope so
+  // row.pressed now resolves to the new index's path. The previously-
+  // pressed node moves; its aria-pressed must continue reflecting the
+  // row it represents.
+  setValue('rows', [
+    { id: 'b', pressed: false },
+    { id: 'a', pressed: true },
+  ]);
+  tick();
+  lis = document.body.querySelectorAll('li');
+  assert.equal(lis[0], liB, 'keyed reorder reuses the same DOM nodes');
+  assert.equal(lis[1], liA);
+  assert.equal(lis[0].getAttribute('aria-pressed'), 'false');
+  assert.equal(lis[1].getAttribute('aria-pressed'), 'true');
+
+  // And the subscription is still live — mutating the row's path after
+  // the reorder must update the attribute on the (moved) node.
+  setValue('rows.0.pressed', true);
+  tick();
+  assert.equal(document.body.querySelectorAll('li')[0].getAttribute('aria-pressed'), 'true',
+    'subscription rebinds to the new index after reorder');
+});
+
+test(':style inside data-each writes per-row inline style', () => {
+  document.body.innerHTML = `
+    <ul data-each="bars" data-as="bar">
+      <li :style="'width:' + bar.pct + '%'">x</li>
+    </ul>`;
+  setValue('bars', [{ pct: 25 }, { pct: 75 }]);
+  bindDOM(document.body);
+  tick();
+  const lis = document.body.querySelectorAll('li');
+  assert.match(lis[0].style.cssText, /width:\s*25%/);
+  assert.match(lis[1].style.cssText, /width:\s*75%/);
+
+  setValue('bars.0.pct', 90);
+  tick();
+  assert.match(document.body.querySelectorAll('li')[0].style.cssText, /width:\s*90%/);
+});

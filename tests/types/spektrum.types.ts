@@ -159,6 +159,23 @@ void reran;
 
 const errHandler: ErrorHandler = (err, system) => {
   const code: EngineErrorCode | undefined = err.code;
+  // Exhaustiveness gate: every member of EngineErrorCode must be
+  // handled here. Adding a code to the union without a case (or
+  // removing one) makes `_exhaustive` no longer `never` and fails
+  // `tsc --noEmit`. This forces the union to stay a *deliberate*,
+  // documented set rather than silently drifting. The runtime
+  // source-scan gate in spektrum.test.js catches the other direction
+  // (a code thrown in spektrum.js that was never added to the union).
+  switch (code) {
+    case 'E_TICK_OVERFLOW':
+    case 'E_COMPUTED_SELF_DEP':
+    case undefined:
+      break;
+    default: {
+      const _exhaustive: never = code;
+      void _exhaustive;
+    }
+  }
   void code; void system;
 };
 const offErr: () => void = onError(errHandler);
@@ -287,3 +304,36 @@ const _surfaceCheck: Spektrum = {
   findByIntent: inst.findByIntent,
 };
 void _surfaceCheck;
+
+// === companion module types ===
+// Exercise the hand-maintained companion .d.ts files so `tsc --noEmit`
+// catches drift between them and the JS exports — these used to ship
+// untyped (consumers got TS2307).
+import { extractExpressions, emitPrecompileSource } from '../../companions/spektrum-compile.js';
+import { saveHistory, loadHistory, autoSave } from '../../companions/spektrum-persist.js';
+import { mount as mountDevtools } from '../../companions/spektrum-devtools.js';
+import { createTools, type McpTool } from '../../companions/spektrum-mcp.js';
+import { mount as mountAgent } from '../../companions/spektrum-agent.js';
+
+const _exprs: string[] = extractExpressions('<b>{{ count + 1 }}</b>');
+const _mod: string = emitPrecompileSource(_exprs, { specifier: 'spektrum' });
+void _mod;
+
+const _saved: boolean = saveHistory(inst);
+const _loaded: boolean = loadHistory(inst, { maxEntries: 1000 });
+const _stopAuto: () => void = autoSave(inst, { debounce: 200 });
+void _saved; void _loaded; void _stopAuto;
+
+const _unmountDt: () => void = mountDevtools(inst, { position: 'top-right' });
+void _unmountDt;
+
+const _tools: McpTool[] = createTools(inst, { protectedPaths: ['llm', /^secret/], prefix: 'app.' });
+const _ackTools: McpTool[] = createTools(inst, { allowAllPaths: true });
+void _tools; void _ackTools;
+
+const _unmountAgent: () => void = mountAgent(inst, {
+  provider: 'anthropic',
+  protectedPaths: ['llm.apiKey'],
+  position: 'bottom-left',
+});
+void _unmountAgent;

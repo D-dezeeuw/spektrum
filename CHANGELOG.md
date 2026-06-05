@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] — 2026-06-05
+
+**Production-hardening patch.** Five engine-correctness fixes plus a focused pass on the issues a production-readiness audit surfaced: a real time-travel snapshot fix, safe-by-default agent writes, cancellable speculative async, complete companion types, and an error-code drift gate that actually gates. All additive or bug-fix; no breaking changes.
+
+### Fixed
+
+- **Snapshots no longer alias live state.** `deepMerge` clones plain objects but shared array references, so a stored snapshot aliased the arrays it was captured from. A direct `appState.list.push(x)` (bypassing `setValue`/`addValue`) — or an in-place sub-path merge during `replay()` — could mutate a snapshot and make `replay()` restore corrupted state. Snapshots now `deepClone` their whole object graph at both the store and restore boundaries, so each owns its arrays. Only affected instances using `snapshotEvery`.
+- **`computed()` rejects self-referential deps** at registration with `E_COMPUTED_SELF_DEP` (equal / ancestor / descendant overlap). Previously a self-dep silently burned the 1024-iteration tick cap and tripped the delta-clear safety net, dropping other systems' writes queued in the same tick.
+- **`:innerHTML` / `:textContent` reach the DOM.** `bindAttrs` aliases HTML-lowercased camelCase property names (`:innerHTML` → `innerHTML`) instead of assigning a dead JS expando.
+- **Hyphenated attributes reach the DOM.** `:aria-pressed`, `:data-*`, etc. route through `setAttribute` / `removeAttribute`; `null`/`undefined` clears the attribute.
+- **`bindDOM` binds the root element**, not only its descendants — so `:attr` / `data-if` / `data-action` authored on a `data-each` loop body's own tag actually bind.
+- **`warn()` returns `undefined`** explicitly so `return warn(…)` from a guard clause can't smuggle a monkey-patched `console.warn` return value into a cleanup collector.
+
+### Added
+
+- **`AbortSignal` for `attempt()`.** `fn` receives an `AbortSignal` (also `handle.signal`); `discard()` aborts it, so in-flight async speculative work wired to the signal — `attempt('edit', (signal) => fetch(url, { signal }))` — is cancelled instead of landing a write after the rewind. Back-compatible: an `fn` that ignores the arg behaves as before.
+- **Safe-by-default agent/MCP writes.** An ungated `createTools(spektrum)` (no `protectedPaths`) now warns that the agent can write any path, unless the caller passes `{ allowAllPaths: true }` to consciously acknowledge it. The in-page agent's `mount()` forwards the option. **Not a breaking change** — writes still work; only an unacknowledged, unguarded catalog nags. A future major may flip the default to deny.
+- **TypeScript declarations for all five remaining companions** (`spektrum/compile`, `/devtools`, `/persist`, `/mcp`, `/agent`), wired into the `package.json` exports `types` field. Previously these public exports shipped untyped (consumers hit `TS2307`). The type test now exercises them so `tsc --noEmit` catches companion drift too.
+- **`E_COMPUTED_SELF_DEP` is now in `EngineErrorCode`** and documented in `docs/api.md`.
+
+### Internal
+
+- **Real error-code drift gate.** The previous `tsc --noEmit` "drift gate" passed even though `E_COMPUTED_SELF_DEP` was missing from `EngineErrorCode` — it read `err.code` one-directionally. Added an exhaustiveness `switch` over the union (catches type→handler drift) and a runtime source-scan test that fails CI if `spektrum.js` assigns a `code` not registered in the type and docs (catches JS→type drift).
+- Engine size cap raised one step (13,440 → 13,696 B raw / 6,112 → 6,240 B gz) for the snapshot `deepClone` + `attempt` `AbortSignal` (~215 B net). `spektrum-mcp.min.js` cap raised one step (5,376 → 5,632 B raw / 2,048 → 2,240 B gz) for the safe-by-default warning. Rationale documented inline in `scripts/size.js`.
+
+### Docs
+
+- README: qualified the strict-CSP claim (the default runtime needs `unsafe-eval`; precompile with `spektrum/compile` for strict CSP) and corrected the stale source-line count.
+- `docs/bindings.md`: documented `:innerHTML` as carrying the same template trust requirement as `:srcdoc` — never bind untrusted/LLM/API content through it.
+- `docs/modules.md`: documented `protectedPaths` and `allowAllPaths` for `spektrum/mcp` and `spektrum/agent`.
+- `SECURITY.md`: added an agent-driven-mutation section.
+
 ## [1.0.1] — 2026-05-18
 
 **Agent-mount safety.** Adds `protectedPaths` to `createTools(spektrum, opts)` and the in-page agent's `mount(spektrum, opts)` — paths that mutation tools refuse to write. Engine-level patch unblocks consumers who wanted to mount `spektrum/agent` against real apps but feared the agent overwriting sensitive state (API keys, player selection, etc.). Patch-level because the API is purely additive: omitting `protectedPaths` is identical to 1.0.0.

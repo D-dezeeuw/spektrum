@@ -142,7 +142,12 @@ spektrum.onError((err, systemFn) => {
 });
 ```
 
-Current codes: `E_TICK_OVERFLOW` (tick fan-out exceeded 1024 iterations; delta discarded). User-thrown errors from systems pass through unannotated — same identity as the throwing code produced.
+Current codes:
+
+- `E_TICK_OVERFLOW` — tick fan-out exceeded 1024 iterations; delta discarded. Routed through `onError`.
+- `E_COMPUTED_SELF_DEP` — `computed(path, deps, fn)` was registered with a dep that overlaps its own output path (equal, ancestor, or descendant). Thrown **synchronously from `computed()`** at registration time, so you catch it at the call site — it does *not* arrive via `onError`.
+
+User-thrown errors from systems pass through unannotated — same identity as the throwing code produced.
 
 ## Serializing state
 
@@ -195,6 +200,14 @@ if (await h.result) h.commit(); else h.discard();
 ```
 
 `commit()` records an `<name>:commit` checkpoint. `discard()` rewinds the cursor; the speculative entries land on `forks` on the next mutation.
+
+`fn` receives an `AbortSignal` (also exposed as `h.signal`); `discard()` aborts it, so in-flight async work wired to the signal is cancelled rather than landing a write after the rewind:
+
+```js
+const h = spektrum.attempt('apply-edit', (signal) =>
+  fetch('/validate', { signal }).then(r => r.json()));
+if ((await h.result).ok) h.commit(); else h.discard();   // discard() aborts the fetch
+```
 
 ### `findByIntent(name)`
 

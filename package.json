@@ -1,7 +1,7 @@
 {
   "name": "spektrum",
-  "version": "1.0.1",
-  "description": "Tiny reactive engine with HTML bindings and time-travel. ~12kB minified, zero runtime deps, agent-native.",
+  "version": "1.0.2",
+  "description": "Tiny reactive engine with HTML bindings and time-travel. ~13kB minified, zero runtime deps, agent-native.",
   "type": "module",
   "main": "./spektrum.js",
   "types": "./spektrum.d.ts",
@@ -12,11 +12,11 @@
       "types": "./spektrum.d.ts",
       "import": "./spektrum.js"
     },
-    "./compile":  { "import": "./companions/spektrum-compile.js"  },
-    "./devtools": { "import": "./companions/spektrum-devtools.js" },
-    "./persist":  { "import": "./companions/spektrum-persist.js"  },
-    "./mcp":      { "import": "./companions/spektrum-mcp.js"      },
-    "./agent":    { "import": "./companions/spektrum-agent.js"    },
+    "./compile":  { "types":  "./companions/spektrum-compile.d.ts",  "import": "./companions/spektrum-compile.js"  },
+    "./devtools": { "types":  "./companions/spektrum-devtools.d.ts", "import": "./companions/spektrum-devtools.js" },
+    "./persist":  { "types":  "./companions/spektrum-persist.d.ts",  "import": "./companions/spektrum-persist.js"  },
+    "./mcp":      { "types":  "./companions/spektrum-mcp.d.ts",      "import": "./companions/spektrum-mcp.js"      },
+    "./agent":    { "types":  "./companions/spektrum-agent.d.ts",    "import": "./companions/spektrum-agent.js"    },
     "./inspect":  { "types":  "./companions/spektrum-inspect.d.ts", "import": "./companions/spektrum-inspect.js" },
     "./dock":     { "types":  "./companions/spektrum-dock.d.ts",    "import": "./companions/spektrum-dock.js"    }
   },

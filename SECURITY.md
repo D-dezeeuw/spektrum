@@ -1,6 +1,6 @@
 # Security policy
 
-Spektrum is a single ~600-line file with zero runtime dependencies.
+Spektrum is a single ~1,350-line file with zero runtime dependencies.
 The supply-chain story is the whole pitch — please help keep it
 honest.
 
@@ -26,9 +26,9 @@ occasionally get filtered.
 
 In scope:
 
-- The runtime engine (`spektrum.js`) and bundled subpath modules
-  (`spektrum-compile.js`, `spektrum-devtools.js`,
-  `spektrum-persist.js`).
+- The runtime engine (`spektrum.js`) and the published subpath
+  modules (`spektrum/compile`, `/devtools`, `/persist`, `/mcp`,
+  `/agent`, `/inspect`, `/dock`).
 - Anything published under the `spektrum` npm package.
 
 Out of scope:
@@ -51,3 +51,21 @@ For deployments under strict CSP that disable `unsafe-eval`, use
 the `precompile()` API plus the build-time scanner in
 `spektrum/compile` — see the README. With every template expression
 precompiled, the runtime never reaches the `new Function` fallback.
+
+### Agent-driven mutations
+
+`spektrum/mcp` and `spektrum/agent` hand an LLM the same write authority
+over engine state as any caller of `setValue` / `trigger`. Two things to
+know when putting an app on the wire for an agent:
+
+- **Fence sensitive paths.** Pass `protectedPaths` to `createTools()` /
+  `mount()` so the agent can't write API keys, auth, or config. An
+  ungated catalog still works but warns; pass `{ allowAllPaths: true }`
+  only when unrestricted writes are genuinely intended. Mount the agent
+  only where you trust the agent and the transport (e.g. local stdio
+  MCP — never exposed to the internet without auth).
+- **Don't render agent output through `:innerHTML`.** LLM/API responses
+  are semi-trusted data. `:innerHTML` and `:srcdoc` parse their value as
+  HTML, so binding model output through them reintroduces XSS. Use
+  `{{ }}` text interpolation or `:textContent` for agent-produced
+  strings.

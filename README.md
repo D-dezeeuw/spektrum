@@ -12,7 +12,7 @@
 
 **[Live demo →](https://d-dezeeuw.github.io/spektrum/example/)**
 
-Spektrum is one file with zero runtime dependencies and no build step. The ~1,100 commented source lines audit in an afternoon, and there's nothing transitive to pick up someone else's CVE from. The same small footprint drops cleanly into a WordPress theme, an MV3 browser extension, an Electron renderer, or any strict-CSP environment — no SPA framework required.
+Spektrum is one file with zero runtime dependencies and no build step. The ~1,350 commented source lines audit in an afternoon, and there's nothing transitive to pick up someone else's CVE from. The same small footprint drops cleanly into a WordPress theme, an MV3 browser extension, an Electron renderer, or — once expressions are precompiled with `spektrum/compile` — a strict-CSP environment with no `unsafe-eval`. No SPA framework required.
 
 At ~12 KB the whole engine fits in any LLM's context window in one tool call — so when an AI agent writes Spektrum code, it's working from the source, not a guess. `attempt()` is speculative execution as a primitive: try a change, run validation, commit or discard. `describe()` returns the full operational manifest. The MCP companion exposes the running app as a tool catalog any MCP-compatible agent can drive.
 

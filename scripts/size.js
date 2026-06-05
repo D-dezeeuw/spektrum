@@ -72,8 +72,30 @@
        `finally{}` after `discard()` no longer appends an orphan
        checkpoint.
   Combined +~200 B raw / +~32 B gz; cap raised to 12.875 kB raw
-  (13,184 B) and 5.875 kB gz (6,016 B). Adjust caps deliberately —
-  every bump invites complacency. Trim before raising.
+  (13,184 B) and 5.875 kB gz (6,016 B). The 1.0.2 fixes address three
+  silent-failure modes reported by a real consumer ([:innerHTML] /
+  [:aria-pressed] / `:attr` on the data-each clone root) plus a
+  self-dep guard in `computed()`:
+    1. bindDOM's per-element walk now includes the root, not only its
+       descendants — so `:attr` / `data-if` / `data-action` authored on
+       a data-each loop body's own tag actually bind.
+    2. bindAttrs aliases HTML-lowercased camelCase props (`:innerhtml`
+       → `innerHTML`, `:textcontent` → `textContent`) so writing
+       `:innerHTML="…"` in HTML doesn't silently assign a JS expando.
+    3. Hyphenated property names route through setAttribute /
+       removeAttribute so `:aria-pressed`, `:data-*`, etc. reach the
+       DOM instead of becoming dead JS expandos.
+    4. `computed(path, deps, fn)` rejects self-referential dep sets at
+       registration with `E_COMPUTED_SELF_DEP` — previously a self-dep
+       silently burned the 1024-iteration tick cap and triggered the
+       delta-clear safety net, *dropping other systems' pending writes
+       queued in the same tick*.
+    5. `warn()` now returns undefined explicitly so `return warn(…)`
+       from guard clauses can't smuggle a monkey-patched console.warn
+       return value into a cleanup collector.
+  Net +~255 B raw / +~95 B gz; cap raised to 13.125 kB raw (13,440 B)
+  and 5.969 kB gz (6,112 B). Adjust caps deliberately — every bump
+  invites complacency. Trim before raising.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -85,7 +107,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 13184, gz: 6016 },
+  { file: 'spektrum.min.js',          raw: 13440, gz: 6112 },
   { file: 'companions/spektrum-persist.min.js',  raw:  1024, gz:  576 },
   // 1.2 dock integration adds ~120 B for the [data-spektrum-dock]
   // detection branch + dockPanel.detach() in unmount. Standalone

@@ -524,6 +524,37 @@ test('computed mid-tick read-through: sibling system sees fresh value (regressio
   assert.equal(observed, 14, 'sibling read sees the just-computed value');
 });
 
+test('computed rejects self-referential deps at registration (E_COMPUTED_SELF_DEP)', () => {
+  // Pre-guard: `computed('ui.recording', ['ui.recording'], …)` registered
+  // silently and then re-fed its own delta every iteration of the next
+  // tick — burning the 1024-iteration cap and finally hitting
+  // clearObject(appStateDelta), which silently dropped other systems'
+  // pending writes queued in the same tick. The guard refuses the
+  // registration so the loop can never form.
+  assert.throws(() => computed('ui.recording', ['ui.recording'], () => true), (err) => {
+    assert.equal(err.code, 'E_COMPUTED_SELF_DEP');
+    assert.match(err.message, /overlapping path/);
+    return true;
+  }, 'exact self-dep is refused');
+
+  // Ancestor dep (write `a.b`, read `a`) — any mutation under `a` would
+  // re-fire the deriver, which writes back under `a` and re-arms itself.
+  assert.throws(() => computed('a.b', ['a'], (s) => s.a),
+    err => err.code === 'E_COMPUTED_SELF_DEP',
+    'ancestor dep overlap is refused');
+
+  // Descendant dep (write `a`, read `a.b`) — the whole-object write
+  // includes `a.b`, so the deriver would re-trigger on its own output.
+  assert.throws(() => computed('a', ['a.b'], (s) => ({ b: s.a?.b })),
+    err => err.code === 'E_COMPUTED_SELF_DEP',
+    'descendant dep overlap is refused');
+
+  // Sibling paths (different leaf under shared parent) must still work
+  // — the guard is on path overlap, not parent-key collision.
+  assert.doesNotThrow(() => computed('a.b', ['a.c'], (s) => s.a?.c),
+    'sibling deps under a shared parent are NOT self-deps');
+});
+
 // === watch (public alias for addSystem) ===
 
 test('watch is a 1:1 alias of addSystem', () => {

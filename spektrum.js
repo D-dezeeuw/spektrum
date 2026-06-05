@@ -14,8 +14,14 @@
 const MUSTACHE = /\{\{\s*([^}]+?)\s*\}\}/g;
 
 /** Namespaced console.warn — every internal warning prefixes
- *  `[spektrum]`, factoring it out shaves bytes after minification. */
-const warn = (msg) => console.warn('[spektrum] ' + msg);
+ *  `[spektrum]`, factoring it out shaves bytes after minification.
+ *  Always returns undefined so `return warn(...)` from guard clauses
+ *  can't smuggle console.warn's return value into a caller (e.g. a
+ *  cleanup collector that expects only functions or undefined). Some
+ *  test harnesses monkey-patch console.warn to capture calls; the
+ *  patched form may return a truthy value (e.g. Array.push length),
+ *  which would otherwise propagate. */
+const warn = (msg) => { console.warn('[spektrum] ' + msg); };
 
 /**
  * Reject path segments and JSON keys that would touch a prototype slot.
@@ -686,21 +692,38 @@ export const createSpektrum = (opts = {}) => {
     }, scope);
   };
 
-  /** :attr="expression". Property write (not setAttribute). `:class` /
-   *  `:className` route through applyClass(). URL-bearing attributes
-   *  rewrite javascript:-scheme strings to '#'. */
+  /** :attr="expression". Property write by default (not setAttribute).
+   *  `:class` / `:className` route through applyClass(). URL-bearing
+   *  attributes rewrite javascript:-scheme strings to '#'.
+   *
+   *  Two HTML-specific quirks bindAttrs handles so authors don't have to:
+   *
+   *  - The HTML parser lowercases attribute names, so `:innerHTML` is
+   *    seen as `:innerhtml`. Writing `el.innerhtml` would create an
+   *    invisible JS expando, never reaching the DOM. `PROP_ALIAS` maps
+   *    the lowercased form back to the camelCase property.
+   *
+   *  - Hyphenated names (`:aria-pressed`, `:data-foo`) have no matching
+   *    JS property — `el['aria-pressed']` is also a dead expando. They
+   *    route through setAttribute / removeAttribute. Null/undefined
+   *    clears the attribute so absence is expressible (matters for
+   *    aria-* attributes whose presence has semantic weight). */
+  const PROP_ALIAS = { innerhtml: 'innerHTML', textcontent: 'textContent' };
   const bindAttrs = (el, scope) => {
     const unsubs = [];
     for (const a of [...el.attributes]) {
       if (a.name[0] !== ':') continue;
-      const prop = a.name.slice(1), expr = a.value;
+      const raw = a.name.slice(1), expr = a.value;
       if (!expr) continue;
+      const prop = PROP_ALIAS[raw] || raw;
       const isClass = prop === 'class' || prop === 'className';
       const isUrl = /^(href|src|action|formaction|background|cite|poster|data)$/.test(prop);
+      const isKebab = prop.includes('-');
       unsubs.push(bindReactive(extractPaths(expr, scope), (state, _delta, sc) => {
         let v = evalExpr(expr)(state, sc);
         if (isClass) return applyClass(el, v);
         if (isUrl && typeof v === 'string' && JS_SCHEME.test(v)) v = '#';
+        if (isKebab) return v == null ? el.removeAttribute(prop) : el.setAttribute(prop, v);
         el[prop] = v;
       }, scope));
     }
@@ -802,6 +825,20 @@ export const createSpektrum = (opts = {}) => {
    *  in state; the addSystem path takes over normally once a dep
    *  arrives. */
   const computed = (path, deps, fn) => {
+    // Reject self-referential derivations at registration time: a
+    // computed whose deps overlap its own output path feeds its own
+    // delta and re-fires every iteration, burning the 1024-iteration
+    // safety cap and triggering clearObject(appStateDelta) — which
+    // drops other systems' pending writes queued in that same tick.
+    // The overlap is structural (path === dep, ancestor, or descendant),
+    // so it's cheap to detect once instead of looping at runtime.
+    const conflict = deps.find(d =>
+      d === path || d.startsWith(path + '.') || path.startsWith(d + '.'));
+    if (conflict) {
+      const err = new Error(`computed("${path}") depends on overlapping path "${conflict}" — would loop`);
+      err.code = 'E_COMPUTED_SELF_DEP';
+      throw err;
+    }
     const derive = (s, d) => {
       const v = fn(s);
       setPathValue(d, path, v);
@@ -1131,11 +1168,26 @@ export const createSpektrum = (opts = {}) => {
       collect(bindText(n, scope));
     });
 
-    // Single walk over every descendant. Replaces 5 separate
-    // querySelectorAll calls (one per directive) plus the dedicated
-    // data-cloak strip pass — same behavior, fewer tree traversals.
-    for (const el of root.querySelectorAll('*')) {
-      if (ownedByEach(el)) continue;
+    // Single walk over the root element AND every descendant. Replaces
+    // 5 separate querySelectorAll calls (one per directive) plus the
+    // dedicated data-cloak strip pass — same behavior, fewer tree
+    // traversals. The root is processed alongside its descendants
+    // because data-each clones present the bound element AS the root;
+    // skipping it (the pre-1.0.2 behavior, since querySelectorAll
+    // returns descendants only) silently dropped `:attr` / `data-if` /
+    // `data-action` bindings authored on the loop template's own tag.
+    // `document` has no dataset/attributes — skip the root pass for it.
+    const els = root.nodeType === 1
+      ? [root, ...root.querySelectorAll('*')]
+      : [...root.querySelectorAll('*')];
+    for (const el of els) {
+      // Skip the ownedByEach test for root itself: when bindEach calls
+      // bindDOM(clone, scope), clone.parentNode is the each-host (which
+      // sits in eachHosts), so a naive check would mark our own root as
+      // foreign and skip its bindings. ownedByEach exists to keep an
+      // outer walk from re-entering an inner each's clones — not to
+      // discard the current walk's root.
+      if (el !== root && ownedByEach(el)) continue;
       collect(bindAttrs(el, scope));
       const ds = el.dataset;
       if (ds.if     !== undefined) collect(bindIf(el, scope));
@@ -1145,9 +1197,6 @@ export const createSpektrum = (opts = {}) => {
       if (ds.action !== undefined) collect(bindAction(el, scope));
       el.removeAttribute('data-cloak');
     }
-    // root itself wasn't in the walk above (querySelectorAll excludes
-    // it); strip its data-cloak too. Optional chain for `document`.
-    root.removeAttribute?.('data-cloak');
 
     return () => {
       boundRoots.delete(root);

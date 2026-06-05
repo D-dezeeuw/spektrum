@@ -142,7 +142,12 @@ spektrum.onError((err, systemFn) => {
 });
 ```
 
-Current codes: `E_TICK_OVERFLOW` (tick fan-out exceeded 1024 iterations; delta discarded). User-thrown errors from systems pass through unannotated — same identity as the throwing code produced.
+Current codes:
+
+- `E_TICK_OVERFLOW` — tick fan-out exceeded 1024 iterations; delta discarded. Routed through `onError`.
+- `E_COMPUTED_SELF_DEP` — `computed(path, deps, fn)` was registered with a dep that overlaps its own output path (equal, ancestor, or descendant). Thrown **synchronously from `computed()`** at registration time, so you catch it at the call site — it does *not* arrive via `onError`.
+
+User-thrown errors from systems pass through unannotated — same identity as the throwing code produced.
 
 ## Serializing state
 

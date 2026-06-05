@@ -45,9 +45,18 @@ export type SystemFn = (state: State, delta: State) => void;
  *
  *  - `E_TICK_OVERFLOW`: tick fan-out exceeded 1024 iterations and
  *    the delta was discarded. Indicates a runaway feedback cycle
- *    between systems.
+ *    between systems. Routed through `onError`.
+ *  - `E_COMPUTED_SELF_DEP`: `computed(path, deps, fn)` was registered
+ *    with a dep that overlaps its own output path (equal, ancestor, or
+ *    descendant), which would feed its own delta and loop. Thrown
+ *    synchronously from `computed()` at registration time — caught at
+ *    your call site, not routed through `onError`.
+ *
+ * This union is kept in lockstep with the engine by a source-scan
+ * drift gate (see tests/spektrum.test.js) that fails CI if spektrum.js
+ * assigns a `code` not listed here.
  */
-export type EngineErrorCode = 'E_TICK_OVERFLOW';
+export type EngineErrorCode = 'E_TICK_OVERFLOW' | 'E_COMPUTED_SELF_DEP';
 
 /**
  * Errors received by `onError`. Engine-originated errors carry a

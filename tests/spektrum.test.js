@@ -1312,3 +1312,38 @@ test('trigger with empty path warns and does NOT record', () => {
   assert.ok(warns.some(w => w.includes('addValue') && w.includes('empty path')),
     `expected empty-path warn; got: ${warns.join(' | ')}`);
 });
+
+// === EngineErrorCode drift gate ===
+// The .d.ts EngineErrorCode union and docs/api.md are hand-maintained,
+// so they can silently fall out of sync with the codes the engine
+// actually throws. This is the *real* drift gate the audit asked for:
+// it scans the engine source for every `code = 'E_…'` assignment and
+// fails if the set diverges from the documented list. tsc only checks
+// the type is self-consistent (see tests/types/spektrum.types.ts'
+// exhaustiveness switch); only this catches a NEW code added to the JS
+// that nobody added to the type/docs.
+test('every engine error code is registered in EngineErrorCode + docs', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const dir = fileURLToPath(new URL('.', import.meta.url));
+  const engineSrc = readFileSync(dir + '../spektrum.js', 'utf8');
+  const dtsSrc = readFileSync(dir + '../spektrum.d.ts', 'utf8');
+  const apiSrc = readFileSync(dir + '../docs/api.md', 'utf8');
+
+  // Codes the engine assigns: `(err.)code = 'E_…'` or `code: 'E_…'`.
+  const thrown = new Set(
+    [...engineSrc.matchAll(/\bcode\s*[:=]\s*'(E_[A-Z_]+)'/g)].map((m) => m[1]),
+  );
+  assert.ok(thrown.size >= 2, `expected to find engine error codes; found ${[...thrown]}`);
+
+  for (const code of thrown) {
+    assert.ok(
+      dtsSrc.includes(`'${code}'`),
+      `error code '${code}' is thrown in spektrum.js but missing from EngineErrorCode in spektrum.d.ts`,
+    );
+    assert.ok(
+      apiSrc.includes(code),
+      `error code '${code}' is thrown in spektrum.js but undocumented in docs/api.md`,
+    );
+  }
+});

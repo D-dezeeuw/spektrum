@@ -159,6 +159,23 @@ void reran;
 
 const errHandler: ErrorHandler = (err, system) => {
   const code: EngineErrorCode | undefined = err.code;
+  // Exhaustiveness gate: every member of EngineErrorCode must be
+  // handled here. Adding a code to the union without a case (or
+  // removing one) makes `_exhaustive` no longer `never` and fails
+  // `tsc --noEmit`. This forces the union to stay a *deliberate*,
+  // documented set rather than silently drifting. The runtime
+  // source-scan gate in spektrum.test.js catches the other direction
+  // (a code thrown in spektrum.js that was never added to the union).
+  switch (code) {
+    case 'E_TICK_OVERFLOW':
+    case 'E_COMPUTED_SELF_DEP':
+    case undefined:
+      break;
+    default: {
+      const _exhaustive: never = code;
+      void _exhaustive;
+    }
+  }
   void code; void system;
 };
 const offErr: () => void = onError(errHandler);

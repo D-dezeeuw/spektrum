@@ -167,10 +167,12 @@ mount(spektrum, {
   apiKey:   '<key>',             // optional — panel prompts via ⚙ on first use
   model:    'claude-haiku-4-5',  // optional — provider default applies
   position: 'bottom-left',
+  protectedPaths: ['llm.apiKey'], // allow writes except these — REQUIRED to enable writes
+  // allowAllPaths: true,          // …or allow every write
 });
 ```
 
-The panel is wired with the same `createTools(spektrum)` catalog the MCP module uses, so the agent has the full surface: `getState`, `describe`, `explain`, `setValue`, `trigger`, `checkpoint`, `attempt`, `replay`, `findByIntent`, `serialize`. Every tool call renders in the chat log — full transparency.
+The panel is wired with the same `createTools(spektrum)` catalog the MCP module uses, so the agent has the full read surface — `getState`, `describe`, `explain`, `replay`, `findByIntent`, `serialize` — plus the write tools `setValue`, `trigger`, `checkpoint`, `attempt`. **Writes are denied by default** (a read-only agent): pass `protectedPaths` (allow all but those) or `allowAllPaths: true` (allow everything) to enable them. Every tool call renders in the chat log — full transparency.
 
 **Three providers, one panel.** Click the ⚙ in the panel header to switch between Anthropic, OpenAI, and OpenRouter. Keys and per-provider models are stored separately in `localStorage` so switching doesn't lose anything.
 
@@ -197,9 +199,11 @@ If your agent speaks MCP (Claude Desktop, Cursor, an in-app supervisor, an orche
 import spektrum from 'spektrum';
 import { createTools } from 'spektrum/mcp';
 
-const tools = createTools(spektrum);
+const tools = createTools(spektrum, { protectedPaths: ['llm.apiKey'] });
 // → [{ name: 'spektrum.getState', description, inputSchema, handler }, ...]
-//   12 tools covering the full agent surface
+//   12 tools covering the full agent surface.
+// Writes are denied by default — pass protectedPaths (allow all but
+// those) or allowAllPaths:true (allow all) to enable mutation tools.
 ```
 
 `tools[].handler` is plain async JS — wire it into your MCP server SDK of choice. Spektrum has zero MCP SDK dependency; the boundary is clean.
@@ -309,9 +313,10 @@ If you want an agent to drive your app over MCP:
 import { createTools } from 'spektrum/mcp';
 import spektrum from 'spektrum';
 
-// Your MCP server SDK — pseudocode
+// Your MCP server SDK — pseudocode. Writes are denied by default; pass
+// protectedPaths (allow all but those) or allowAllPaths:true to enable them.
 const server = new MCPServer({ name: 'my-app' });
-for (const t of createTools(spektrum)) {
+for (const t of createTools(spektrum, { protectedPaths: ['llm.apiKey'] })) {
   server.tool(t.name, t.description, t.inputSchema, t.handler);
 }
 server.listen();

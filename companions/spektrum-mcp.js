@@ -48,21 +48,16 @@ const NO_INPUT = { type: 'object', properties: {}, additionalProperties: false }
 const ok  = (data)  => ({ ok: true,  data });
 const err = (error) => ({ ok: false, error });
 
-/** Build a path guard from `protectedPaths`. String entries match the
- *  full dotted path OR a dot-segment prefix (so `'llm'` covers
- *  `llm.apiKey`, `llm.provider`, etc., but not `llmFoo`). RegExp
- *  entries are tested as-is. Returns null when no patterns supplied —
- *  caller skips the gate. */
-const buildGuard = (patterns) => {
-  if (!patterns || !patterns.length) return null;
-  return (path) => patterns.some(p =>
-    typeof p === 'string'
-      ? path === p || path.startsWith(p + '.')
-      : p.test(path)
-  );
-};
-
-const warnUnguarded = () => console.warn('[spektrum/mcp] ungated catalog: agent can write ANY path (keys, auth, config). Pass protectedPaths to fence, or allowAllPaths:true to silence.');
+/** Build a path guard from a non-empty `protectedPaths` array (the
+ *  caller's three-way ternary only reaches here with one). String
+ *  entries match the full dotted path OR a dot-segment prefix (so
+ *  `'llm'` covers `llm.apiKey`, `llm.provider`, etc., but not
+ *  `llmFoo`). RegExp entries are tested as-is. */
+const buildGuard = (patterns) => (path) => patterns.some(p =>
+  typeof p === 'string'
+    ? path === p || path.startsWith(p + '.')
+    : p.test(path)
+);
 
 /**
  * Build the MCP tool catalog for a Spektrum instance.
@@ -70,19 +65,20 @@ const warnUnguarded = () => console.warn('[spektrum/mcp] ungated catalog: agent 
  * @param {object} spektrum - the engine instance to expose
  * @param {object} [opts]
  * @param {string} [opts.prefix='spektrum.'] - namespace prepended to every tool name
- * @param {Array<string|RegExp>} [opts.protectedPaths] - paths that mutation tools (setValue, trigger, and the inline set/add ops inside attempt.start) refuse to write. String entries match exact path or dot-segment prefix; RegExp entries are tested as-is. Denied writes return `{ ok: false, error: 'protected: <path>' }` and the engine is never called. Reads, describe, explain, replay, etc. are unaffected. The in-page agent companion forwards its own `protectedPaths` opt here.
- * @param {boolean} [opts.allowAllPaths] - explicit acknowledgement that the agent may write anywhere. Set this (instead of `protectedPaths`) to silence the unrestricted-write safety warning when full write access is genuinely intended.
+ * @param {Array<string|RegExp>} [opts.protectedPaths] - paths that mutation tools (setValue, trigger, and the inline set/add ops inside attempt.start) refuse to write. String entries match exact path or dot-segment prefix; RegExp entries are tested as-is. Denied writes return `{ ok: false, error: 'protected: <path>' }` and the engine is never called. Reads, describe, explain, replay, etc. are unaffected. Takes precedence over `allowAllPaths`. The in-page agent companion forwards its own `protectedPaths` opt here.
+ * @param {boolean} [opts.allowAllPaths] - opt into unrestricted writes. Writes are **denied by default** (read-only agent); pass `protectedPaths` to allow all but specific paths, or `allowAllPaths: true` to allow every path. Ignored when `protectedPaths` is set (those still apply).
  * @returns {Array<{name: string, description: string, inputSchema: object, handler: (args: object) => any}>}
  */
 export const createTools = (spektrum, opts = {}) => {
   const prefix = opts.prefix ?? 'spektrum.';
-  const guard  = buildGuard(opts.protectedPaths);
-  // Safe-by-default posture without a breaking change: writes still
-  // work when ungated (back-compat), but an unguarded catalog is a
-  // foot-gun — an agent can overwrite any path (API keys, auth,
-  // config). Warn loudly, once, unless the caller passed
-  // `allowAllPaths` to consciously opt in.
-  if (!guard && !opts.allowAllPaths) warnUnguarded();
+  // Safe-by-default (1.1.0): writes are DENIED unless the caller opts
+  // in. protectedPaths wins — it means "allow everything except these".
+  // allowAllPaths means "allow everything". With neither, the guard
+  // denies all writes, so a forgotten config yields a read-only agent
+  // instead of one with full authority over app state.
+  const guard = opts.protectedPaths?.length ? buildGuard(opts.protectedPaths)
+    : opts.allowAllPaths ? null
+    : () => true;
   const t = (name, description, inputSchema, handler) => ({
     name: prefix + name, description, inputSchema, handler,
   });

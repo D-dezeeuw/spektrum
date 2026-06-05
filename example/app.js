@@ -286,8 +286,9 @@ const mountAgent = async () => {
   const { mount: mountAgentPanel } = await import('../companions/spektrum-agent.js');
   // The agent drives the basket instance (more interesting surface area:
   // lists, filtering, multiple intents). Mount one per instance if you
-  // want both wired.
-  mountAgentPanel(basket, { position: small ? 'top-left' : 'top-right', title: 'agent · basket' });
+  // want both wired. allowAllPaths because this is a demo — the agent is
+  // read-only by default; a real app would pass protectedPaths instead.
+  mountAgentPanel(basket, { position: small ? 'top-left' : 'top-right', title: 'agent · basket', allowAllPaths: true });
   enableAgentLink.style.display = 'none';
 };
 

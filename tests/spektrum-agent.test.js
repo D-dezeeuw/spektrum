@@ -397,7 +397,7 @@ test('tool_use → tool_result → final text (two-hop)', async () => {
     anthropicToolUse('spektrum_setValue', { path: 'x', value: 42 }),
     anthropicText('done.'),
   ]);
-  const unmount = mount(s);
+  const unmount = mount(s, { allowAllPaths: true });
   document.querySelector('[data-input]').value = 'set x to 42';
   document.querySelector('[data-send]').click();
   await new Promise(r => setTimeout(r, 10));
@@ -438,7 +438,7 @@ test('tool handler that throws is rendered as an error and the loop continues', 
     anthropicToolUse('spektrum_setValue', { path: 'x', value: 1 }),
     anthropicText('caught the error.'),
   ]);
-  const unmount = mount(s);
+  const unmount = mount(s, { allowAllPaths: true });   // reach the engine boundary
   document.querySelector('[data-input]').value = 'set x';
   document.querySelector('[data-send]').click();
   await new Promise(r => setTimeout(r, 10));
@@ -499,7 +499,7 @@ test('hop bound — 8 consecutive tool_use responses then break', async () => {
   const responses = Array.from({ length: 9 }, (_, i) =>
     anthropicToolUse('spektrum_setValue', { path: 'n', value: i }, `tu_${i}`));
   stubFetch(responses);
-  const unmount = mount(s);
+  const unmount = mount(s, { allowAllPaths: true });
   document.querySelector('[data-input]').value = 'go';
   document.querySelector('[data-send]').click();
   await new Promise(r => setTimeout(r, 30));
@@ -534,7 +534,7 @@ test('handler throwing a non-Error stringifies it for the result envelope', asyn
     anthropicToolUse('spektrum_setValue', { path: 'x', value: 1 }),
     anthropicText('moved on.'),
   ]);
-  const unmount = mount(s);
+  const unmount = mount(s, { allowAllPaths: true });   // reach the engine boundary
   document.querySelector('[data-input]').value = 'set x';
   document.querySelector('[data-send]').click();
   await new Promise(r => setTimeout(r, 10));
@@ -676,7 +676,7 @@ test('openai adapter handles a tool_call response and the follow-up tool result'
     openaiToolCall('spektrum_setValue', { path: 'a', value: 7 }),
     openaiText('done.'),
   ]);
-  const unmount = mount(s);
+  const unmount = mount(s, { allowAllPaths: true });
   document.querySelector('[data-input]').value = 'set a to 7';
   document.querySelector('[data-send]').click();
   await new Promise(r => setTimeout(r, 10));
@@ -980,15 +980,27 @@ test('compactJson falls back to String(v) when JSON.stringify throws', async () 
 
 suite('protectedPaths', () => {
 
-test('omitting protectedPaths leaves the system prompt unchanged', async () => {
+test('omitting both opts → read-only note in the system prompt (deny-by-default)', async () => {
   localStorage.setItem('spektrum:agent:apikey:anthropic', 'sk-ant-x');
   const calls = stubFetch([anthropicText('ok')]);
-  const unmount = mount(s);
+  const unmount = mount(s);   // no protectedPaths, no allowAllPaths → read-only
   document.querySelector('[data-input]').value = 'hi';
   document.querySelector('[data-send]').click();
   await new Promise(r => setTimeout(r, 5));
   const body = JSON.parse(calls[0].init.body);
-  assert.doesNotMatch(body.system, /may NOT write/);
+  assert.match(body.system, /READ-ONLY/);
+  unmount();
+});
+
+test('allowAllPaths: true → no guard note (unrestricted)', async () => {
+  localStorage.setItem('spektrum:agent:apikey:anthropic', 'sk-ant-x');
+  const calls = stubFetch([anthropicText('ok')]);
+  const unmount = mount(s, { allowAllPaths: true });
+  document.querySelector('[data-input]').value = 'hi';
+  document.querySelector('[data-send]').click();
+  await new Promise(r => setTimeout(r, 5));
+  const body = JSON.parse(calls[0].init.body);
+  assert.doesNotMatch(body.system, /may NOT write|READ-ONLY/);
   unmount();
 });
 
@@ -1044,15 +1056,16 @@ test('protected setValue from the model is rejected; engine state unchanged', as
   unmount();
 });
 
-test('empty protectedPaths array is treated as no protection', async () => {
+test('empty protectedPaths array falls through to the read-only default', async () => {
   localStorage.setItem('spektrum:agent:apikey:anthropic', 'sk-ant-x');
   const calls = stubFetch([anthropicText('ok')]);
-  const unmount = mount(s, { protectedPaths: [] });
+  const unmount = mount(s, { protectedPaths: [] });   // empty list is not an opt-in
   document.querySelector('[data-input]').value = 'hi';
   document.querySelector('[data-send]').click();
   await new Promise(r => setTimeout(r, 5));
   const body = JSON.parse(calls[0].init.body);
-  assert.doesNotMatch(body.system, /may NOT write/);
+  assert.doesNotMatch(body.system, /may NOT write/);   // no enumerated-paths note
+  assert.match(body.system, /READ-ONLY/);              // but writes are off
   unmount();
 });
 

@@ -34,19 +34,19 @@ export interface CreateToolsOptions {
   prefix?: string;
   /**
    * Paths the mutation tools (`setValue`, `trigger`, and the inline
-   * set/add ops inside `attempt.start`) refuse to write. String
-   * entries match the exact path or a dot-segment prefix; RegExp
-   * entries are tested as-is. Denied writes return
-   * `{ ok: false, error: 'protected: <path>' }` without calling the
-   * engine. Reads, describe, explain, replay, etc. are unaffected.
+   * set/add ops inside `attempt.start`) refuse to write — i.e. "allow
+   * everything except these". String entries match the exact path or a
+   * dot-segment prefix; RegExp entries are tested as-is. Denied writes
+   * return `{ ok: false, error: 'protected: <path>' }` without calling
+   * the engine. Reads, describe, explain, replay, etc. are unaffected.
+   * Takes precedence over `allowAllPaths`.
    */
   protectedPaths?: PathPattern[];
   /**
-   * Explicit acknowledgement that the agent may write anywhere.
-   * Required to silence the safety warning when no `protectedPaths`
-   * are supplied. Leaving both unset still grants full write access
-   * (back-compat) but logs a one-time warning. Set this when
-   * unrestricted writes are genuinely intended.
+   * Opt into unrestricted writes. Writes are **denied by default**
+   * (a read-only agent): pass `protectedPaths` to allow all but
+   * specific paths, or `allowAllPaths: true` to allow every path.
+   * Ignored when `protectedPaths` is set.
    */
   allowAllPaths?: boolean;
 }

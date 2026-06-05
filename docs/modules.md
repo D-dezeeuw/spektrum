@@ -83,13 +83,23 @@ SDK-agnostic MCP tool catalog. `createTools(spektrum)` returns plain JS tool def
 import spektrum from 'spektrum';
 import { createTools } from 'spektrum/mcp';
 
-const tools = createTools(spektrum);
+const tools = createTools(spektrum, {
+  protectedPaths: ['llm.apiKey', /^secret\./],   // recommended: fence sensitive paths
+});
 // → [{ name: 'spektrum.getState', description, inputSchema, handler }, …]
 
 // Wire `tools[].handler` into your MCP server SDK as you would any other tool.
 ```
 
 The catalog covers `getState`, `describe`, `explain`, `setValue`, `trigger`, `checkpoint`, `attempt.start` / `attempt.commit` / `attempt.discard`, `replay`, `findByIntent`, `serialize`. All routed through the public API, so every agent-driven mutation lands in history exactly like a human's would — replayable, forkable, supervisable.
+
+### Restricting writes
+
+`createTools(spektrum, opts)` takes:
+
+- **`protectedPaths`** — an array of `string | RegExp`. The mutation tools (`setValue`, `trigger`, and the inline `set` / `add` ops inside `attempt.start`) refuse any write whose path matches. String entries match the exact path or a dot-segment prefix (so `'llm'` covers `llm.apiKey` and `llm.provider`, but not `llmFoo`); RegExp entries are tested as-is. Denied writes return `{ ok: false, error: 'protected: <path>' }` and never reach the engine. Reads, `describe`, `explain`, `replay`, etc. are unaffected.
+- **`allowAllPaths`** — set `true` to consciously grant the agent write access to every path. An ungated catalog (neither option set) still works (back-compat) but logs a one-time warning, since shipping an agent with unrestricted write authority by accident is a foot-gun. Pass `protectedPaths` to fence, or `allowAllPaths: true` to acknowledge and silence.
+- **`prefix`** — namespace prepended to every tool name (default `'spektrum.'`).
 
 **Three usage patterns:**
 
@@ -110,12 +120,16 @@ import spektrum from 'spektrum';
 import { mount } from 'spektrum/agent';
 
 mount(spektrum, {
-  provider: 'anthropic',           // optional — 'anthropic' | 'openai' | 'openrouter'
-  apiKey:   '<key>',               // optional — panel prompts via ⚙ on first use
-  model:    'claude-haiku-4-5',    // optional — provider-specific default applies
+  provider: 'anthropic',                 // optional — 'anthropic' | 'openai' | 'openrouter'
+  apiKey:   '<key>',                     // optional — panel prompts via ⚙ on first use
+  model:    'claude-haiku-4-5',          // optional — provider-specific default applies
   position: 'bottom-left',
+  protectedPaths: ['llm.apiKey'],        // recommended — paths the agent may not write
+  // allowAllPaths: true,                // …or consciously allow everything (silences the warning)
 });
 ```
+
+`protectedPaths` / `allowAllPaths` forward to the internal [`createTools()`](#spektrummcp) call (see [Restricting writes](#restricting-writes)). When `protectedPaths` is set, a sentence enumerating them is appended to the system prompt so the model doesn't waste tool calls on writes that will be rejected.
 
 Reuses [`createTools()`](#spektrummcp) for the catalog, calls the chosen provider's API directly via `fetch`, runs the tool-use loop, and renders every tool call inline.
 
@@ -133,7 +147,7 @@ Switch providers from the panel's ⚙ button. Keys and per-provider model choice
 
 If you don't pass `apiKey`, the panel shows a settings panel and stores entered keys in `localStorage`. **This is a development affordance.** Production deployments should proxy through your own backend; don't ship an API key to the browser. The panel makes this clear in its UI.
 
-The agent has the same authority over the engine as any caller of `setValue` / `trigger`. It cannot escape into the wider page. But it CAN make any state mutation your app exposes — only mount it when you accept that.
+The agent has the same authority over the engine as any caller of `setValue` / `trigger`. It cannot escape into the wider page. But by default it CAN make any state mutation your app exposes — pass `protectedPaths` to fence off sensitive state (API keys, auth, config), or `allowAllPaths: true` to consciously accept unrestricted writes. Mounting without either still works but warns.
 
 ### Demo
 

@@ -422,7 +422,9 @@ defineFn('addItem', handler, {
 For MCP-based agents:
 ```js
 import { createTools } from 'spektrum/mcp';
-const tools = createTools(spektrum);
+// Writes are denied by default (read-only). Pass protectedPaths to
+// allow all but those, or allowAllPaths:true to allow everything.
+const tools = createTools(spektrum, { protectedPaths: ['llm.apiKey'] });
 // hand `tools[].handler` to your MCP server SDK
 ```
 

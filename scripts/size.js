@@ -128,14 +128,20 @@ const TARGETS = [
   // inline ops). +166 B raw after minification; gzip stays under the
   // existing cap. One 256 B cap step (5120 → 5376) to absorb the
   // new code with ~90 B headroom for future MCP additions.
-  // 1.0.2 safe-by-default: an ungated catalog (no protectedPaths)
-  // now warns unless the caller passes { allowAllPaths: true } to
-  // acknowledge it — closing the "forgot the gate, shipped full write
-  // authority" foot-gun without a breaking change. The warn() string
-  // dominates the cost (+~107 B raw / +~90 B gz over the trimmed
-  // message); one 256 B raw step (5376 → 5632) and a 192 B gz step
-  // (2048 → 2240) absorb it with ~150 B raw / ~100 B gz headroom.
-  { file: 'companions/spektrum-mcp.min.js',      raw:  5632, gz: 2240 },
+  // 1.1.0 deny-by-default (breaking, shipped as minor — no users yet):
+  // writes are now DENIED unless the caller opts in via protectedPaths
+  // ("allow all but these", which takes precedence) or allowAllPaths
+  // ("allow everything"). A forgotten config yields a read-only agent
+  // instead of one with full write authority. This REPLACED a brief
+  // 1.0.2 warn-on-ungated approach, so the long warn() string is gone:
+  // the three-way guard ternary is far cheaper than the message it
+  // replaced, and buildGuard shed its now-unreachable empty-patterns
+  // check (the three-way ternary only calls it with a non-empty
+  // array). Net trim — raw cap returns to the 1.0.1 level (5,376 B,
+  // actual 5,320) and gz holds a small cushion (2,112 B, actual 2,043,
+  // below even the 1.0.1 gz). Trimmed, then tightened — the opposite
+  // of a complacent bump.
+  { file: 'companions/spektrum-mcp.min.js',      raw:  5376, gz: 2112 },
   { file: 'companions/spektrum-agent.min.js',    raw: 13312, gz: 5120 },
   // Inspect Phase 1 + Lint (element inspector with hover tooltip +
   // outline overlay, three-tab panel, mutation tracer with filter, and

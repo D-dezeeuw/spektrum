@@ -58,12 +58,13 @@ precompiled, the runtime never reaches the `new Function` fallback.
 over engine state as any caller of `setValue` / `trigger`. Two things to
 know when putting an app on the wire for an agent:
 
-- **Fence sensitive paths.** Pass `protectedPaths` to `createTools()` /
-  `mount()` so the agent can't write API keys, auth, or config. An
-  ungated catalog still works but warns; pass `{ allowAllPaths: true }`
-  only when unrestricted writes are genuinely intended. Mount the agent
-  only where you trust the agent and the transport (e.g. local stdio
-  MCP — never exposed to the internet without auth).
+- **Writes are denied by default.** `createTools()` / `mount()` produce
+  a read-only agent unless you opt in: pass `protectedPaths` to allow
+  writes except to sensitive paths (API keys, auth, config), or
+  `{ allowAllPaths: true }` for unrestricted writes. `protectedPaths`
+  takes precedence if both are set. Even with writes enabled, mount the
+  agent only where you trust the agent and the transport (e.g. local
+  stdio MCP — never exposed to the internet without auth).
 - **Don't render agent output through `:innerHTML`.** LLM/API responses
   are semi-trusted data. `:innerHTML` and `:srcdoc` parse their value as
   HTML, so binding model output through them reintroduces XSS. Use

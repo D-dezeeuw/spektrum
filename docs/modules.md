@@ -97,8 +97,11 @@ The catalog covers `getState`, `describe`, `explain`, `setValue`, `trigger`, `ch
 
 `createTools(spektrum, opts)` takes:
 
-- **`protectedPaths`** — an array of `string | RegExp`. The mutation tools (`setValue`, `trigger`, and the inline `set` / `add` ops inside `attempt.start`) refuse any write whose path matches. String entries match the exact path or a dot-segment prefix (so `'llm'` covers `llm.apiKey` and `llm.provider`, but not `llmFoo`); RegExp entries are tested as-is. Denied writes return `{ ok: false, error: 'protected: <path>' }` and never reach the engine. Reads, `describe`, `explain`, `replay`, etc. are unaffected.
-- **`allowAllPaths`** — set `true` to consciously grant the agent write access to every path. An ungated catalog (neither option set) still works (back-compat) but logs a one-time warning, since shipping an agent with unrestricted write authority by accident is a foot-gun. Pass `protectedPaths` to fence, or `allowAllPaths: true` to acknowledge and silence.
+**Writes are denied by default** (since 1.1.0) — a freshly created catalog is read-only, so forgetting to configure it yields a harmless read-only agent rather than one with full authority over your state. Opt in with one of:
+
+- **`protectedPaths`** — an array of `string | RegExp`: *allow everything except these*. The mutation tools (`setValue`, `trigger`, and the inline `set` / `add` ops inside `attempt.start`) refuse any write whose path matches; everything else is allowed. String entries match the exact path or a dot-segment prefix (so `'llm'` covers `llm.apiKey` and `llm.provider`, but not `llmFoo`); RegExp entries are tested as-is. Denied writes return `{ ok: false, error: 'protected: <path>' }` and never reach the engine. **Takes precedence over `allowAllPaths`.** Reads, `describe`, `explain`, `replay`, etc. are always allowed.
+- **`allowAllPaths: true`** — *allow everything*. Use when an agent genuinely needs unrestricted write access.
+- Neither → **read-only**: every write is denied.
 - **`prefix`** — namespace prepended to every tool name (default `'spektrum.'`).
 
 **Three usage patterns:**
@@ -124,12 +127,12 @@ mount(spektrum, {
   apiKey:   '<key>',                     // optional — panel prompts via ⚙ on first use
   model:    'claude-haiku-4-5',          // optional — provider-specific default applies
   position: 'bottom-left',
-  protectedPaths: ['llm.apiKey'],        // recommended — paths the agent may not write
-  // allowAllPaths: true,                // …or consciously allow everything (silences the warning)
+  protectedPaths: ['llm.apiKey'],        // allow writes except these paths
+  // allowAllPaths: true,                // …or allow every write
 });
 ```
 
-`protectedPaths` / `allowAllPaths` forward to the internal [`createTools()`](#spektrummcp) call (see [Restricting writes](#restricting-writes)). When `protectedPaths` is set, a sentence enumerating them is appended to the system prompt so the model doesn't waste tool calls on writes that will be rejected.
+The agent is **read-only by default** — pass `protectedPaths` (allow all but these) or `allowAllPaths: true` (allow everything) to enable writes. Both forward to the internal [`createTools()`](#spektrummcp) call (see [Restricting writes](#restricting-writes)). A sentence describing the limits — the protected paths, or that the agent is read-only — is appended to the system prompt so the model doesn't waste tool calls on writes that will be rejected.
 
 Reuses [`createTools()`](#spektrummcp) for the catalog, calls the chosen provider's API directly via `fetch`, runs the tool-use loop, and renders every tool call inline.
 
@@ -147,7 +150,7 @@ Switch providers from the panel's ⚙ button. Keys and per-provider model choice
 
 If you don't pass `apiKey`, the panel shows a settings panel and stores entered keys in `localStorage`. **This is a development affordance.** Production deployments should proxy through your own backend; don't ship an API key to the browser. The panel makes this clear in its UI.
 
-The agent has the same authority over the engine as any caller of `setValue` / `trigger`. It cannot escape into the wider page. But by default it CAN make any state mutation your app exposes — pass `protectedPaths` to fence off sensitive state (API keys, auth, config), or `allowAllPaths: true` to consciously accept unrestricted writes. Mounting without either still works but warns.
+When you enable writes, the agent has the same authority over the engine as any caller of `setValue` / `trigger` (it cannot escape into the wider page). It is **read-only by default** — pass `protectedPaths` to allow writes except to sensitive state (API keys, auth, config), or `allowAllPaths: true` to accept unrestricted writes.
 
 ### Demo
 

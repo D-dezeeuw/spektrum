@@ -314,10 +314,10 @@ suite('protectedPaths', () => {
 const gatedTools = (patterns) => createTools(s, { protectedPaths: patterns });
 const gatedBy = (gt, name) => gt.find(t => t.name === name);
 
-test('no protectedPaths → write tools behave normally (default)', () => {
-  // Catalog built in beforeEach (allowAllPaths, so still ungated); this
-  // asserts that *not* passing protectedPaths leaves writes ungated even
-  // for sensitive-looking names that would otherwise look protected.
+test('allowAllPaths catalog writes any path (the beforeEach catalog)', () => {
+  // Catalog built in beforeEach with allowAllPaths; this asserts that an
+  // opted-in catalog writes even sensitive-looking names. (Deny-by-
+  // default behavior lives in the 'deny-by-default' suite.)
   byName('spektrum.setValue').handler({ path: 'apiKey', value: 'secret' });
   s.tick();
   assert.equal(s.appState.apiKey, 'secret');
@@ -427,49 +427,52 @@ test('attempt.start with guard set but no action matching runs the attempt norma
 
 });
 
-// === safe-by-default posture ===
-// Writes stay ungated by default (no breaking change), but creating an
-// unguarded catalog without consciously acknowledging it warns loudly.
-suite('safe-by-default', () => {
+// === deny-by-default posture (1.1.0, breaking) ===
+// Writes are DENIED unless the caller opts in. protectedPaths means
+// "allow all but these" and takes precedence; allowAllPaths means
+// "allow everything"; neither means a read-only agent.
+suite('deny-by-default', () => {
 
-const captureWarn = (fn) => {
-  const warns = [];
-  const orig = console.warn;
-  console.warn = (m) => warns.push(String(m));
-  try { fn(); } finally { console.warn = orig; }
-  return warns;
-};
+const setVal = (t, path, value) =>
+  t.find(x => x.name === 'spektrum.setValue').handler({ path, value });
 
-test('ungated catalog (no protectedPaths, no allowAllPaths) warns', () => {
-  const warns = captureWarn(() => createTools(s));
-  assert.ok(
-    warns.some(w => w.includes('[spektrum/mcp]') && w.includes('protectedPaths')),
-    `expected an unrestricted-write warning; got: ${warns.join(' | ')}`,
-  );
-});
-
-test('allowAllPaths: true acknowledges and silences the warning', () => {
-  const warns = captureWarn(() => createTools(s, { allowAllPaths: true }));
-  assert.deepEqual(warns, [], 'allowAllPaths should silence the warning');
-});
-
-test('protectedPaths present silences the warning (the gate speaks for itself)', () => {
-  const warns = captureWarn(() => createTools(s, { protectedPaths: ['apiKey'] }));
-  assert.deepEqual(warns, [], 'a gated catalog should not warn');
-});
-
-test('ungated catalog still grants full write access (no behavior break)', () => {
-  const t = captureWarnTools();
-  t.find(x => x.name === 'spektrum.setValue').handler({ path: 'apiKey', value: 'secret' });
+test('no opts → every write is denied (read-only agent)', () => {
+  const t = createTools(s);   // no protectedPaths, no allowAllPaths
+  const res = setVal(t, 'count', 1);
   s.tick();
+  assert.deepEqual(res, { ok: false, error: 'protected: count' });
+  assert.equal(s.appState.count, undefined, 'no write reached the engine');
+  assert.equal(s.history.length, 0, 'no history entry recorded');
+});
+
+test('allowAllPaths: true grants unrestricted writes', () => {
+  const t = createTools(s, { allowAllPaths: true });
+  const res = setVal(t, 'apiKey', 'secret');
+  s.tick();
+  assert.equal(res.ok, true);
   assert.equal(s.appState.apiKey, 'secret');
 });
 
-// Build an ungated catalog while swallowing the (expected) warning.
-function captureWarnTools() {
-  let t;
-  captureWarn(() => { t = createTools(s); });
-  return t;
-}
+test('protectedPaths allows unlisted paths, denies listed ones', () => {
+  const t = createTools(s, { protectedPaths: ['apiKey'] });
+  assert.equal(setVal(t, 'cart.items', 1).ok, true, 'unlisted path allowed');
+  assert.equal(setVal(t, 'apiKey', 'x').ok, false, 'listed path denied');
+  s.tick();
+  assert.equal(s.appState.cart.items, 1);
+  assert.equal(s.appState.apiKey, undefined);
+});
+
+test('protectedPaths takes precedence over allowAllPaths', () => {
+  const t = createTools(s, { protectedPaths: ['apiKey'], allowAllPaths: true });
+  assert.equal(setVal(t, 'apiKey', 'x').ok, false,
+    'protectedPaths still fences even with allowAllPaths set');
+  assert.equal(setVal(t, 'other', 1).ok, true);
+});
+
+test('empty protectedPaths falls through to deny-by-default', () => {
+  const t = createTools(s, { protectedPaths: [] });
+  assert.equal(setVal(t, 'count', 1).ok, false,
+    'an empty list is not an opt-in — writes stay denied');
+});
 
 });

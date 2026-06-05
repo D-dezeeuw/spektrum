@@ -247,9 +247,15 @@ export const mount = (spektrum, opts = {}) => {
   const position = opts.position || 'bottom-left';
   const title = opts.title || 'spektrum agent';
   const protectedPaths = opts.protectedPaths;
+  // Tell the model its write limits up-front so it doesn't waste tool
+  // calls on rejected writes. Three cases, matching createTools':
+  // specific paths fenced, everything fenced (read-only default), or
+  // unrestricted.
   const guardNote = protectedPaths && protectedPaths.length
     ? `\n\nYou may NOT write to these paths (writes will be rejected): ${protectedPaths.map(p => p instanceof RegExp ? p.toString() : p).join(', ')}. Don't attempt them.`
-    : '';
+    : opts.allowAllPaths
+      ? ''
+      : '\n\nYou have READ-ONLY access: state-writing tools (setValue, trigger, attempt) will be rejected. Use them only to read, describe, explain, and replay.';
   const system = opts.system || (SYSTEM_PROMPT + guardNote);
 
   // Provider + key + model are stored per-provider so switching back

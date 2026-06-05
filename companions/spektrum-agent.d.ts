@@ -7,9 +7,9 @@
  * Source of truth: `companions/spektrum-agent.js`. When the runtime
  * shape changes, update this file in the same commit.
  *
- * Security: this hands an LLM write access to your app state. Pass
- * `protectedPaths` to fence off sensitive paths, or `allowAllPaths`
- * to consciously allow everything.
+ * Security: the agent is **read-only by default**. Pass
+ * `protectedPaths` to allow writes except to sensitive paths, or
+ * `allowAllPaths: true` to allow every write.
  */
 
 import type { Spektrum } from '../spektrum.js';
@@ -40,17 +40,19 @@ export interface AgentOptions {
   /** Override the system prompt entirely. */
   system?: string;
   /**
-   * Paths the agent may not write. Forwarded to the internal
-   * `createTools()` call; denied writes return an error to the model,
-   * and (when set) a sentence enumerating the protected paths is
-   * appended to the system prompt so the model doesn't waste tool
-   * calls attempting them.
+   * Paths the agent may not write ("allow all but these"). Forwarded
+   * to the internal `createTools()` call; denied writes return an error
+   * to the model, and a sentence enumerating the protected paths is
+   * appended to the system prompt so the model doesn't waste tool calls
+   * attempting them. Takes precedence over `allowAllPaths`.
    */
   protectedPaths?: PathPattern[];
   /**
-   * Explicit acknowledgement that the agent may write anywhere.
-   * Required to silence the safety warning when no `protectedPaths`
-   * are supplied. Forwarded to `createTools()`.
+   * Opt into unrestricted writes. The agent is **read-only by default**
+   * (state-writing tools are rejected and the system prompt says so);
+   * pass `protectedPaths` to allow all but specific paths, or
+   * `allowAllPaths: true` to allow every write. Forwarded to
+   * `createTools()`.
    */
   allowAllPaths?: boolean;
 }

@@ -163,7 +163,7 @@ Bind with `data-if="user.loading"`, `{{user.error}}`, `{{user.data.name}}`.
 
 When `:href`, `:src`, `:action`, `:formaction`, `:background`, `:cite`, `:poster`, or `:data` evaluates to a string starting with `javascript:` (case-insensitive, leading whitespace ignored), Spektrum rewrites the value to `#`. This blocks the common XSS shape where an attacker-influenced value lands in an `<a :href>`. Other schemes (`https:`, `data:`, `mailto:`, etc.) pass through unchanged — review your own data sources if your threat model needs broader filtering.
 
-**Not covered:** `:srcdoc` (the value is parsed as HTML, not as a URL — same trust requirement as templates; don't bind untrusted content). The guard runs on JavaScript property writes, so attributes Spektrum doesn't expose as DOM properties (e.g. SVG `xlink:href`) are out of scope.
+**Not covered:** `:innerHTML` and `:srcdoc` parse their value as HTML, not as a URL, so the `javascript:` guard does not apply — they carry the **same trust requirement as templates: never bind untrusted or semi-trusted content** (including raw LLM/API output) through them, or you reintroduce XSS. Use `{{ }}` text interpolation or `:textContent` for untrusted strings; reach for `:innerHTML` only with markup you control or have sanitized. The guard also runs only on JavaScript property writes, so attributes Spektrum doesn't expose as DOM properties (e.g. SVG `xlink:href`) are out of scope.
 
 ## `data-cloak` — suppressing the bind-time flash
 

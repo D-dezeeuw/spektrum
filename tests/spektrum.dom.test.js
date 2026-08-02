@@ -521,6 +521,112 @@ test('keyed data-each preserves focus on appended-to lists', () => {
   assert.equal(document.activeElement, firstInput, 'focus survives append');
 });
 
+test('keyed data-each re-renders when a row is replaced by a fresh object', () => {
+  // Regression: makeScope captures the row BY REFERENCE, and the keyed
+  // path only re-scoped a clone when its INDEX changed. The immutable-
+  // update idiom — `items.map(r => ({...r, …}))` — keeps every key and
+  // index but swaps the objects, so clones stayed bound to rows no
+  // longer in state and rendered permanently stale.
+  document.body.innerHTML = `
+    <ul data-each="items" data-as="item" data-key="item.id">
+      <li>{{item.label}}</li>
+    </ul>`;
+  setValue('items', [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }]);
+  bindDOM(document.body);
+  tick();
+  const before = [...document.body.querySelectorAll('ul li')];
+  assert.deepEqual(before.map(li => li.textContent), ['A', 'B']);
+
+  // Fresh objects, same keys, same order, new values.
+  setValue('items', appState.items.map(i => ({ ...i, label: i.label + '2' })));
+  tick();
+  const after = [...document.body.querySelectorAll('ul li')];
+  assert.deepEqual(after.map(li => li.textContent), ['A2', 'B2'],
+    'rows must reflect the replacement objects');
+  assert.equal(after[0], before[0], 'DOM identity is still preserved across the swap');
+  assert.equal(after[1], before[1]);
+});
+
+test('keyed data-each stays live for sub-path writes after a fresh-object publish', () => {
+  // The compounding half of the same bug: once a clone held a detached
+  // row, later sub-path writes updated state invisibly forever.
+  document.body.innerHTML = `
+    <ul data-each="items" data-as="item" data-key="item.id">
+      <li>{{item.label}}</li>
+    </ul>`;
+  setValue('items', [{ id: 'a', label: 'A' }]);
+  bindDOM(document.body);
+  tick();
+
+  setValue('items', [{ id: 'a', label: 'A2' }]);
+  tick();
+  setValue('items.0.label', 'A3');
+  tick();
+  assert.equal(document.body.querySelector('ul li').textContent, 'A3',
+    'sub-path write after a fresh-object publish still reaches the DOM');
+});
+
+test('keyed data-each re-binds only the rows whose object identity changed', () => {
+  // The guard must be identity-based, not "re-bind on every publish".
+  // Probe: a precompiled expression that counts its own invocations.
+  // Its subscription path never enters the delta, so the ONLY thing that
+  // can re-run it is a re-bind (bindReactive renders once on setup).
+  let calls = 0;
+  const probe = '__rebind_probe__';
+  precompile(probe, (_state, scope) => { calls++; return scope.row.label; });
+
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-key="row.id">
+      <li>{{${probe}}}</li>
+    </ul>`;
+  const a = { id: 1, label: 'one' };
+  const b = { id: 2, label: 'two' };
+  setValue('rows', [a, b]);
+  bindDOM(document.body);
+  tick();
+  assert.equal(calls, 2, 'one render per row on initial bind');
+
+  // Same row objects carried over, plus an appended row: only the new
+  // row binds. Nothing about `a` or `b` changed, so they must not
+  // re-bind.
+  calls = 0;
+  setValue('rows', [a, b, { id: 3, label: 'three' }]);
+  tick();
+  assert.equal(calls, 1, 'only the appended row was bound');
+
+  // Replace row 0 with a fresh object at the same key and index: that
+  // row — and only that row — re-binds.
+  calls = 0;
+  setValue('rows', [{ id: 1, label: 'ONE' }, b, appState.rows[2]]);
+  tick();
+  assert.equal(calls, 1, 'only the replaced row re-bound');
+  assert.deepEqual(
+    [...document.body.querySelectorAll('ul li')].map(li => li.textContent),
+    ['ONE', 'two', 'three'],
+  );
+});
+
+test('keyed data-each preserves focus when carried-over rows are untouched', () => {
+  document.body.innerHTML = `
+    <ul data-each="rows" data-as="row" data-key="row.id">
+      <li><input data-model="row.text"></li>
+    </ul>`;
+  const a = { id: 1, text: 'one' };
+  const b = { id: 2, text: 'two' };
+  setValue('rows', [a, b]);
+  bindDOM(document.body);
+  tick();
+
+  const firstInput = document.body.querySelector('ul li input');
+  firstInput.focus();
+
+  setValue('rows', [a, b, { id: 3, text: 'three' }]);
+  tick();
+
+  assert.equal(document.activeElement, firstInput, 'focus survives the append');
+  assert.equal(document.body.querySelectorAll('ul li').length, 3);
+});
+
 test('keyed data-each removes nodes for dropped keys', () => {
   document.body.innerHTML = `
     <ul data-each="items" data-as="item" data-key="item.id">
@@ -1353,6 +1459,96 @@ test('precompile() entry is used by {{...}} bindings before new Function', () =>
   assert.ok(calls >= 1, 'precompiled fn was invoked');
 });
 
+// === Binding error containment ===
+
+// happy-dom is lenient about IDL doubles, so install a setter that
+// behaves the way a browser's WebIDL restricted double does:
+// `progress.value = NaN` throws TypeError. Everything downstream of the
+// throw is the engine's own behavior.
+const withThrowingProp = (el, prop) => {
+  Object.defineProperty(el, prop, {
+    configurable: true,
+    get() { return 0; },
+    set(v) {
+      if (typeof v !== 'number' || Number.isFinite(v)) return;
+      throw new TypeError(`Failed to set the '${prop}' property`);
+    },
+  });
+};
+
+test('a throwing DOM write does not unbind the rest of the document', (t) => {
+  // Regression: the initial render inside bindReactive was unguarded,
+  // so one constrained property rejecting NaN threw out of bindDOM's
+  // element walk. Every LATER binding in source order silently never
+  // bound, and the caller never received the destroy handle.
+  const warnings = [];
+  t.mock.method(console, 'warn', (msg) => warnings.push(String(msg)));
+
+  document.body.innerHTML = `
+    <progress :value="score"></progress>
+    <span :title="label">x</span>
+    <em>{{label}}</em>`;
+  withThrowingProp(document.body.querySelector('progress'), 'value');
+
+  setValue('score', NaN);
+  setValue('label', 'hello');
+
+  let destroy;
+  assert.doesNotThrow(() => { destroy = bindDOM(document.body); }, 'bindDOM must not propagate');
+  tick();
+
+  assert.equal(document.body.querySelector('span').title, 'hello',
+    'the binding after the throwing one still bound');
+  assert.equal(document.body.querySelector('em').textContent, 'hello');
+  assert.equal(typeof destroy, 'function', 'destroy handle is still returned');
+  assert.ok(
+    warnings.some(w => /:value="score" rejected value NaN/.test(w)),
+    `expected a rejected-value warn naming the binding; got: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test('a rejected property write leaves sibling attributes on the same element bound', (t) => {
+  t.mock.method(console, 'warn', () => {});
+  document.body.innerHTML = '<progress :value="score" :title="label"></progress>';
+  withThrowingProp(document.body.querySelector('progress'), 'value');
+  setValue('score', NaN);
+  setValue('label', 'still-bound');
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('progress').title, 'still-bound');
+});
+
+test('a throwing render outside bindAttrs is contained and routed to onError', () => {
+  // data-if writes el.style.display, which is NOT inside bindAttrs' own
+  // property-write guard — so this exercises the bindReactive initial-
+  // render guard itself. Both bindings must survive, and the failure
+  // must reach the registered error handler rather than escaping.
+  document.body.innerHTML = `
+    <div data-if="shown">a</div>
+    <span :title="label">b</span>`;
+  const div = document.body.querySelector('div');
+  Object.defineProperty(div.style, 'display', {
+    configurable: true,
+    get() { return ''; },
+    set() { throw new TypeError('style rejected'); },
+  });
+
+  setValue('shown', true);
+  setValue('label', 'bound-anyway');
+
+  const seen = [];
+  const off = spektrum.onError((err) => seen.push(err));
+  let destroy;
+  assert.doesNotThrow(() => { destroy = bindDOM(document.body); });
+  tick();
+  off();
+
+  assert.ok(seen.length >= 1, 'the throwing render surfaced via onError');
+  assert.equal(document.body.querySelector('span').title, 'bound-anyway',
+    'the binding after the throwing one still bound');
+  assert.equal(typeof destroy, 'function');
+});
+
 // === Compile helper ===
 
 test('extractExpressions pulls {{...}}, :attr, data-if, data-key sources', () => {
@@ -1380,6 +1576,86 @@ test('emitPrecompileSource emits parseable JS that imports precompile', () => {
   assert.match(out, /import \{ precompile \} from 'spektrum';/);
   assert.match(out, /precompile\("count \+ 1"/);
   assert.match(out, /precompile\("user\.name"/);
+});
+
+// Import the emitted source as a real ES module via a data: URL. This is
+// the check the old regex-only assertions could not make: `with` is a
+// SyntaxError in strict-mode code, and ES modules are always strict, so
+// the previous emitter produced a module that could not be loaded the
+// way docs/csp.md tells people to load it.
+const importEmitted = (expressions) => import(
+  'data:text/javascript,' + encodeURIComponent(
+    emitPrecompileSource(expressions, {
+      specifier: new URL('../spektrum.js', import.meta.url).href,
+    }),
+  )
+);
+
+test('emitted precompile module loads as a real ES module', async () => {
+  await assert.doesNotReject(
+    () => importEmitted(['count + 1', 'user.name', 'grid.1.0', 'val + 1.5']),
+    'emitted source must be strict-mode safe',
+  );
+});
+
+test('precompiled expressions work with new Function blocked (strict CSP)', async () => {
+  // The whole point of precompile(): under a CSP without unsafe-eval,
+  // `new Function` throws, so a registration is the ONLY way an
+  // expression can evaluate. Block it and drive the real binding path.
+  await importEmitted(['count + 1', 'item.label', 'item.id', '$index']);
+
+  const RealFunction = globalThis.Function;
+  globalThis.Function = function () { throw new EvalError('Refused: CSP'); };
+  try {
+    document.body.innerHTML = `
+      <p>{{count + 1}}</p>
+      <ul data-each="rows" data-key="item.id"><li>{{item.label}} #{{$index}}</li></ul>`;
+    setValue('count', 41);
+    setValue('rows', [{ id: 1, label: 'alpha' }, { id: 2, label: 'beta' }]);
+    bindDOM(document.body);
+    tick();
+
+    assert.equal(document.body.querySelector('p').textContent, '42');
+    // Scope resolution: a (state)-only emitted fn would render these
+    // blank and evaluate every data-key to undefined.
+    assert.deepEqual(
+      [...document.body.querySelectorAll('li')].map(li => li.textContent),
+      ['alpha #0', 'beta #1'],
+      'loop variable and $index resolve through the scope argument',
+    );
+
+    setValue('rows', [{ id: 2, label: 'beta' }, { id: 1, label: 'alpha' }]);
+    tick();
+    assert.deepEqual(
+      [...document.body.querySelectorAll('li')].map(li => li.textContent),
+      ['beta #0', 'alpha #1'],
+      'keyed reorder works through precompiled data-key',
+    );
+  } finally {
+    globalThis.Function = RealFunction;
+  }
+});
+
+test('emitted expressions resolve scope before state, matching the runtime', async () => {
+  const mod = await importEmitted(['item.label']);
+  void mod;
+  // Same name in both: the loop variable must win, exactly as
+  // `with (state) with (scope||{})` shadows.
+  document.body.innerHTML = '<ul data-each="rows" data-key="item.id"><li>{{item.label}}</li></ul>';
+  setValue('item', { label: 'STATE-LEVEL' });
+  setValue('rows', [{ id: 1, label: 'row-level' }]);
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('li').textContent, 'row-level');
+});
+
+test('emitted expressions ignore identifiers inside string literals', async () => {
+  await importEmitted(["kind === 'user' ? 'yes' : 'no'"]);
+  document.body.innerHTML = `<p>{{kind === 'user' ? 'yes' : 'no'}}</p>`;
+  setValue('kind', 'user');
+  bindDOM(document.body);
+  tick();
+  assert.equal(document.body.querySelector('p').textContent, 'yes');
 });
 
 test('destroy() removes listeners and releases the root for re-binding', () => {
@@ -1665,32 +1941,62 @@ test('bindDOM warns and skips unknown data-fn names', (t) => {
   document.body.querySelector('button').click();
 });
 
-// === evalCache FIFO eviction (cacheSet bound at 500) ===
+// === precompile registry is unbounded and separate from evalCache ===
 
-test('evalCache evicts oldest entries when 500-entry limit is reached', () => {
-  // precompile() routes through cacheSet, which is the only public way
-  // to populate the eval cache. We seed a sentinel as the first entry,
-  // then push >500 distinct entries to force eviction. After eviction,
-  // a binding that references the sentinel source falls through to the
-  // new Function compile path — observable because we register the
-  // sentinel with a precompiled fn that returns a marker, then assert
-  // the binding does NOT see that marker after eviction.
-  const sentinelExpr = '__sentinel_evict_test__';
+test('precompile() registrations survive an on-demand cache flood', () => {
+  // Regression: precompile() used to write into the same 500-entry FIFO
+  // that on-demand compiles evict from, so an app registering more
+  // expressions than the cap evicted its OWN registrations before
+  // bindDOM() ran — fatal under strict CSP, where the `new Function`
+  // fallback is blocked and a registration is the only way an
+  // expression can evaluate at all. Registrations now live in their own
+  // unbounded registry.
+  //
+  // Seed the sentinel FIRST (the position the old FIFO evicted first),
+  // then flood well past the cap from both directions: registrations,
+  // and genuine on-demand compiles driven through bindDOM.
+  const sentinelExpr = '__sentinel_precompile_survives__';
   precompile(sentinelExpr, () => 'precompiled-marker');
 
-  for (let i = 0; i < 600; i++) {
-    precompile(`__filler_${i}__`, () => i);
-  }
+  for (let i = 0; i < 600; i++) precompile(`__filler_${i}__`, () => i);
 
-  // After 600 fillers + 1 sentinel = 601 inserts, the FIFO Map of size
-  // 500 has long since dropped the sentinel. The next bindDOM that
-  // references the sentinel source compiles fresh from `with(state)`
-  // — and the identifier doesn't exist, so it returns undefined → '' in text.
-  document.body.innerHTML = `<p>{{${sentinelExpr}}}</p>`;
-  bindDOM(document.body);
+  // 600 distinct expressions the engine has to compile itself — this is
+  // what actually fills (and cycles) the bounded cache. Bound as its own
+  // root: bindDOM is idempotent per root, so reusing document.body here
+  // would make the probe bind below a silent no-op.
+  const flood = document.body.appendChild(document.createElement('div'));
+  flood.innerHTML =
+    Array.from({ length: 600 }, (_, i) => `<i>{{__ondemand_${i}__ + 1}}</i>`).join('');
+  bindDOM(flood);
   tick();
-  assert.equal(document.body.querySelector('p').textContent, '',
-    'sentinel was evicted; binding fell through to runtime compile, no marker visible');
+
+  const probe = document.body.appendChild(document.createElement('p'));
+  probe.textContent = `{{${sentinelExpr}}}`;
+  bindDOM(probe);
+  tick();
+  assert.equal(probe.textContent, 'precompiled-marker',
+    'precompiled entry still resolves after 600 registrations + 600 on-demand compiles');
+});
+
+test('a later precompile() overrides an expression already compiled on demand', () => {
+  // The recovery path: an expression that failed (or compiled) at
+  // runtime must be replaceable by a registration, because the
+  // registry is consulted before the on-demand cache.
+  const expr = '__override_test__';
+  // Separate roots — bindDOM is idempotent per root.
+  const first = document.body.appendChild(document.createElement('p'));
+  first.textContent = `{{${expr}}}`;
+  bindDOM(first);
+  tick();
+  assert.equal(first.textContent, '', 'unset path compiles on demand and renders empty');
+
+  precompile(expr, () => 'from-precompile');
+  const second = document.body.appendChild(document.createElement('p'));
+  second.textContent = `{{${expr}}}`;
+  bindDOM(second);
+  tick();
+  assert.equal(second.textContent, 'from-precompile',
+    'the registration takes precedence over the entry already in the on-demand cache');
 });
 
 // === evalExpr fallback paths ===

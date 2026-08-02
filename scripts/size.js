@@ -105,6 +105,43 @@
   128 B gz step (6,112 → 6,240) absorb it with ~95 B raw / ~80 B gz
   headroom. Adjust caps deliberately — every bump invites complacency.
   Trim before raising.
+
+  The CSP-and-containment batch fixes four defects reported from a real
+  consumer app, three of which broke a property `docs/constraints.md`
+  lists as non-negotiable ("CSP-safe — strict-CSP works via
+  spektrum/compile"):
+    1. `precompile()` wrote into the same 500-entry FIFO that on-demand
+       compiles evict from, so an app registering more expressions than
+       the cap evicted its OWN registrations before bindDOM() ran — and
+       every subsequent miss cached an undefined-returning dud that
+       evicted one more survivor. Fatal precisely under strict CSP,
+       where a registration is the only way an expression can evaluate.
+       Registrations now live in a separate unbounded registry that
+       takes precedence over the cache; `cacheSet` also stops evicting
+       an unrelated entry when merely replacing an existing key.
+    2. `bindReactive`'s initial render was unguarded while every later
+       run went through `runSystem`'s try/catch. One throwing DOM write
+       (a WebIDL restricted double rejecting NaN — progress.value,
+       meter.value, audio.volume) escaped bindDOM's element walk, so
+       every LATER binding in the document silently never bound and the
+       caller never received the destroy handle. Now routed through the
+       same `routeErr` path.
+    3. `el[prop] = v` in bindAttrs is guarded, so a rejected value warns
+       with the binding that produced it and the element's remaining
+       attributes still bind. Deliberately not coerced — silently
+       rewriting NaN would hide the app's bug.
+    4. Keyed `data-each` only re-scoped a clone when its INDEX changed,
+       but `makeScope` captures the row BY REFERENCE. The immutable-
+       update idiom (`items.map(r => ({...r, …}))`) keeps every key and
+       index while swapping the objects, so clones stayed bound to rows
+       no longer in state — permanently stale, and invisible to later
+       sub-path writes. The guard now also compares item identity.
+  Net +154 B raw / +72 B gz after trimming the two new warn strings.
+  One 256 B raw step (13,696 → 13,952) and one 64 B gz step (6,240 →
+  6,304) absorb it with ~143 B raw / ~44 B gz headroom. The companion
+  emitter rewrite that lands alongside (strict-mode-safe output that
+  honours data-each scope) costs zero runtime bytes — spektrum-compile
+  is build-time only and ships in no bundle.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -116,7 +153,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 13696, gz: 6240 },
+  { file: 'spektrum.min.js',          raw: 13952, gz: 6304 },
   { file: 'companions/spektrum-persist.min.js',  raw:  1024, gz:  576 },
   // 1.2 dock integration adds ~120 B for the [data-spektrum-dock]
   // detection branch + dockPanel.detach() in unmount. Standalone

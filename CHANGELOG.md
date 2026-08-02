@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**CSP-and-containment patch.** Four engine fixes and a compiler rewrite, all reported from a real consumer app. Three of them broke a property [`docs/constraints.md`](docs/constraints.md) lists as non-negotiable — *"CSP-safe: strict-CSP works via `spektrum/compile`"* — so the strict-CSP path could not have worked end-to-end as shipped. No breaking changes.
+
+### Fixed
+
+- **`precompile()` no longer evicts its own registrations.** Registrations went into the same 500-entry FIFO that on-demand compiles evict from, so an app registering more expressions than the cap dropped its earliest registrations before `bindDOM()` ran — and every subsequent miss cached an `undefined`-returning dud that evicted one more survivor. This was fatal precisely under strict CSP, where `new Function` is blocked and a registration is the *only* way an expression can evaluate; the failure threshold surfaced nothing. Registrations now live in a separate unbounded registry that takes precedence over the cache, so a later `precompile()` also overrides an expression already compiled on demand. `cacheSet` additionally stops evicting an unrelated entry when it is merely replacing an existing key.
+- **A throwing DOM write no longer unbinds the rest of the document.** `bindReactive`'s initial render was unguarded while every later run went through `runSystem`'s `try`/`catch`. One constrained property rejecting a value — WebIDL restricted doubles like `progress.value`, `meter.value`, `audio.volume` throw on `NaN`/`Infinity` — escaped `bindDOM`'s element walk, so every *later* binding in source order silently never bound, and the caller never received the `destroy` handle (leaking the bindings already wired). The initial render now routes through the same error path, reaching `onError` when one is registered.
+- **`:attr` property writes are guarded.** A rejected write warns with the binding that produced it (`:value="score" rejected value NaN`) and the element's remaining attributes still bind. Values are deliberately *not* coerced — silently rewriting `NaN` would hide the app's own bug.
+- **Keyed `data-each` re-renders when a row object is replaced.** `makeScope` captures the row *by reference*, and the keyed path only re-scoped a clone when its **index** changed. The immutable-update idiom — `items.map(r => ({...r, …}))`, or any pipeline allocating fresh row objects per publish — keeps every key and index while swapping the objects, so clones stayed bound to rows no longer in state: permanently stale, and invisible to later sub-path writes on the same row. The guard now also compares item identity. Rows carried over unchanged are still not re-bound, so DOM identity, focus, and uncommitted input state survive exactly as before.
+
+### Changed
+
+- **`spektrum/compile` emits strict-mode-safe functions that honour `data-each` scope.** The emitted module used `with (state)`, which is a `SyntaxError` in strict-mode code — and ES modules are always strict, so the generated file could not be loaded the way [`docs/csp.md`](docs/csp.md) documents (`<script type="module">`). The emitted functions were also `(state) => …`, ignoring the `scope` argument the runtime passes, so under CSP every `data-each` row expression rendered blank and every `data-key` evaluated to `undefined` (collapsing keyed lists onto one duplicate key). Emitted functions are now `(state, scope)` and resolve each free identifier scope-first, reproducing the runtime's `with (state) with (scope||{})` shadowing order. The dotted-numeric normalization also matches the runtime's, so chained indices (`grid.1.0`) and float literals (`val + 1.5`) are handled correctly.
+- **`precompile(source, fn)`'s `fn` is typed `(state, scope?)`.** Hand-written registrations for expressions used inside a `data-each` must read the second argument.
+
+### Documentation
+
+- **Setting a value to `undefined` does not fire subscribers** — now documented in [trade-offs](docs/trade-offs.md). `tick()` selects systems by testing whether a subscribed path *resolves* in the delta, so a write of `undefined` is indistinguishable from "not in this delta": the value merges into `appState` but nothing re-renders. Use `null` to clear a value.
+- [`docs/csp.md`](docs/csp.md) documents the emitted function shape, the unbounded registry, and the `state`/`scope` identifier limitation.
+
+### Internal
+
+- Engine size cap raised one 256 B raw step (13,696 → 13,952) and one 64 B gz step (6,240 → 6,304) to absorb +154 B raw / +72 B gz, after trimming the two new warn strings. Rationale recorded in [`scripts/size.js`](scripts/size.js). The compiler rewrite costs zero runtime bytes — `spektrum/compile` is build-time only.
+- The `evalCache` eviction test asserted the very behavior that made fix 1 possible (it used `precompile()` as its cache-population vector). Replaced with tests for the property that actually matters: registrations survive a flood of 600 registrations plus 600 genuine on-demand compiles.
+- New DOM tests import the *emitted* module as a real ES module via a `data:` URL and drive the full binding path with `new Function` blocked — the end-to-end strict-CSP check the previous regex-only assertions could not make.
+
 ## [1.1.0] — 2026-06-05
 
 **Agent writes are now deny-by-default.** An MCP/agent catalog created without write configuration is **read-only** — every mutation tool returns `protected: <path>` and the engine is never called. Opt into writes with `protectedPaths` (allow all but the listed paths) or `allowAllPaths: true` (allow everything).

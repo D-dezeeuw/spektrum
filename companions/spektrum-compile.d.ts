@@ -29,10 +29,15 @@ export interface EmitOptions {
 
 /**
  * Emit a JS module string that registers each expression with
- * Spektrum's `precompile()`. The emitted module is plain ESM — the
- * functions use `with` (a language feature, not eval/Function), so the
- * output is CSP-clean and no string-to-code conversion happens at
- * runtime.
+ * Spektrum's `precompile()`. No string-to-code conversion happens at
+ * runtime, so the output is CSP-clean.
+ *
+ * Emitted functions take `(state, scope)` and resolve each free
+ * identifier scope-first, matching the runtime's
+ * `with (state) with (scope||{})` shadowing order — so expressions
+ * inside a `data-each` (including `data-key`) resolve the loop
+ * variable. The generated code is strict-mode safe and therefore loads
+ * as an ES module.
  */
 export function emitPrecompileSource(
   expressions: string[],

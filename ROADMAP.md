@@ -6,6 +6,28 @@ For the non-negotiables that gate every item here, see [`docs/constraints.md`](d
 
 ---
 
+## Hard constraints on everything below
+
+Two rules bind every item on this page. They are not trade-offs to be weighed per feature — an item that cannot fit them does not ship, however useful it would be.
+
+**1. Zero dependencies. No exceptions.**
+
+No `dependencies` in `package.json`, ever. The single permitted use of another library anywhere in this project is **benchmarking against it** — a comparison harness may install Alpine, petite-vue, or whatever it measures, because measuring a competitor requires having it. That allowance does not extend to build tooling, test helpers, or "it's only a devDependency."
+
+Practical consequences for the items below:
+
+- The **build-tool integration** ships as a separate build-time package that treats Vite/esbuild/Rollup as a *peer* the user already has. Nothing is added to this package, and the engine never gains a build step.
+- The **benchmark harness** is the one place a comparison library may appear, and it stays out of the published tarball via the `files` allowlist.
+- Anything else that "just needs one small library" gets written by hand or dropped. The seeded PRNG in `tests/spektrum.properties.test.js` is the pattern: ~30 lines instead of a fuzzing dependency.
+
+**2. Size budgets are hard limits, not targets.**
+
+The caps in [`scripts/size.js`](scripts/size.js) are a gate, not a guideline. A change that does not fit is trimmed until it does, or it is not merged. **Raising a cap requires explicit maintainer sign-off** — it is not a step an implementer may take on their own initiative, no matter how well-documented the rationale.
+
+This is stricter than the historical practice recorded in `scripts/size.js`, where caps were raised alongside the feature that needed them. That log stays for the archaeology, but the policy going forward is: trim, or ask.
+
+---
+
 ## Stability commitment
 
 Spektrum follows [semver](https://semver.org/). Concretely:
@@ -25,8 +47,8 @@ Spektrum follows [semver](https://semver.org/). Concretely:
 
 ## Near term
 
-- **Build-tool integration for the CSP path.** A Vite (then esbuild / Rollup) plugin wrapping `extractExpressions` / `emitPrecompileSource`, shipped as a separate build-time package so nothing enters the engine's dependency surface. Today strict-CSP users write their own build script.
-- **Published benchmarks.** A pinned harness comparing bind time, update throughput, memory, and bundle size against Alpine and petite-vue on a common workload — including where those win.
+- **Build-tool integration for the CSP path.** A Vite (then esbuild / Rollup) plugin wrapping `extractExpressions` / `emitPrecompileSource`. Ships as a **separate** build-time package that declares the bundler as a peer dependency the user already has — this package gains nothing, and the engine still needs no build step. Today strict-CSP users write their own build script.
+- **Published benchmarks.** A pinned harness comparing bind time, update throughput, memory, and bundle size against Alpine and petite-vue on a common workload — including where those win. This is the **only** place another library may be installed (see hard constraints above); it stays out of the published tarball.
 - **Directive-complete example.** The demo omits the `<template data-each>` form, scope variables, `.number` / `.trim` model modifiers, `data-action="cycle"`, and the `computed` / `addAsync` / `attempt` APIs.
 - **Hosted demo** on the existing Pages pipeline.
 
@@ -46,8 +68,9 @@ Deliberate non-goals — see [philosophy](docs/philosophy.md) for the full reaso
 - A virtual DOM, proxy-based auto-tracking reactivity, or runtime CSS generation.
 - SSR / hydration.
 - A router, a state-management "ecosystem", or official UI components.
-- Runtime dependencies. Ever.
+- Runtime dependencies. Ever. (See hard constraints — the only permitted use of another library anywhere in the project is benchmarking against it.)
 - Sandboxed template expressions. Templates are author-written; this is the same trust model as Vue and Alpine.
+- Any feature that needs a size-budget increase to fit. The budget decides; the feature adapts.
 
 ---
 

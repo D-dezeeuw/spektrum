@@ -4,6 +4,20 @@
   built-in zlib, and exits non-zero if either raw or gzipped exceeds
   the cap. Run after build; wired into CI as a gate.
 
+  ┌─────────────────────────────────────────────────────────────────┐
+  │ POLICY: THE CAPS BELOW ARE HARD LIMITS.                         │
+  │                                                                 │
+  │ A change that does not fit is trimmed until it does, or it is   │
+  │ not merged. Raising a cap requires explicit maintainer sign-off │
+  │ and is NOT a step an implementer may take on their own          │
+  │ initiative — however well-justified the feature, however        │
+  │ thoroughly the rationale is written up.                         │
+  │                                                                 │
+  │ This is stricter than the history logged below, where caps were │
+  │ raised alongside the feature that needed them. That log stays   │
+  │ for the archaeology; the rule going forward is: trim, or ask.   │
+  └─────────────────────────────────────────────────────────────────┘
+
   Why custom: pulling in size-limit (or any of the other size tools)
   would contradict the "audit it in an afternoon" pitch with a
   transitive-dep tail dozens deep. zlib is built into Node.

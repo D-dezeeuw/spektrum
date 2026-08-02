@@ -18,21 +18,27 @@ The whole engine is one file: [`spektrum.js`](../spektrum.js), ~1100 lines inclu
 
 ## Zero runtime dependencies — forever
 
-No `dependencies` in `package.json`. Ever. The only `devDependencies` are `esbuild` (for the minified bundle) and `eslint` (for linting) — both optional for users; you can use Spektrum without either.
+No `dependencies` in `package.json`. Ever. **No exceptions.**
+
+`devDependencies` are held to the same spirit and kept to tooling that never reaches a user's bundle: `esbuild` (minified bundle), `eslint` (linting), `@happy-dom/global-registrator` (DOM for tests), `typescript` + `typedoc` (type-check and API reference). All are optional for users — you can use Spektrum without any of them.
+
+**The one permitted use of another library, anywhere in this project, is benchmarking against it.** A comparison harness may install Alpine, petite-vue, or whatever it measures, because measuring a competitor requires having it. That allowance does not extend to build tooling, test helpers, or "it's only a devDependency."
 
 **Why it matters.** A reactive engine that pulls in transitive packages can't credibly claim auditability. Every dep is something a security reviewer has to assess, a CSP policy has to allow, an SRI hash has to cover. Zero deps means the SHA-256 of `spektrum.min.js` is the entire trust boundary.
 
-**What this rules out.** "Just add lodash for one helper." Polyfills bundled into core. Build-time codegen that bakes external libraries in. If a feature needs a dependency, it lives outside the engine.
+**What this rules out.** "Just add lodash for one helper." Polyfills bundled into core. Build-time codegen that bakes external libraries in. A fuzzing library for property tests (write the ~30-line seeded PRNG instead — see `tests/spektrum.properties.test.js`). If a feature needs a dependency, it lives outside this package: the planned build-tool integration ships separately and treats the bundler as a peer the user already has.
 
 ---
 
 ## Size budget enforced at CI
 
-Engine cap: **~11.5 KB minified, ~5.2 KB gzipped**. The budget is asserted in [`scripts/size.js`](../scripts/size.js) and runs as part of `npm run size` — CI fails if a change pushes the bundle over.
+Engine cap: **13,952 B raw / 6,304 B gzipped**, with a per-companion cap alongside it. The budget is asserted in [`scripts/size.js`](../scripts/size.js) and runs as part of `npm run size` — CI fails if a change pushes any bundle over. (The caps carry their own history: each past adjustment is logged in that file with the feature that caused it.)
 
-**Why it matters.** The budget is what keeps every other constraint honest. Without it, "just one more helper" compounds until the single-file claim becomes a 30 KB monolith and the agent-context claim no longer holds. Bytes are the currency every feature pays in.
+**The caps are hard limits, not targets.** A change that does not fit is trimmed until it does, or it is not merged. **Raising a cap requires explicit maintainer sign-off** and is never something an implementer decides on their own — however well-justified the feature, however thorough the write-up. Trim, or ask.
 
-**What this rules out.** Most. Concretely: features that cost more than ~200 B minified need a named, justified use case. Bumps to the cap itself are one-shot, documented in [`scripts/size.js`](../scripts/size.js), and tied to a specific shipped feature — never speculative headroom.
+**Why it matters.** The budget is what keeps every other constraint honest. Without it, "just one more helper" compounds until the single-file claim becomes a 30 KB monolith and the agent-context claim no longer holds. Bytes are the currency every feature pays in — and a budget that moves whenever it's inconvenient isn't a budget.
+
+**What this rules out.** Most. Concretely: features that cost more than ~200 B minified need a named, justified use case, and a feature that only fits by raising the cap doesn't ship in that form. Speculative headroom is never a reason to adjust a number.
 
 ---
 

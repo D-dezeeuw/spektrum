@@ -2,10 +2,21 @@
 # build, size — on every push to main and every PR. Complements the
 # tag-triggered publish.yml: that one ships, this one gates.
 #
-# Single matrix entry (Node 22, ubuntu-latest). The engine supports
-# more (Node ≥ 22 per package.json), but the test surface is small
-# and deterministic — running it multiple times just buys minutes.
-# Add a matrix row when you have a reason to.
+# Two lanes:
+#
+#   check    lint + typecheck + test + build + size, across the Node
+#            versions package.json claims to support. happy-dom is a
+#            fast stand-in for a browser, not a browser.
+#
+#   browsers a real-engine smoke test (Chromium, Firefox, WebKit). This
+#            exists because happy-dom is lenient exactly where real
+#            engines are strict, and that gap has shipped bugs: a
+#            WebIDL restricted double (progress.value = NaN) throws in a
+#            browser and not in happy-dom, and Safari did not support
+#            the lookbehind assertion the engine's path regex uses until
+#            16.4 — a hard parse failure no Node run can see. Kept as a
+#            separate job so a browser-infra hiccup doesn't block the
+#            fast gate.
 
 name: CI
 
@@ -26,12 +37,19 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json declares engines.node >= 22; test the floor and
+        # current. fail-fast off so a version-specific break is visible
+        # as itself rather than cancelling the other lane.
+        node: ['22', '24']
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node }}
           cache: 'npm'
 
       - run: npm ci
@@ -56,3 +74,28 @@ jobs:
         # its cap in scripts/size.js. Run last so the failure points
         # at the exact file + delta if it trips.
         run: npm run size
+
+  browsers:
+    name: Browser smoke (Chromium / Firefox / WebKit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      # Playwright is NOT a project dependency — the zero-runtime-dep
+      # rule stands, and it is not in devDependencies either so a normal
+      # `npm ci` stays lean. Installed ad hoc here, in CI only.
+      - name: Install Playwright
+        run: npx --yes playwright@1 install --with-deps chromium firefox webkit
+
+      - name: Run browser smoke tests
+        run: node --test tests/browser/*.test.js
+        env:
+          SPEKTRUM_BROWSERS: chromium,firefox,webkit

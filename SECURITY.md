@@ -40,6 +40,10 @@ Out of scope:
   same caveat as Vue/Alpine). Do report bypasses where attacker
   *data* leads to template-level execution — that is in scope.
 
+The full trust model — what is guarded, what is deliberately not, and
+where the agent boundaries sit — is written up in
+[`docs/security-model.md`](docs/security-model.md).
+
 ## Hardening posture
 
 Releases are published manually from the maintainer's machine after
@@ -60,11 +64,20 @@ know when putting an app on the wire for an agent:
 
 - **Writes are denied by default.** `createTools()` / `mount()` produce
   a read-only agent unless you opt in: pass `protectedPaths` to allow
-  writes except to sensitive paths (API keys, auth, config), or
+  writes except to sensitive paths (auth, config), or
   `{ allowAllPaths: true }` for unrestricted writes. `protectedPaths`
-  takes precedence if both are set. Even with writes enabled, mount the
-  agent only where you trust the agent and the transport (e.g. local
-  stdio MCP — never exposed to the internet without auth).
+  takes precedence if both are set. A protected path is fenced
+  bidirectionally — writing its parent object is denied too. Read-only
+  also denies the history-mutating tools (`checkpoint`, `attempt.start`,
+  `replay`), since `replay` plus one recorded entry truncates history;
+  `allowTimeTravel: true` re-enables them. Even with writes enabled,
+  mount the agent only where you trust the agent and the transport (e.g.
+  local stdio MCP — never exposed to the internet without auth).
+- **`protectedPaths` is a write fence, not a read fence.** A guarded
+  path is still readable via `getState` / `describe` / `explain` /
+  `serialize`, and the agent companion forwards what it reads to a
+  third-party API. Keep real secrets out of engine state — the option
+  stops an agent corrupting a value, not disclosing it.
 - **Don't render agent output through `:innerHTML`.** LLM/API responses
   are semi-trusted data. `:innerHTML` and `:srcdoc` parse their value as
   HTML, so binding model output through them reintroduces XSS. Use

@@ -26,9 +26,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Setting a value to `undefined` does not fire subscribers** — now documented in [trade-offs](docs/trade-offs.md). `tick()` selects systems by testing whether a subscribed path *resolves* in the delta, so a write of `undefined` is indistinguishable from "not in this delta": the value merges into `appState` but nothing re-renders. Use `null` to clear a value.
 - [`docs/csp.md`](docs/csp.md) documents the emitted function shape, the unbounded registry, and the `state`/`scope` identifier limitation.
 
+### Security
+
+*Four verified bypasses of the 1.1.0 agent write protection. One defeated the configuration every doc example recommends, so anyone relying on `protectedPaths` should treat this as a required upgrade.*
+
+- **A protected path is now fenced bidirectionally.** `buildGuard` tested only `path === p || path.startsWith(p + '.')` — the path itself and its descendants. Writing an **ancestor** replaced the protected leaf wholesale: with `protectedPaths: ['llm.apiKey']`, `setValue('llm.apiKey', …)` was denied but `setValue('llm', { apiKey: 'pwned' })` succeeded. The dot boundary still keeps unrelated same-prefix keys (`llmFoo`) writable.
+- **RegExp patterns are no longer stateful.** A `/g` or `/y` pattern advanced `lastIndex` across `.test()` calls, so the same pattern alternated between matching and not matching — protection flickered on and off per write. Stateful flags are stripped once at build time; the RegExp you pass is never mutated.
+- **Read-only now covers the timeline.** `checkpoint` and `replay` never write state, but `replay` rewinds the cursor and the next recorded entry truncates everything past it — so a deny-all catalog could still rewind the live app and destroy its history. `checkpoint`, `attempt.start`, and `replay` are denied in read-only mode; the new **`allowTimeTravel: true`** opts a read-only agent back into scrubbing. Ignored when writes are enabled.
+- **Tools that return engine state return a clone.** `getState` handed back the live `appState` object, so an in-process caller — the SDK-agnostic handoff this module is designed for — could mutate straight past the guard.
+- **`protectedPaths` is documented as a write fence, not a read fence.** A guarded path stays readable via `getState` / `describe` / `explain` / `serialize`, and `spektrum/agent` forwards what it reads to a third-party API. Keep real secrets out of engine state.
+- New **[`docs/security-model.md`](docs/security-model.md)** consolidates the trust boundaries (author-written templates, escaped data, prototype-pollution guards, agent read/write authority, dev-only affordances) into one page.
+
+### Fixed
+
+- **`spektrum/persist`: `maxEntries` keeps the newest entries.** The cap sliced from the front, keeping the **oldest** — so an over-cap restore silently booted the app into ancient state instead of where the user left it. Now matches the direction the engine's own `historyLimit` trims.
+- **`spektrum/persist`: a debounced `autoSave` flushes on page hide.** Pending saves were lost when the page closed. Hooks `pagehide` / `visibilitychange: hidden` (not `beforeunload`, which mobile browsers routinely skip). Opt out with `{ flushOnHide: false }`; listeners are only installed when `debounce` is set, and `stop()` removes them.
+- **`spektrum/inspect` no longer swallows clicks on other companions' UI.** `isOwn()` and `lint()` listed only inspect's own nodes and devtools, so with inspect mode on the capture-phase handler `preventDefault()`ed clicks on dock tabs and the agent textarea, and the lint pass reported findings against the dev UI. The example mounts inspect *inside* the dock, so this was on the shipped path. Companion roots now live in one shared list.
+- **`spektrum/dock`: re-registering a panel id tears down the previous companion.** It called `detach()`, which by contract skips `onClose`, so the replaced companion never ran its `unmount()` — a re-mounted devtools kept an rAF loop running against detached nodes, and a re-mounted inspect kept its document-level capture listeners and its `onRecord` subscription. Now cascades through `close()`.
+
+### Changed
+
+- **`spektrum/mcp` handlers validate their arguments** and return the standard `{ ok: false, error }` envelope instead of throwing raw `TypeError`s out of the tool call (an SDK handed a bare `inputSchema` may not validate). Validation runs *before* an attempt records its opening checkpoint, so a rejected call leaves no trace in history. Engine errors still propagate — validation is not a blanket catch.
+- **`spektrum/inspect`: `whoSubscribesTo(spektrum, path, systems?)`** takes an optional pre-fetched systems array. The mutation tracer called `describe()` per recorded mutation, and `describe()` walks all of history for its checkpoint list; it now caches one manifest per synchronous burst. Log rendering stays synchronous on purpose.
+
+### Documentation
+
+- **Browser support floor corrected to Safari ≥ 16.4** (was ≥ 16). The engine's path-extraction regex uses a lookbehind assertion, which Safari shipped in 16.4 — on 16.0–16.3 the module fails to *parse*, so this is a hard floor, not a degradation.
+- Removed a stale claim that only one `onRecord` handler is active per instance; hooks have been multi-subscriber since 1.0.
+- `CONTRIBUTING.md` no longer says there is no CI, and documents the browser and property test lanes.
+- New **[`ROADMAP.md`](ROADMAP.md)**: stability commitment per surface, near-term plans, open design questions, explicit non-goals, and a plain statement that the bus factor is 1.
+
+### Added
+
+- **Property-based tests** (`tests/spektrum.properties.test.js`) over the engine's invariants — replay determinism, scrub-equals-rebuild, `snapshotEvery` transparency, delta drainage, value round-tripping, prototype-pollution safety, cursor integrity, and fork preservation — across generated mutation programs. Zero-dependency seeded PRNG; every assertion reports its seed, so a counterexample replays with `SPEKTRUM_SEED=<n>`.
+- **Real-browser smoke tests** (`tests/browser/`) on Chromium, Firefox, and WebKit, covering the cases happy-dom cannot: a genuine WebIDL restricted-double rejection, module parse (the Safari-lookbehind class of failure), keyed `data-each` re-render, the precompiled path with `Function` blocked, `javascript:`-URL neutralization, and a `data-model` round-trip through a real input event. Playwright is not a dependency — the suite skips when it is absent.
+- **CI** now runs the gate across Node 22 and 24, plus a separate browser-smoke job.
+
+### Known
+
+- **`setValue(path, plainObject)` merges rather than replaces**, so stale keys survive what the docs call an absolute write (array values *do* replace — the asymmetry is the surprising part). Because the delta collapses repeated writes before merging, this makes tick batching observable: the same two writes produce different state depending on whether a tick ran between them, and `replay()` (one entry per tick) can therefore diverge from a run that batched. Found by the new replay-determinism property test and **pinned** in `tests/spektrum.properties.test.js` so a future fix trips the assertions rather than passing silently. A real fix requires the delta to distinguish a whole-value write from sub-path scaffolding; tracked in [`ROADMAP.md`](ROADMAP.md).
+
 ### Internal
 
 - Engine size cap raised one 256 B raw step (13,696 → 13,952) and one 64 B gz step (6,240 → 6,304) to absorb +154 B raw / +72 B gz, after trimming the two new warn strings. Rationale recorded in [`scripts/size.js`](scripts/size.js). The compiler rewrite costs zero runtime bytes — `spektrum/compile` is build-time only.
+- `spektrum-mcp` cap raised to 6,656 B raw / 2,624 B gz (+1,169 B raw / +503 B gz) for the guard hardening — the largest step this module has taken, and the one with the clearest justification: without it the documented security boundary does not hold. Validation strings dominated the cost; deduping them into `badStr` / `badInt` trimmed 165 B first.
+- `spektrum-persist` cap raised to 1,536 B raw / 704 B gz (+305 B raw) for the hide-flush plumbing.
 - The `evalCache` eviction test asserted the very behavior that made fix 1 possible (it used `precompile()` as its cache-population vector). Replaced with tests for the property that actually matters: registrations survive a flood of 600 registrations plus 600 genuine on-demand compiles.
 - New DOM tests import the *emitted* module as a real ES module via a `data:` URL and drive the full binding path with `new Function` blocked — the end-to-end strict-CSP check the previous regex-only assertions could not make.
 

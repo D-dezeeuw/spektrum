@@ -61,9 +61,13 @@ const stop = autoSave(spektrum, {
 stop();                                          // detach the autoSave hook
 ```
 
-`loadHistory` validates each entry's shape (op, path, value types) and caps replay at `opts.maxEntries` (default 100,000) so an attacker-tampered storage value can't blow up the engine. Calls `resetState()` internally — preserves your registered systems and hooks.
+`loadHistory` validates each entry's shape (op, path, value types) and caps replay at `opts.maxEntries` (default 100,000) so an attacker-tampered storage value can't blow up the engine. When the stored history exceeds the cap, the **newest** entries are kept — the same direction the engine's own `historyLimit` trims — so a capped restore lands where the user left off rather than in ancient state. Calls `resetState()` internally — preserves your registered systems and hooks.
 
-`autoSave` registers an `onRecord` hook. Only one onRecord handler is active per instance at a time — calling `autoSave` replaces any prior hook. Use `onRecord` directly if you need to combine with other observers.
+`autoSave` registers an `onRecord` hook and returns a `stop()` that detaches **only that hook**; other `onRecord` subscribers (telemetry, supervisor mirrors) keep firing. Hooks have been multi-subscriber since 1.0.
+
+With `debounce` set, `autoSave` also flushes a pending save on `pagehide` / `visibilitychange: hidden`, so the last debounce window of edits survives the page closing. Pass `{ flushOnHide: false }` to opt out. Neither listener is installed without `debounce` (an undebounced save has nothing pending), and `stop()` removes both.
+
+Not persisted: the cursor (a restore always lands at the head of the replayed history) and `forks`.
 
 ---
 
@@ -99,10 +103,33 @@ The catalog covers `getState`, `describe`, `explain`, `setValue`, `trigger`, `ch
 
 **Writes are denied by default** (since 1.1.0) — a freshly created catalog is read-only, so forgetting to configure it yields a harmless read-only agent rather than one with full authority over your state. Opt in with one of:
 
-- **`protectedPaths`** — an array of `string | RegExp`: *allow everything except these*. The mutation tools (`setValue`, `trigger`, and the inline `set` / `add` ops inside `attempt.start`) refuse any write whose path matches; everything else is allowed. String entries match the exact path or a dot-segment prefix (so `'llm'` covers `llm.apiKey` and `llm.provider`, but not `llmFoo`); RegExp entries are tested as-is. Denied writes return `{ ok: false, error: 'protected: <path>' }` and never reach the engine. **Takes precedence over `allowAllPaths`.** Reads, `describe`, `explain`, `replay`, etc. are always allowed.
+- **`protectedPaths`** — an array of `string | RegExp`: *allow everything except these*. The mutation tools (`setValue`, `trigger`, and the inline `set` / `add` ops inside `attempt.start`) refuse any write whose path matches; everything else is allowed. Denied writes return `{ ok: false, error: 'protected: <path>' }` and never reach the engine. **Takes precedence over `allowAllPaths`.**
 - **`allowAllPaths: true`** — *allow everything*. Use when an agent genuinely needs unrestricted write access.
-- Neither → **read-only**: every write is denied.
+- Neither → **read-only**: every write is denied, and the history-mutating tools are denied too (see below).
+- **`allowTimeTravel: true`** — in read-only mode only, re-enable `checkpoint`, `attempt.start`, and `replay`.
 - **`prefix`** — namespace prepended to every tool name (default `'spektrum.'`).
+
+#### How a protected path matches
+
+String entries match on **bidirectional** dotted-path overlap — the path itself, anything under it, and anything above it:
+
+| Guard | Write | Result |
+|---|---|---|
+| `'llm.apiKey'` | `llm.apiKey` | denied — the path itself |
+| `'llm.apiKey'` | `llm.apiKey.rotation` | denied — a descendant |
+| `'llm.apiKey'` | `llm` | **denied — an ancestor** |
+| `'llm.apiKey'` | `llmFoo` | allowed — the dot boundary keeps same-prefix keys separate |
+| `'llm'` | `llm.provider` | denied — a descendant |
+
+The ancestor row is the one that matters most: without it, `setValue('llm', { apiKey: '…' })` would replace a protected leaf wholesale. RegExp entries are tested against the path; stateful flags (`g`, `y`) are stripped internally so a pattern can't alternate between matching and not matching across calls, and the RegExp you pass is never mutated.
+
+#### Read-only covers the timeline
+
+`checkpoint` and `replay` never write state directly, but they do rewrite history: `replay` moves the cursor back, and the next recorded entry truncates everything after it. A read-only catalog therefore denies `checkpoint`, `attempt.start`, and `replay` as well — otherwise an agent with no write access could still rewind the running app and destroy its history. Pass `allowTimeTravel: true` when you want a read-only agent that can still scrub. Whenever writes are enabled, time travel is available and this option is ignored.
+
+#### `protectedPaths` is a write fence, not a read fence
+
+A protected path is still fully readable through `getState`, `describe`, `explain`, and `serialize` — and a companion like `spektrum/agent` sends what it reads to a third-party API. **Do not use `protectedPaths` to keep a secret from an agent.** Keep secrets out of engine state entirely; use the option to stop an agent from *corrupting* config, not to hide it.
 
 **Three usage patterns:**
 

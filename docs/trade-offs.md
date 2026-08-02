@@ -6,6 +6,8 @@ Things people sometimes flag as bugs that are deliberate, with the reasoning. If
 
 Templates compile to `new Function('state', 'scope', 'with (state) with (scope||{}) { return (expr); }')`. Outer `with` puts state on the scope chain; inner `with` adds the per-iteration scope from a `data-each` (loop variable, `$index`, `$first`, `$last`, `$path`). Inner-most wins on collision, so a loop variable like `data-as="user"` shadows a state key named `user` for the duration of the iteration — that's the intended semantics, not a footgun.
 
+This shadowing order is part of the expression contract, not an implementation detail: `spektrum/compile` reproduces it without `with` (see [CSP-safe deployments](csp.md)), and any hand-written `precompile()` function must too.
+
 - **Sloppy mode applies automatically.** `new Function` always creates a function whose body is in sloppy mode unless the body itself opens with `'use strict'` — regardless of the calling module's strictness. `with` is therefore valid even when Spektrum is loaded from a strict ESM module. Verified against Node ≥ 20 and every supported browser.
 - **Templates are author-written, like Vue and Alpine.** Don't compile templates from untrusted input. The constructor-escape pattern (`constructor.constructor("…")()`) is reachable from inside an expression, but only by someone authoring the template — they're already running their own code on the page. The same trust requirement applies even after `spektrum/compile`: precompiling removes the runtime `new Function` (helpful for strict CSP), it does not remove the requirement that templates be authored by you.
 
@@ -14,6 +16,23 @@ Why we keep `with`: a `Proxy`-based sandbox costs ~150 minified bytes and a per-
 ## `data-each` without `data-key` rebuilds the whole list on interior change
 
 The no-key path uses a shared-prefix tail diff: append-only and pop-tail changes are O(delta), but any change to an interior item (or an out-of-order swap) wipes and rebuilds. Add `data-key="item.id"` for keyed reconciliation with O(moves) reorder.
+
+## Setting a value to `undefined` does not fire subscribers
+
+`tick()` decides which systems to run by testing whether a subscribed path *resolves* in the delta (`isPath(appStateDelta, path)`). A write of `undefined` is therefore indistinguishable from "this path isn't in the delta at all" — the value merges into `appState`, but nothing re-renders and the DOM keeps showing the old value indefinitely.
+
+```js
+setValue('msg', 'visible');
+tick();                      // <p>{{msg}}</p> renders "visible"
+setValue('msg', undefined);
+tick();                      // appState.msg is undefined — the <p> still shows "visible"
+```
+
+**Use `null` to clear a value.** `null` resolves, so subscribers fire and bindings re-render (`{{msg}}` renders as an empty string, same as `undefined` would).
+
+This also applies to object fields: publishing `{...row}` with a key omitted leaves that path absent from the delta, so a binding on it won't re-run on that write alone.
+
+Why we keep this: the alternative is tracking *written paths* separately from the delta's shape, which means a parallel structure threaded through every write, merge, and replay path. That's a real cost against the size budget for a case a one-character change (`null`) already covers.
 
 ## `computed` writes into the delta, not state
 
@@ -53,4 +72,4 @@ When `historyLimit` is set and the buffer overflows, the oldest entries get spli
 
 - [Public API](api.md) — error handling, `onError` codes
 - [Time-travel](time-travel.md) — how `historyLimit` and `snapshotEvery` interact
-- [CSP-safe deployments](csp.md) — `with(state)` after precompile
+- [CSP-safe deployments](csp.md) — how precompiled expressions reproduce the scope contract

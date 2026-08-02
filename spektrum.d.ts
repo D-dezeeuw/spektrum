@@ -397,8 +397,19 @@ export function setPathValue(obj: object, path: string, value: any): void;
  * (see `spektrum-compile.js`) emits one call per unique template
  * expression, letting Spektrum run under strict CSP — the runtime
  * never reaches the `new Function` fallback when the cache hits.
+ *
+ * Registrations live in their own unbounded registry: they are never
+ * evicted, and they take precedence over on-demand compiles.
+ *
+ * `fn` receives `(state, scope)`. `scope` carries the per-iteration
+ * `data-each` bindings (the loop variable, `$index`, `$path`, …) and is
+ * undefined outside a loop; an expression used inside `data-each` must
+ * read it to resolve the loop variable.
  */
-export function precompile(source: string, fn: (state: State) => any): void;
+export function precompile(
+  source: string,
+  fn: (state: State, scope?: Record<string, any>) => any,
+): void;
 
 /** Create an isolated Spektrum instance. */
 export function createSpektrum(opts?: SpektrumOptions): Spektrum;

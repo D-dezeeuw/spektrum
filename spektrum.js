@@ -152,11 +152,22 @@ const fnVal  = (el, v) => v ?? parseValue(el.value);
 
 const EVAL_CACHE_LIMIT = 500;
 const evalCache = new Map();
+// Author-registered entries from `precompile()`. Deliberately unbounded
+// and separate from `evalCache`: registrations are build-time output,
+// bounded by the template, and are the ONLY expression source that
+// works under a strict CSP (where the `new Function` fallback is
+// blocked). Sharing the capped cache meant a large app evicted its own
+// registrations before bindDOM() ran — and every subsequent miss cached
+// an undefined-returning dud that evicted one more survivor. Only
+// compiled-on-demand entries need eviction.
+const precompiled = new Map();
 
 // FIFO eviction (Map preserves insertion order) bounds memory for
-// long-running pages that mint many distinct expressions.
+// long-running pages that mint many distinct expressions. Re-setting an
+// existing key skips the evict — replacing a value must not cost an
+// unrelated entry its slot.
 const cacheSet = (k, v) => {
-  if (evalCache.size >= EVAL_CACHE_LIMIT) {
+  if (!evalCache.has(k) && evalCache.size >= EVAL_CACHE_LIMIT) {
     evalCache.delete(evalCache.keys().next().value);
   }
   evalCache.set(k, v);
@@ -178,7 +189,10 @@ const scopePaths = new WeakMap();
 const eachHosts = new WeakSet();
 
 const evalExpr = (expr) => {
-  let fn = evalCache.get(expr);
+  // Precompiled registrations win over the on-demand cache, so a
+  // late `precompile()` also replaces a dud cached by an earlier
+  // failed compile (the CSP recovery path).
+  let fn = precompiled.get(expr) || evalCache.get(expr);
   if (fn) return fn;
   try {
     // notation so JS can parse. Match identifier-head + the full tail
@@ -207,8 +221,15 @@ const evalExpr = (expr) => {
 
 /** Register a precompiled expression function. Build-time tooling
  *  emits one call per unique expression so the runtime cache hits
- *  before `new Function` runs (CSP-friendly). */
-export const precompile = (source, fn) => cacheSet(source, fn);
+ *  before `new Function` runs (CSP-friendly). Registrations live in
+ *  their own unbounded registry — they are never evicted, and they
+ *  take precedence over on-demand compiles.
+ *
+ *  `fn` receives `(state, scope)`. The second argument carries the
+ *  per-iteration `data-each` scope (`item`, `index`, `$path`, …);
+ *  an expression used inside a loop MUST read it to resolve the loop
+ *  variable. `spektrum/compile` emits functions of the right shape. */
+export const precompile = (source, fn) => { precompiled.set(source, fn); };
 
 // Lookbehind excludes identifiers preceded by `.` or `\w` so
 // `user.name.toUpperCase` matches as one path, not three.
@@ -685,7 +706,14 @@ export const createSpektrum = (opts = {}) => {
       ? (state, delta) => render(state, delta, scope)
       : render;
     const unsub = addSystem(paths, wrapped);
-    wrapped(stateSnapshot(), appStateDelta);
+    // The initial render is guarded the same way `runSystem` guards
+    // every later run. Without this, one throwing DOM write (a
+    // constrained property rejecting a non-finite value, say) escaped
+    // bindDOM's element walk and took out every *subsequent* binding in
+    // the document — and the caller never received the destroy handle,
+    // so the bindings already wired leaked with no way to clean up.
+    try { wrapped(stateSnapshot(), appStateDelta); }
+    catch (err) { routeErr(err, wrapped, 'binding threw'); }
     return unsub;
   };
 
@@ -749,7 +777,14 @@ export const createSpektrum = (opts = {}) => {
         if (isClass) return applyClass(el, v);
         if (isUrl && typeof v === 'string' && JS_SCHEME.test(v)) v = '#';
         if (isKebab) return v == null ? el.removeAttribute(prop) : el.setAttribute(prop, v);
-        el[prop] = v;
+        // Constrained DOM properties (progress.value, meter.value,
+        // audio.volume, input.valueAsNumber — WebIDL restricted doubles)
+        // THROW on NaN/Infinity rather than coercing. Report the binding
+        // that produced the bad value and keep going, so the element's
+        // remaining attributes still bind. Deliberately not coerced:
+        // silently rewriting NaN would hide the app's real bug.
+        try { el[prop] = v; }
+        catch { warn(`:${raw}="${expr}" rejected value ${v}`); }
       }, scope));
     }
     return unsubs.length && (() => callAll(unsubs));
@@ -1056,16 +1091,26 @@ export const createSpektrum = (opts = {}) => {
         if (!entry) {
           entry = buildClone(i, items);
           cache.set(key, entry);
-        } else if (entry.index !== i) {
-          // Same clone, new position: tear down old bindings (paths were
-          // baked to the old index) and re-bind with a scope pointed at
-          // the new index. DOM identity preserved, so focus/scroll/input
-          // state survives the move. This is what data-stable-key used
-          // to opt into; it's now the default.
+        } else if (entry.index !== i || entry.item !== items[i]) {
+          // Same clone, new position OR a new object at the same
+          // position: tear down old bindings and re-bind with a scope
+          // pointed at the current index. DOM identity is preserved, so
+          // focus/scroll/input state survives. This is what
+          // data-stable-key used to opt into; it's now the default.
+          //
+          // The identity half matters because `makeScope` captures the
+          // row BY REFERENCE (`scope[varName] = items[i]`) and every
+          // `item.*` expression evaluates against that captured object.
+          // The immutable-update idiom — `items.map(r => ({...r, …}))`,
+          // or any pipeline allocating fresh rows per publish — keeps
+          // the key and index but swaps the object, so an index-only
+          // guard left the clone bound to a row no longer in state:
+          // permanently stale, and invisible to later sub-path writes.
           entry.cleanup();
           entry.cleanup = bindDOM(entry.clone, makeScope(outerScope, varName, i, items, arrayPath));
         }
         entry.index = i;
+        entry.item = items[i];
         if (live[i] !== entry.clone) {
           insertAt(entry.clone, live[i]);
           liveDrop(entry.clone);

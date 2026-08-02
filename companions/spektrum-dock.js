@@ -145,8 +145,16 @@ export const mount = (opts = {}) => {
    *  to it programmatically. */
   const registerPanel = ({ id, label, onClose }) => {
     if (panels.has(id)) {
-      // Replace existing — re-mounting a companion should refresh, not stack.
-      panels.get(id).detach();
+      // Replace existing — re-mounting a companion should refresh, not
+      // stack. This must CASCADE (close), not just unhook the DOM
+      // (detach): detach removes the tab and container without ever
+      // invoking onClose, so the previous companion never ran its
+      // unmount(). A re-registered devtools kept its rAF loop running
+      // forever against detached nodes, and a re-registered inspect
+      // kept its document-level mousemove/click/keydown capture
+      // listeners plus its onRecord subscription. close() runs the
+      // teardown and then detaches.
+      panels.get(id).close();
     }
     contEl.querySelector('.empty')?.remove();
     const container = document.createElement('div');

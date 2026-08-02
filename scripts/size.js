@@ -154,7 +154,21 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
   { file: 'spektrum.min.js',          raw: 13952, gz: 6304 },
-  { file: 'companions/spektrum-persist.min.js',  raw:  1024, gz:  576 },
+  // Persist gains a pagehide/visibilitychange flush so a debounced
+  // autoSave doesn't lose its pending window when the page goes away —
+  // `pagehide` rather than `beforeunload` because mobile browsers
+  // routinely discard a backgrounded page without firing the latter,
+  // which is precisely the case that loses data. Opt out with
+  // `flushOnHide: false`. The listeners are only installed when
+  // `debounce` is set (an undebounced autoSave has nothing pending) and
+  // are removed by stop(). Also fixes maxEntries truncating from the
+  // FRONT, which kept the oldest entries and silently restored an app
+  // into ancient state rather than where the user left it — that one is
+  // a pure bug fix and costs a single character. +~305 B raw / +~57 B
+  // gz for the flush plumbing; one 512 B raw step (1,024 → 1,536) and
+  // one 128 B gz step (576 → 704), keeping this the smallest companion
+  // by a wide margin.
+  { file: 'companions/spektrum-persist.min.js',  raw:  1536, gz:  704 },
   // 1.2 dock integration adds ~120 B for the [data-spektrum-dock]
   // detection branch + dockPanel.detach() in unmount. Standalone
   // behavior unchanged; cap raised once to absorb the integration.
@@ -178,7 +192,36 @@ const TARGETS = [
   // actual 5,320) and gz holds a small cushion (2,112 B, actual 2,043,
   // below even the 1.0.1 gz). Trimmed, then tightened — the opposite
   // of a complacent bump.
-  { file: 'companions/spektrum-mcp.min.js',      raw:  5376, gz: 2112 },
+  //
+  // The guard-hardening batch closes four verified bypasses of the
+  // 1.1.0 write protection, one of which defeated the configuration
+  // every doc example recommends:
+  //   1. buildGuard tested only `path === p || path.startsWith(p+'.')`
+  //      — self and descendants. Writing an ANCESTOR replaced the
+  //      protected leaf wholesale: past `protectedPaths:['llm.apiKey']`,
+  //      `setValue('llm', {apiKey:'…'})` was allowed. Overlap is now
+  //      bidirectional.
+  //   2. A `/g` or `/y` RegExp pattern advanced `lastIndex` across
+  //      `.test()` calls, so protection alternated on and off per
+  //      write. Stateful flags are stripped once at build time.
+  //   3. "Read-only" now covers the timeline. `checkpoint` and `replay`
+  //      never write state, but replay rewinds the cursor and the next
+  //      recorded entry truncates everything past it — a deny-all
+  //      catalog could still rewind the live app and destroy history.
+  //      Denied by default; `allowTimeTravel` opts back in.
+  //   4. Handlers validate their arguments and return the standard
+  //      error envelope instead of throwing raw TypeErrors out of the
+  //      tool call (an SDK given a bare inputSchema may not validate).
+  // Plus: every tool that returns engine state now returns a clone —
+  // a live `appState` reference let an in-process caller (the handoff
+  // this module is designed for) mutate straight past the guard.
+  // Validation strings dominate the cost; deduping them into badStr/
+  // badInt trimmed 165 B raw first. Net +1,169 B raw / +503 B gz —
+  // by far the largest step this module has taken, and the one with
+  // the clearest justification: without it the documented security
+  // boundary does not hold. Five 256 B raw steps (5,376 → 6,656) and
+  // four 128 B gz steps (2,112 → 2,624), leaving ~167 B raw / ~78 B gz.
+  { file: 'companions/spektrum-mcp.min.js',      raw:  6656, gz: 2624 },
   { file: 'companions/spektrum-agent.min.js',    raw: 13312, gz: 5120 },
   // Inspect Phase 1 + Lint (element inspector with hover tooltip +
   // outline overlay, three-tab panel, mutation tracer with filter, and

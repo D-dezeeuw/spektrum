@@ -11,6 +11,7 @@ Reference material for working with Spektrum. The [root README](../README.md) is
 
 ## Topical guides
 
+- **[Security model](security-model.md)** — trust boundaries: author-written templates, escaped data, agent read/write authority. Read before mounting an agent.
 - **[CSP-safe deployments](csp.md)** — build-time precompile for `unsafe-eval`-blocked environments
 - **[Constraints](constraints.md)** — the non-negotiables that gate every feature (single file, zero deps, size budget, sync test surface, …)
 - **[Known trade-offs](trade-offs.md)** — deliberate design choices and their rationale
@@ -32,7 +33,7 @@ Reference material for working with Spektrum. The [root README](../README.md) is
 
 ## Compatibility
 
-- **Browsers** — modern evergreen (Chrome, Edge, Safari, Firefox). Minimum: Safari ≥ 16, Firefox ≥ 90.
+- **Browsers** — modern evergreen (Chrome, Edge, Safari, Firefox). Minimum: **Safari ≥ 16.4**, Firefox ≥ 90. The engine's path-extraction regex uses a lookbehind assertion, which Safari shipped in 16.4 — on 16.0–16.3 the module fails to parse, so this is a hard floor rather than a graceful degradation.
 - **Node** — ≥ 22 for the test suite (`node --test`, no fake timers, no DOM polyfill in the engine tests).
 - **Module format** — ESM only. `<script type="module">` from a CDN; `import` in bundlers; `--input-type=module` in Node.
 - **No bundler required** — every file (engine + companions) is ESM, side-effect-free, and works from `unpkg` / `jsdelivr` straight to the browser.

@@ -476,3 +476,233 @@ test('empty protectedPaths falls through to deny-by-default', () => {
 });
 
 });
+
+// === Path-overlap truth table (ancestor clobber) ===
+//
+// The guard used to test only `path === p || path.startsWith(p + '.')`
+// — self and descendants, never ancestors. That left the documented
+// configuration bypassable: with `protectedPaths: ['llm.apiKey']`, a
+// write to the PARENT object replaced the protected leaf wholesale.
+// One row per relationship so a future edit can't silently drop an arm.
+
+// Local helpers — the `setVal` above is scoped to its own suite.
+const write = (t, path, value) =>
+  t.find(x => x.name === 'spektrum.setValue').handler({ path, value });
+const invoke = (t, name, args) =>
+  t.find(x => x.name === 'spektrum.' + name).handler(args);
+
+suite('protectedPaths — path overlap', () => {
+
+const guarded = () => createTools(s, { protectedPaths: ['llm.apiKey'] });
+
+test('denies the protected path itself', () => {
+  assert.equal(write(guarded(), 'llm.apiKey', 'x').ok, false);
+});
+
+test('denies a descendant of the protected path', () => {
+  assert.equal(write(guarded(), 'llm.apiKey.rotation', 'x').ok, false);
+});
+
+test('denies an ANCESTOR of the protected path', () => {
+  // The regression: writing the parent object replaces the protected
+  // leaf. Must be denied, and the engine must never be called.
+  s.setValue('llm.apiKey', 'REAL');
+  s.tick();
+  const res = write(guarded(), 'llm', { apiKey: 'pwned' });
+  assert.equal(res.ok, false, 'ancestor write must be denied');
+  assert.equal(res.error, 'protected: llm');
+  assert.equal(s.appState.llm.apiKey, 'REAL', 'protected value survived');
+});
+
+test('allows a sibling that merely shares a string prefix', () => {
+  assert.equal(write(guarded(), 'llmFoo', 1).ok, true,
+    'the dot boundary keeps llmFoo out of a guard on llm.apiKey');
+});
+
+test('allows an unrelated path', () => {
+  assert.equal(write(guarded(), 'counter', 1).ok, true);
+});
+
+test('ancestor rule also applies through attempt.start actions', () => {
+  const res = invoke(guarded(), 'attempt.start', {
+    name: 'sneak',
+    actions: [{ op: 'set', path: 'llm', value: { apiKey: 'pwned' } }],
+  });
+  assert.equal(res.ok, false, 'attempt path uses the same overlap rule');
+  assert.equal(res.error, 'protected: llm');
+  assert.equal(s.history.length, 0, 'a rejected attempt records nothing');
+});
+
+});
+
+// === Stateful RegExp patterns ===
+
+suite('protectedPaths — RegExp flag normalization', () => {
+
+test('a /g pattern denies consistently across repeated calls', () => {
+  // RegExp.prototype.test on a /g pattern advances lastIndex, so the
+  // same pattern alternated between matching and not matching —
+  // protection flickered on and off per write.
+  const t = createTools(s, { protectedPaths: [/secret/g] });
+  for (let i = 0; i < 4; i++) {
+    assert.equal(write(t, 'secret.a', i).ok, false, `call ${i + 1} must stay denied`);
+  }
+});
+
+test('a /y (sticky) pattern denies consistently too', () => {
+  const t = createTools(s, { protectedPaths: [/^secret/y] });
+  assert.equal(write(t, 'secret.a', 1).ok, false);
+  assert.equal(write(t, 'secret.a', 2).ok, false);
+});
+
+test('the caller\'s RegExp object is not mutated', () => {
+  const pattern = /secret/g;
+  const t = createTools(s, { protectedPaths: [pattern] });
+  write(t, 'secret.a', 1);
+  assert.equal(pattern.flags, 'g', 'we rebuild rather than strip flags in place');
+  assert.equal(pattern.lastIndex, 0, 'the original was never used for testing');
+});
+
+});
+
+// === Read-only means the timeline too ===
+
+suite('read-only mode — history mutation', () => {
+
+const timeTools = (opts) => createTools(s, opts);
+const call = invoke;
+
+beforeEach(() => {
+  s.setValue('a', 1); s.setValue('b', 2); s.setValue('c', 3);
+  s.tick();
+});
+
+test('replay is denied for a read-only catalog', () => {
+  // replay rewinds the cursor; the next recorded entry then truncates
+  // everything past it. A deny-all catalog could rewind the live app
+  // and destroy its history without ever calling a write tool.
+  const t = timeTools();
+  const res = call(t, 'replay', { n: 0 });
+  assert.equal(res.ok, false);
+  assert.match(res.error, /read-only/);
+  assert.equal(s.cursor, 3, 'cursor untouched');
+  assert.equal(s.history.length, 3, 'history untouched');
+});
+
+test('checkpoint is denied for a read-only catalog', () => {
+  const t = timeTools();
+  assert.equal(call(t, 'checkpoint', { name: 'x' }).ok, false);
+  assert.equal(s.history.length, 3, 'no marker recorded');
+});
+
+test('attempt.start is denied even when every action is a checkpoint', () => {
+  const t = timeTools();
+  assert.equal(call(t, 'attempt.start', { name: 'x', actions: [{ op: 'checkpoint' }] }).ok, false);
+  assert.equal(s.history.length, 3);
+});
+
+test('allowTimeTravel opts a read-only catalog back into scrubbing', () => {
+  const t = timeTools({ allowTimeTravel: true });
+  assert.equal(call(t, 'replay', { n: 1 }).ok, true);
+  assert.equal(s.cursor, 1);
+  // Writes stay denied — the opt-in is scoped to the timeline.
+  assert.equal(write(t, 'count', 1).ok, false, 'allowTimeTravel is not a write opt-in');
+});
+
+test('time travel is available whenever writes are enabled', () => {
+  for (const opts of [{ allowAllPaths: true }, { protectedPaths: ['nope'] }]) {
+    const fresh = createSpektrum();
+    fresh.setValue('a', 1); fresh.tick();
+    const t = createTools(fresh, opts);
+    assert.equal(t.find(x => x.name === 'spektrum.replay').handler({ n: 0 }).ok, true,
+      `write-enabled catalog (${JSON.stringify(opts)}) can still scrub`);
+  }
+});
+
+});
+
+// === Malformed input returns the error envelope ===
+
+suite('argument validation', () => {
+
+const call = (name, args) => byName('spektrum.' + name).handler(args);
+
+test('bad arguments return { ok: false } instead of throwing', () => {
+  // An MCP SDK handed a raw inputSchema does not necessarily validate
+  // before dispatch, so these reached the engine and threw raw
+  // TypeErrors out of the handler.
+  const cases = [
+    ['setValue', { path: 123 }],
+    ['setValue', {}],
+    ['setValue', undefined],
+    ['trigger', { id: 'i', path: 'p', value: 'not-a-number' }],
+    ['trigger', { id: '', path: 'p', value: 1 }],
+    ['checkpoint', {}],
+    ['attempt.start', { name: 'x' }],
+    ['attempt.start', { name: 'x', actions: [{ op: 'bogus' }] }],
+    ['attempt.start', { name: 'x', actions: [{ op: 'set' }] }],
+    ['replay', { n: -1 }],
+    ['replay', { n: 1.5 }],
+    ['replay', {}],
+    ['explain', { from: 'nope' }],
+    ['findByIntent', {}],
+  ];
+  for (const [name, args] of cases) {
+    let res;
+    assert.doesNotThrow(() => { res = call(name, args); },
+      `${name}(${JSON.stringify(args)}) must not throw`);
+    assert.equal(res.ok, false, `${name}(${JSON.stringify(args)}) must report failure`);
+    assert.equal(typeof res.error, 'string');
+  }
+});
+
+test('a rejected attempt.start records nothing in history', () => {
+  const before = s.history.length;
+  call('attempt.start', { name: 'x', actions: [{ op: 'set' }] });
+  assert.equal(s.history.length, before, 'validation runs before the opening checkpoint');
+});
+
+test('engine errors still propagate rather than being reported as bad input', () => {
+  // Validation must not become a blanket try/catch that swallows real
+  // engine failures.
+  assert.throws(() => {
+    s.computed('loop', ['loop'], () => 1);
+  }, /overlapping path/);
+});
+
+});
+
+// === Returned state is a copy, not a live reference ===
+
+suite('state isolation', () => {
+
+test('getState returns a clone, so an in-process caller cannot bypass the guard', () => {
+  const t = createTools(s);   // read-only
+  s.setValue('user.name', 'alice');
+  s.tick();
+  const got = t.find(x => x.name === 'spektrum.getState').handler().data;
+  assert.notEqual(got, s.appState, 'must not hand back the live object');
+  got.user.name = 'MUTATED';
+  assert.equal(s.appState.user.name, 'alice', 'engine state is unaffected');
+});
+
+test('the clone preserves NaN and Infinity', () => {
+  const t = createTools(s);
+  s.setValue('n', NaN);
+  s.setValue('i', Infinity);
+  s.tick();
+  const got = t.find(x => x.name === 'spektrum.getState').handler().data;
+  assert.ok(Number.isNaN(got.n), 'NaN survives (a JSON round-trip would not preserve it)');
+  assert.equal(got.i, Infinity);
+});
+
+test('describe and replay also return copies', () => {
+  const t = createTools(s, { allowAllPaths: true });
+  s.setValue('user.name', 'alice');
+  s.tick();
+  assert.notEqual(t.find(x => x.name === 'spektrum.describe').handler().data.state, s.appState);
+  assert.notEqual(
+    t.find(x => x.name === 'spektrum.replay').handler({ n: 1 }).data.state, s.appState);
+});
+
+});

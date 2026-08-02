@@ -12,12 +12,40 @@ cd spektrum
 npm install
 npm test          # node --test, no fake timers
 npm run lint
+npm run typecheck # tsc --noEmit against the hand-maintained .d.ts files
 npm run build
 npm run size      # asserts the minified bundle is under budget
 ```
 
 Open the demo with `npm start` and visit
 <http://127.0.0.1:8088/example/>.
+
+### Browser tests (optional locally, required in CI)
+
+`npm test` runs against happy-dom, which is fast but lenient exactly
+where real engines are strict — `progress.value = NaN` throws in a
+browser and not in happy-dom, and a regex lookbehind is a parse error on
+Safari < 16.4. `tests/browser/` covers that gap with Playwright:
+
+```bash
+npx playwright install chromium
+SPEKTRUM_BROWSERS=chromium node --test tests/browser/*.test.js
+```
+
+Playwright is deliberately not a dependency (not even a dev one), so the
+file **skips** when it isn't installed and `npm test` stays lean. CI
+installs it ad hoc and runs Chromium, Firefox, and WebKit. If your
+environment ships pre-installed browsers whose revision doesn't match
+Playwright's pin, set `SPEKTRUM_BROWSER_EXECUTABLE=/path/to/binary`.
+
+### Property tests
+
+`tests/spektrum.properties.test.js` asserts engine invariants (replay
+determinism, delta drainage, prototype-pollution safety) over generated
+mutation programs, using a seeded PRNG so failures reproduce. Every
+assertion prints its seed; replay a counterexample with
+`SPEKTRUM_SEED=<n> npm test`, and widen the search with
+`SPEKTRUM_RUNS=1000`.
 
 ## Project structure
 
@@ -93,10 +121,16 @@ GitHub, npm, and unpkg read them by exact name there.
 
 ## Reviewing & merging
 
-Before you open a PR, run `npm test`, `npm run lint`, `npm run build`,
-and `npm run size` locally and make sure they pass. There's no CI to
-catch regressions for you. Substantive changes usually want an issue
+Before you open a PR, run `npm test`, `npm run lint`, `npm run typecheck`,
+`npm run build`, and `npm run size` locally and make sure they pass. CI
+runs the same gate on every PR (across Node 22 and 24) plus a
+Chromium/Firefox/WebKit smoke lane, but finding it locally is faster than
+finding it in a workflow log. Substantive changes usually want an issue
 first to avoid work going sideways.
+
+See [`ROADMAP.md`](ROADMAP.md) for what's planned, what's under
+consideration, and what's deliberately out of scope — it's the quickest
+way to tell whether an idea will land before you build it.
 
 Be patient — this is a side project and reviews aren't always
 same-day.

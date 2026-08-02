@@ -35,11 +35,25 @@ export interface CreateToolsOptions {
   /**
    * Paths the mutation tools (`setValue`, `trigger`, and the inline
    * set/add ops inside `attempt.start`) refuse to write — i.e. "allow
-   * everything except these". String entries match the exact path or a
-   * dot-segment prefix; RegExp entries are tested as-is. Denied writes
-   * return `{ ok: false, error: 'protected: <path>' }` without calling
-   * the engine. Reads, describe, explain, replay, etc. are unaffected.
-   * Takes precedence over `allowAllPaths`.
+   * everything except these". Denied writes return
+   * `{ ok: false, error: 'protected: <path>' }` without calling the
+   * engine. Takes precedence over `allowAllPaths`.
+   *
+   * String entries match on **bidirectional** dotted-path overlap: the
+   * exact path, any descendant of it, and any ancestor of it. The
+   * ancestor arm is what stops a write to the parent object from
+   * replacing a protected leaf wholesale — guarding `'llm.apiKey'`
+   * also denies `setValue('llm', { apiKey: '…' })`. The dot boundary
+   * keeps unrelated same-prefix keys (`llmFoo`) writable.
+   *
+   * RegExp entries are tested against the path. Stateful flags (`g`,
+   * `y`) are stripped internally so `lastIndex` cannot make protection
+   * alternate between calls; the RegExp you pass is never mutated.
+   *
+   * **This is a write fence, not a read fence.** A guarded path is
+   * still readable through `getState`, `describe`, `explain`, and
+   * `serialize`. Do not rely on it to keep secrets from an agent —
+   * keep them out of engine state instead.
    */
   protectedPaths?: PathPattern[];
   /**
@@ -49,6 +63,20 @@ export interface CreateToolsOptions {
    * Ignored when `protectedPaths` is set.
    */
   allowAllPaths?: boolean;
+  /**
+   * In read-only mode only, opt back into the history-mutating tools
+   * (`checkpoint`, `attempt.start`, `replay`).
+   *
+   * Read-only denies them by default because they rewrite the
+   * timeline even though they never write state directly: `replay`
+   * moves the cursor back, and the next recorded entry truncates
+   * everything after it. Without this gate a deny-all catalog could
+   * still rewind the running app and destroy its history.
+   *
+   * Ignored when writes are enabled — those modes already permit time
+   * travel.
+   */
+  allowTimeTravel?: boolean;
 }
 
 /**

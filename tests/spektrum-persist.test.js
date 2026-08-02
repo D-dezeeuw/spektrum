@@ -177,14 +177,21 @@ test('loadHistory rejects Infinity on additive trigger op', () => {
     'count must remain finite after replay');
 });
 
-test('loadHistory caps replay at opts.maxEntries', () => {
+test('loadHistory caps replay at opts.maxEntries, keeping the NEWEST entries', () => {
+  // Regression: the cap used to slice from the FRONT, keeping the
+  // oldest entries — so an over-cap restore silently booted the app
+  // into ancient state instead of where the user left it. The engine's
+  // own historyLimit drops from the front (keeps newest); the restore
+  // cap now matches that.
   const big = Array.from({ length: 50 }, (_, i) => ({
     op: 'set', path: 'n', value: i, id: `e${i}`,
   }));
   const storage = { getItem: () => JSON.stringify(big), setItem() {} };
   loadHistory(s, { storage, maxEntries: 10 });
   assert.equal(s.history.length, 10, 'replay capped at maxEntries');
-  assert.equal(getPathObj(s.appState, 'n'), 9, 'last replayed entry is index 9');
+  assert.equal(getPathObj(s.appState, 'n'), 49,
+    'restores the most recent state, not the oldest surviving window');
+  assert.equal(s.history[0].id, 'e40', 'kept the last 10 entries (e40…e49)');
 });
 
 // === autoSave ===
@@ -336,4 +343,131 @@ test('loadHistory skips null/falsy entries in the parsed history', () => {
   ]));
   loadHistory(s, { storage });
   assert.equal(getPathObj(s.appState, 'kept'), 'yes');
+});
+
+// === Prototype-pollution safety (explicit, not just via the engine) ===
+
+test('a poisoned stored history cannot reach Object.prototype', () => {
+  // The module replays through the public mutators rather than assigning
+  // parsed objects into state, so the engine's SAFE_KEY guards apply.
+  // Asserted explicitly here because it is the property that matters —
+  // storage is attacker-reachable in a way the engine's own inputs are not.
+  const poisoned = [
+    { op: 'set', path: '__proto__.polluted', value: 'yes', id: 'p1' },
+    { op: 'set', path: 'a.constructor.prototype.p2', value: 'yes', id: 'p2' },
+    { op: 'set', path: 'safe', value: JSON.parse('{"__proto__":{"p3":"yes"}}'), id: 'p3' },
+  ];
+  const storage = { getItem: () => JSON.stringify(poisoned), setItem() {} };
+  loadHistory(s, { storage });
+
+  assert.equal({}.polluted, undefined, '__proto__ path did not pollute');
+  assert.equal({}.p2, undefined, 'constructor.prototype path did not pollute');
+  assert.equal({}.p3, undefined, 'a parsed __proto__ key did not pollute');
+  assert.equal(Object.prototype.polluted, undefined);
+});
+
+// === autoSave flush on page hide ===
+//
+// This file is deliberately DOM-free (see the header), so rather than
+// registering happy-dom we capture the listeners autoSave installs on
+// globalThis and invoke them directly. That also pins the exact event
+// names, which a DOM harness would let us get wrong silently.
+
+const captureHideHooks = (fn) => {
+  const listeners = new Map();
+  const origAdd = globalThis.addEventListener;
+  const origRemove = globalThis.removeEventListener;
+  globalThis.addEventListener = (type, h) => { listeners.set(type, h); };
+  globalThis.removeEventListener = (type, h) => {
+    if (listeners.get(type) === h) listeners.delete(type);
+  };
+  try { return fn(listeners); }
+  finally {
+    globalThis.addEventListener = origAdd;
+    globalThis.removeEventListener = origRemove;
+  }
+};
+
+const countingStorage = () => {
+  const storage = fakeStorage();
+  const state = { saves: 0 };
+  state.storage = {
+    getItem: storage.getItem,
+    setItem: (k, v) => { state.saves++; storage.setItem(k, v); },
+  };
+  return state;
+};
+
+test('autoSave flushes a pending debounced save when the page is hidden', () => {
+  // Without this, the last debounce window of edits is lost on close —
+  // exactly the mutations a user is most likely to care about.
+  captureHideHooks((listeners) => {
+    const c = countingStorage();
+    const stop = autoSave(s, { storage: c.storage, debounce: 5000 });
+    s.setValue('x', 1);
+    assert.equal(c.saves, 0, 'debounced — nothing written yet');
+
+    assert.ok(listeners.has('pagehide'), 'a pagehide listener was installed');
+    listeners.get('pagehide')();
+    assert.equal(c.saves, 1, 'pending save flushed on pagehide');
+    stop();
+  });
+});
+
+test('autoSave flushes on visibilitychange only when actually hidden', () => {
+  captureHideHooks((listeners) => {
+    const c = countingStorage();
+    const stop = autoSave(s, { storage: c.storage, debounce: 5000 });
+    s.setValue('x', 1);
+
+    const onVis = listeners.get('visibilitychange');
+    assert.ok(onVis, 'a visibilitychange listener was installed');
+
+    const origDoc = globalThis.document;
+    try {
+      globalThis.document = { visibilityState: 'visible' };
+      onVis();
+      assert.equal(c.saves, 0, 'still visible — no flush');
+
+      globalThis.document = { visibilityState: 'hidden' };
+      onVis();
+      assert.equal(c.saves, 1, 'hidden — pending save flushed');
+    } finally {
+      globalThis.document = origDoc;
+    }
+    stop();
+  });
+});
+
+test('autoSave stop() removes the hide listeners', () => {
+  captureHideHooks((listeners) => {
+    const c = countingStorage();
+    const stop = autoSave(s, { storage: c.storage, debounce: 5000 });
+    s.setValue('x', 1);
+    stop();
+    assert.equal(listeners.has('pagehide'), false, 'pagehide listener detached');
+    assert.equal(listeners.has('visibilitychange'), false, 'visibilitychange listener detached');
+  });
+});
+
+test('flushOnHide:false opts out of the hide flush', () => {
+  captureHideHooks((listeners) => {
+    const c = countingStorage();
+    const stop = autoSave(s, { storage: c.storage, debounce: 5000, flushOnHide: false });
+    s.setValue('x', 1);
+    assert.equal(listeners.size, 0, 'no hide listeners installed');
+    assert.equal(c.saves, 0);
+    stop();
+  });
+});
+
+test('autoSave without debounce installs no hide listeners (already synchronous)', () => {
+  captureHideHooks((listeners) => {
+    const c = countingStorage();
+    const stop = autoSave(s, { storage: c.storage });
+    s.setValue('x', 1);
+    assert.equal(c.saves, 1, 'undebounced saves land immediately');
+    assert.equal(listeners.size, 0, 'nothing pending, so nothing to flush');
+    stop();
+  });
 });

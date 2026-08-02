@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-**CSP-and-containment patch.** Four engine fixes and a compiler rewrite, all reported from a real consumer app. Three of them broke a property [`docs/constraints.md`](docs/constraints.md) lists as non-negotiable — *"CSP-safe: strict-CSP works via `spektrum/compile`"* — so the strict-CSP path could not have worked end-to-end as shipped. No breaking changes.
+## [1.2.0] — 2026-08-02
+
+**Security, CSP, and containment release.** Four verified bypasses of the 1.1.0 agent-write protection are closed, alongside four engine fixes and a compiler rewrite reported from a real consumer app — three of which broke a property [`docs/constraints.md`](docs/constraints.md) lists as non-negotiable (*"CSP-safe: strict-CSP works via `spektrum/compile`"*), so the strict-CSP path could not have worked end-to-end as shipped. Almost all fixes, but two changes are behaviour-visible and worth reading before upgrading: the `protectedPaths` guard now **denies writes to an ancestor** of a protected path (previously a bypass), and snapshot cloning now **throws on a function/symbol in state** instead of silently aliasing it (unsupported state that already broke `serialize()`/replay). Anyone relying on `protectedPaths` should treat this as a required upgrade. No size caps were raised — every fix ships under the existing budgets (see [`scripts/size.js`](scripts/size.js)).
 
 ### Fixed
 

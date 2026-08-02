@@ -1,6 +1,6 @@
 {
   "name": "spektrum",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Tiny reactive engine with HTML bindings and time-travel. ~13kB minified, zero runtime deps, agent-native.",
   "type": "module",
   "main": "./spektrum.js",
@@ -12,13 +12,34 @@
       "types": "./spektrum.d.ts",
       "import": "./spektrum.js"
     },
-    "./compile":  { "types":  "./companions/spektrum-compile.d.ts",  "import": "./companions/spektrum-compile.js"  },
-    "./devtools": { "types":  "./companions/spektrum-devtools.d.ts", "import": "./companions/spektrum-devtools.js" },
-    "./persist":  { "types":  "./companions/spektrum-persist.d.ts",  "import": "./companions/spektrum-persist.js"  },
-    "./mcp":      { "types":  "./companions/spektrum-mcp.d.ts",      "import": "./companions/spektrum-mcp.js"      },
-    "./agent":    { "types":  "./companions/spektrum-agent.d.ts",    "import": "./companions/spektrum-agent.js"    },
-    "./inspect":  { "types":  "./companions/spektrum-inspect.d.ts", "import": "./companions/spektrum-inspect.js" },
-    "./dock":     { "types":  "./companions/spektrum-dock.d.ts",    "import": "./companions/spektrum-dock.js"    }
+    "./compile": {
+      "types": "./companions/spektrum-compile.d.ts",
+      "import": "./companions/spektrum-compile.js"
+    },
+    "./devtools": {
+      "types": "./companions/spektrum-devtools.d.ts",
+      "import": "./companions/spektrum-devtools.js"
+    },
+    "./persist": {
+      "types": "./companions/spektrum-persist.d.ts",
+      "import": "./companions/spektrum-persist.js"
+    },
+    "./mcp": {
+      "types": "./companions/spektrum-mcp.d.ts",
+      "import": "./companions/spektrum-mcp.js"
+    },
+    "./agent": {
+      "types": "./companions/spektrum-agent.d.ts",
+      "import": "./companions/spektrum-agent.js"
+    },
+    "./inspect": {
+      "types": "./companions/spektrum-inspect.d.ts",
+      "import": "./companions/spektrum-inspect.js"
+    },
+    "./dock": {
+      "types": "./companions/spektrum-dock.d.ts",
+      "import": "./companions/spektrum-dock.js"
+    }
   },
   "files": [
     "spektrum.js",

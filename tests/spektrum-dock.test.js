@@ -340,3 +340,54 @@ test('clicking the label-span inside a tab activates the panel (not closes)', ()
   assert.equal(b.button.classList.contains('a'), false);
   dock.unmount();
 });
+
+// === Re-registering an id must cascade teardown, not just detach ===
+
+test('re-registering an id runs the previous panel\'s onClose', () => {
+  // Regression: re-register called detach(), which by contract does NOT
+  // invoke onClose — so the previous companion never ran its unmount().
+  // A re-mounted devtools kept its rAF loop running against detached
+  // nodes; a re-mounted inspect kept its document-level capture
+  // listeners and its onRecord subscription.
+  const dock = mountDock();
+  let closed = 0;
+  dock.registerPanel({ id: 'dup', label: 'First', onClose: () => { closed++; } });
+  dock.registerPanel({ id: 'dup', label: 'Second' });
+  assert.equal(closed, 1, 'the replaced panel was told to tear down');
+  assert.equal(document.querySelectorAll('[data-panel-tab="dup"]').length, 1,
+    'exactly one tab survives — refresh, not stack');
+  dock.unmount();
+});
+
+test('a replaced panel that tears itself down in onClose does not double-detach', () => {
+  // The common companion shape: onClose calls the companion's unmount,
+  // which calls panel.detach(). close() must tolerate the panel already
+  // being gone by the time it checks.
+  const dock = mountDock();
+  // `panel` is referenced inside onClose, which only runs later — by
+  // then the binding is initialised, so const is safe here.
+  const panel = dock.registerPanel({ id: 'self', label: 'A', onClose: () => panel.detach() });
+  assert.doesNotThrow(() => dock.registerPanel({ id: 'self', label: 'B' }));
+  assert.equal(document.querySelectorAll('[data-panel-tab="self"]').length, 1);
+  dock.unmount();
+});
+
+test('re-mounting a real companion into one dock leaves a single live panel', () => {
+  const s = createSpektrum();
+  const dock = mountDock();
+
+  // mount() returns the unmount function.
+  mountInspect(s);
+  const unmountSecond = mountInspect(s);
+  assert.equal(document.querySelectorAll('[data-panel-tab]').length, 1,
+    'the second mount replaced the first rather than stacking a tab');
+
+  // The surviving instance still works, and tearing it down empties the
+  // dock — nothing from the replaced instance is left holding a tab.
+  s.setValue('probe', 1);
+  s.tick();
+  unmountSecond();
+  assert.equal(document.querySelectorAll('[data-panel-tab]').length, 0,
+    'no orphan tab from the replaced instance');
+  dock.unmount();
+});

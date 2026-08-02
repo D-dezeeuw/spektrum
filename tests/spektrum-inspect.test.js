@@ -869,3 +869,95 @@ test('panel click handler returns early when ev.target is not an Element (L344 f
 });
 
 });
+
+// === Inspect must not capture clicks on OTHER companions' UI ===
+
+suite('companion-root exclusion', () => {
+
+// Turn inspect mode on the way the toolbar button does.
+const enableInspectMode = () => {
+  const btn = document.querySelector('[data-spektrum-inspect] [data-inspect-toggle]')
+    || [...document.querySelectorAll('[data-spektrum-inspect] button')]
+      .find(b => /inspect/i.test(b.textContent));
+  btn?.click();
+  return !!btn;
+};
+
+test('a click inside the dock is not hijacked by inspect mode', () => {
+  // Regression: isOwn() listed only inspect's own nodes and devtools, so
+  // with inspect mode on, the capture-phase handler preventDefault()ed
+  // clicks on dock tabs and pinned them instead. The example mounts
+  // inspect INSIDE the dock, so this was on the shipped path.
+  const unmount = mount(s);
+  assert.ok(enableInspectMode(), 'found the inspect-mode toggle');
+
+  const dock = document.createElement('div');
+  dock.setAttribute('data-spektrum-dock', '');
+  const tab = document.createElement('button');
+  dock.appendChild(tab);
+  document.body.appendChild(dock);
+
+  let clicked = 0;
+  tab.addEventListener('click', () => { clicked++; });
+  const ev = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+  tab.dispatchEvent(ev);
+
+  assert.equal(clicked, 1, 'the dock got its own click');
+  assert.equal(ev.defaultPrevented, false, 'inspect did not swallow it');
+  unmount();
+});
+
+test('a click inside the agent panel is not hijacked either', () => {
+  const unmount = mount(s);
+  enableInspectMode();
+
+  const agent = document.createElement('div');
+  agent.setAttribute('data-spektrum-agent', '');
+  const input = document.createElement('textarea');
+  agent.appendChild(input);
+  document.body.appendChild(agent);
+
+  const ev = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+  input.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, false);
+  unmount();
+});
+
+test('app markup IS still inspectable with the exclusions in place', () => {
+  // The fix must scope the handler, not disable it.
+  const unmount = mount(s);
+  enableInspectMode();
+
+  document.body.insertAdjacentHTML('beforeend', '<p id="app" data-if="flag">hi</p>');
+  const target = document.getElementById('app');
+  const ev = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+  target.dispatchEvent(ev);
+
+  assert.equal(ev.defaultPrevented, true, 'app elements are still pinned by inspect');
+  unmount();
+});
+
+test('lint skips dock and agent markup', () => {
+  const dock = document.createElement('div');
+  dock.setAttribute('data-spektrum-dock', '');
+  // Markup that WOULD lint if it were app code.
+  dock.innerHTML = '<button title="{{oops}}" data-action="click" data-fn="notRegistered"></button>';
+  document.body.appendChild(dock);
+
+  const agent = document.createElement('div');
+  agent.setAttribute('data-spektrum-agent', '');
+  agent.innerHTML = '<span title="{{alsoOops}}"></span>';
+  document.body.appendChild(agent);
+
+  const findings = lint(s);
+  assert.equal(findings.length, 0, 'dev-companion DOM is not linted as app markup');
+});
+
+test('lint still reports the same issues in app markup', () => {
+  document.body.insertAdjacentHTML('beforeend',
+    '<button title="{{oops}}" data-action="click" data-fn="notRegistered"></button>');
+  const findings = lint(s);
+  assert.ok(findings.length >= 2, 'mustache-in-attribute and unknown data-fn both reported');
+});
+
+});

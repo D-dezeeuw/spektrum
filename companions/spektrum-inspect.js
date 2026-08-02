@@ -33,6 +33,20 @@ import { getPathObj } from '../spektrum.js';
 const S = '[data-spektrum-inspect]';
 const T = '[data-spektrum-inspect-tip]';
 const O = '[data-spektrum-inspect-outline]';
+// Every companion's root marker, in ONE place. Both the hover/click
+// capture handlers and the static lint pass skip anything inside these:
+// inspect must not pin (and preventDefault) a click on a dock tab or
+// the agent's textarea, and it must not lint the dev UI as if it were
+// app markup. Keeping the list here — rather than inline at each call
+// site — is why the dock and agent markers were missing from one of
+// them: the example mounts inspect INSIDE the dock, so the omission
+// was on the shipped path.
+const COMPANION_ROOTS = [
+  S, T, O,
+  '[data-spektrum-devtools]',
+  '[data-spektrum-dock]',
+  '[data-spektrum-agent]',
+].join(',');
 const FONT = 'font-family:ui-monospace,Menlo,monospace;font-size:11px';
 const BG   = 'background:rgba(15,15,16,.94);color:#ddd;border:1px solid #2a2a2e';
 const CSS = `
@@ -120,9 +134,14 @@ const findLoopContext = (el) => {
   return null;
 };
 
-/** Systems currently subscribed to a path or any path that overlaps it. */
-export const whoSubscribesTo = (spektrum, path) =>
-  spektrum.describe().systems
+/** Systems currently subscribed to a path or any path that overlaps it.
+ *
+ *  `systems` is an optional pre-fetched `describe().systems` array. Pass
+ *  it when calling in a loop: `describe()` builds the whole manifest —
+ *  including `checkpoints`, which walks the entire history — so calling
+ *  it once per mutation makes the tracer O(history) per write. */
+export const whoSubscribesTo = (spektrum, path, systems) =>
+  (systems || spektrum.describe().systems)
     .filter(s => s.paths.some(p =>
       p === path || path.startsWith(p + '.') || p.startsWith(path + '.')))
     .map(s => s.name || '(anon)');
@@ -132,7 +151,7 @@ export const lint = (spektrum, root = document.body) => {
   const out = [];
   const fnNames = new Set(spektrum.describe().fns.map(f => f.name));
   for (const el of root.querySelectorAll('*')) {
-    if (el.closest('[data-spektrum-inspect],[data-spektrum-devtools]')) continue;
+    if (el.closest(COMPANION_ROOTS)) continue;
     for (const a of el.attributes) {
       if (a.name[0] !== ':' && !a.name.startsWith('data-') && a.value.includes('{{')) {
         out.push({ kind: 'warn', msg: `{{…}} in "${a.name}" — mustache works in text nodes only; use :${a.name}="…"`, el });
@@ -284,7 +303,7 @@ export const mount = (spektrum, opts = {}) => {
   };
   const hideFloaters = () => { if (!pinned) { tip.style.display = 'none'; outline.style.display = 'none'; } };
 
-  const isOwn = (el) => !(el instanceof Element) || el.closest('[data-spektrum-inspect],[data-spektrum-inspect-tip],[data-spektrum-inspect-outline],[data-spektrum-devtools]');
+  const isOwn = (el) => !(el instanceof Element) || el.closest(COMPANION_ROOTS);
 
   const onMove = (ev) => {
     if (!inspectMode || pinned) return;
@@ -319,9 +338,33 @@ export const mount = (spektrum, opts = {}) => {
       return `<div class="${cls}"><em>${escapeHtml(r.path)}</em> ${op}${r.triggers.length ? `<q>  →  ${r.triggers.map(escapeHtml).join(', ')}</q>` : ''}</div>`;
     }).join('');
   };
+  // One `describe()` per synchronous burst instead of one per entry.
+  // A tick commonly records many mutations back to back, and each
+  // describe() allocates the full manifest and walks all of history for
+  // its checkpoint list. The cache clears on the microtask queue, so it
+  // never outlives the burst that filled it and a newly bound system is
+  // still picked up on the next one.
+  let sysCache = null;
+  const systemsNow = () => {
+    if (!sysCache) {
+      sysCache = spektrum.describe().systems;
+      queueMicrotask(() => { sysCache = null; });
+    }
+    return sysCache;
+  };
+  // renderLog stays SYNCHRONOUS on purpose. Coalescing it onto a
+  // microtask would be marginally cheaper, but the panel is observable
+  // state and the project's test surface is deliberately sync — a dev
+  // tool that only reflects a mutation one microtask later is a worse
+  // trade than the innerHTML it saves.
   const stopRecord = spektrum.onRecord(entry => {
     if (paused) return;
-    ring.push({ ...entry, triggers: entry.op === 'checkpoint' ? [] : whoSubscribesTo(spektrum, entry.path) });
+    ring.push({
+      ...entry,
+      triggers: entry.op === 'checkpoint'
+        ? []
+        : whoSubscribesTo(spektrum, entry.path, systemsNow()),
+    });
     if (ring.length > 500) ring.shift();
     renderLog();
   });

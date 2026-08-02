@@ -63,7 +63,13 @@ export const loadHistory = (spektrum, opts = {}) => {
   try { entries = JSON.parse(raw); } catch { return false; }
   if (!Array.isArray(entries) || entries.length === 0) return false;
   const maxEntries = opts.maxEntries ?? 100_000;
-  if (entries.length > maxEntries) entries = entries.slice(0, maxEntries);
+  // Keep the NEWEST entries, matching the engine's own `historyLimit`
+  // (which drops from the front on overflow). Slicing from the front
+  // here instead kept the OLDEST, so an over-cap restore silently
+  // booted the app into ancient state rather than where the user left
+  // it — the opposite of what "cap the restore" implies, and the
+  // opposite of what the engine does with the same word.
+  if (entries.length > maxEntries) entries = entries.slice(-maxEntries);
   // resetState() — not reset() — so app-level systems registered
   // before loadHistory() survive the load. reset() would silently
   // detach them and warn loudly; we want neither.
@@ -93,6 +99,12 @@ export const loadHistory = (spektrum, opts = {}) => {
  * subscribers (telemetry, supervisor mirrors, etc.) keep firing.
  *
  * For high-frequency mutations pass `{ debounce: 200 }` to coalesce writes.
+ *
+ * With `debounce` set, a pending save is flushed when the page is
+ * hidden or unloaded, so the last debounce-window of edits isn't lost
+ * on close. Pass `{ flushOnHide: false }` to opt out (e.g. in a test
+ * harness, or when the storage backend is remote and you'd rather drop
+ * the tail than issue a write during teardown).
  */
 export const autoSave = (spektrum, opts = {}) => {
   let timer = null;
@@ -103,8 +115,29 @@ export const autoSave = (spektrum, opts = {}) => {
 
   const unsub = spektrum.onRecord(() => schedule());
 
+  // `pagehide` rather than `beforeunload`: mobile Safari and Chrome
+  // routinely discard a backgrounded page without ever firing
+  // beforeunload, which is exactly the case that loses data. The
+  // visibilitychange arm covers tab-switch-then-kill. Both write
+  // synchronously — no await, small payload — because the page may not
+  // survive to a later task.
+  const onHide = () => { if (timer) { clearTimeout(timer); flush(); } };
+  const onVisibility = () => {
+    if (globalThis.document?.visibilityState === 'hidden') onHide();
+  };
+  const hookHide = opts.flushOnHide !== false && !!opts.debounce
+    && typeof globalThis.addEventListener === 'function';
+  if (hookHide) {
+    globalThis.addEventListener('pagehide', onHide);
+    globalThis.addEventListener('visibilitychange', onVisibility);
+  }
+
   return () => {
     if (timer) clearTimeout(timer);
+    if (hookHide) {
+      globalThis.removeEventListener('pagehide', onHide);
+      globalThis.removeEventListener('visibilitychange', onVisibility);
+    }
     unsub();
   };
 };

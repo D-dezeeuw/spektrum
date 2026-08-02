@@ -65,7 +65,7 @@ stop();                                          // detach the autoSave hook
 
 `autoSave` registers an `onRecord` hook and returns a `stop()` that detaches **only that hook**; other `onRecord` subscribers (telemetry, supervisor mirrors) keep firing. Hooks have been multi-subscriber since 1.0.
 
-With `debounce` set, `autoSave` also flushes a pending save on `pagehide` / `visibilitychange: hidden`, so the last debounce window of edits survives the page closing. Pass `{ flushOnHide: false }` to opt out. Neither listener is installed without `debounce` (an undebounced save has nothing pending), and `stop()` removes both.
+A debounced save still pending when the page closes is lost. A built-in page-hide flush was prototyped and dropped — a `visibilitychange` listener with teardown is ~150 B minified and the module's [size budget](../scripts/size.js) has no room for it. If you need the guarantee, call `saveHistory(spektrum, opts)` from your own `visibilitychange` handler, or run `autoSave` without `debounce`.
 
 Not persisted: the cursor (a restore always lands at the head of the replayed history) and `forks`.
 

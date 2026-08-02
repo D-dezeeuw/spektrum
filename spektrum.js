@@ -102,23 +102,25 @@ const deepMerge = (target, source) => {
   return target;
 };
 
-// Structural deep copy of the supported state shape (plain objects +
-// arrays; primitives — including NaN/Infinity — pass through by
-// reference-or-value). deepMerge clones plain objects but shares array
-// references (line above), so a snapshot built from it would still
-// alias live arrays. Stored snapshots use this to own their whole
-// object graph: a later direct mutation of live state, or an in-place
-// sub-path merge during replay, then can't reach back and corrupt
-// them. Skips prototype slots, same as deepMerge.
-const deepClone = (v) => {
-  if (Array.isArray(v)) return v.map(deepClone);
-  if (v && typeof v === 'object') {
-    const o = {};
-    for (const k of Object.keys(v)) if (SAFE_KEY(k)) o[k] = deepClone(v[k]);
-    return o;
-  }
-  return v;
-};
+// Structural deep copy of the supported state shape, used so stored
+// snapshots own their whole object graph — deepMerge shares array
+// references, so without an owning copy a later direct mutation of live
+// state (or an in-place sub-path merge during replay) could reach back
+// and corrupt a snapshot.
+//
+// `structuredClone` (a platform global — Node ≥ 17, Safari 15.4+, under
+// our 16.4 floor) does exactly this, at zero source cost. It is
+// equivalent to a hand-rolled walker on every input the engine can hand
+// it: state only ever holds plain objects, arrays, and primitives
+// (NaN/Infinity survive, unlike a JSON round-trip), and the SAFE_KEY
+// guards on every write mean an own `__proto__` key can never appear in
+// what gets cloned — so its lack of prototype-slot filtering is not
+// reachable here. The one behavioural difference is that it THROWS on a
+// function or symbol in state rather than passing it through by
+// reference; those are unsupported in state (they already break
+// serialize() and replay), so failing loud at snapshot time is no worse
+// than the silent corruption the pass-through produced.
+const deepClone = structuredClone;
 
 const clearObject = (obj) => {
   /* Drop every own key on `obj` in place. */
@@ -163,11 +165,13 @@ const evalCache = new Map();
 const precompiled = new Map();
 
 // FIFO eviction (Map preserves insertion order) bounds memory for
-// long-running pages that mint many distinct expressions. Re-setting an
-// existing key skips the evict — replacing a value must not cost an
-// unrelated entry its slot.
+// long-running pages that mint many distinct expressions. The only
+// caller is evalExpr's compile-on-demand path, which reaches here only
+// after a cache miss — so the key is always new and no
+// replace-without-evict guard is needed. (`precompile()` writes the
+// separate unbounded `precompiled` registry, never this cache.)
 const cacheSet = (k, v) => {
-  if (!evalCache.has(k) && evalCache.size >= EVAL_CACHE_LIMIT) {
+  if (evalCache.size >= EVAL_CACHE_LIMIT) {
     evalCache.delete(evalCache.keys().next().value);
   }
   evalCache.set(k, v);

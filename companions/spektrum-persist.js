@@ -100,11 +100,12 @@ export const loadHistory = (spektrum, opts = {}) => {
  *
  * For high-frequency mutations pass `{ debounce: 200 }` to coalesce writes.
  *
- * With `debounce` set, a pending save is flushed when the page is
- * hidden or unloaded, so the last debounce-window of edits isn't lost
- * on close. Pass `{ flushOnHide: false }` to opt out (e.g. in a test
- * harness, or when the storage backend is remote and you'd rather drop
- * the tail than issue a write during teardown).
+ * Note: a debounced save that is still pending when the page closes is
+ * lost. A `visibilitychange` flush to cover that was prototyped and
+ * dropped — a listener with teardown is ~150 B minified, and the
+ * module's size budget has no room for it (see scripts/size.js). If you
+ * need the guarantee, call `saveHistory(spektrum, opts)` yourself from a
+ * `visibilitychange` handler, or run `autoSave` without `debounce`.
  */
 export const autoSave = (spektrum, opts = {}) => {
   let timer = null;
@@ -115,29 +116,8 @@ export const autoSave = (spektrum, opts = {}) => {
 
   const unsub = spektrum.onRecord(() => schedule());
 
-  // `pagehide` rather than `beforeunload`: mobile Safari and Chrome
-  // routinely discard a backgrounded page without ever firing
-  // beforeunload, which is exactly the case that loses data. The
-  // visibilitychange arm covers tab-switch-then-kill. Both write
-  // synchronously — no await, small payload — because the page may not
-  // survive to a later task.
-  const onHide = () => { if (timer) { clearTimeout(timer); flush(); } };
-  const onVisibility = () => {
-    if (globalThis.document?.visibilityState === 'hidden') onHide();
-  };
-  const hookHide = opts.flushOnHide !== false && !!opts.debounce
-    && typeof globalThis.addEventListener === 'function';
-  if (hookHide) {
-    globalThis.addEventListener('pagehide', onHide);
-    globalThis.addEventListener('visibilitychange', onVisibility);
-  }
-
   return () => {
     if (timer) clearTimeout(timer);
-    if (hookHide) {
-      globalThis.removeEventListener('pagehide', onHide);
-      globalThis.removeEventListener('visibilitychange', onVisibility);
-    }
     unsub();
   };
 };

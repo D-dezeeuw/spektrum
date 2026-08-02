@@ -33,7 +33,13 @@ export interface LoadOptions extends PersistOptions {
 /** Options for {@link autoSave}. */
 export interface AutoSaveOptions extends PersistOptions {
   /** Coalesce writes within this many milliseconds. Omit to save
-   *  synchronously on every recorded mutation. */
+   *  synchronously on every recorded mutation.
+   *
+   *  A debounced save still pending when the page closes is lost. To
+   *  guarantee it, call `saveHistory` from your own `visibilitychange`
+   *  handler, or omit `debounce`. (A built-in page-hide flush was
+   *  dropped: a listener with teardown exceeds this module's byte
+   *  budget.) */
   debounce?: number;
 }
 

@@ -43,31 +43,36 @@
   the internet without auth).
 */
 
-const NO_INPUT = { type: 'object', properties: {}, additionalProperties: false };
+// Schema builders. Every tool's inputSchema is a closed object schema,
+// so `type: 'object'` and `additionalProperties: false` repeated per
+// tool — and object keys survive minification unshortened. Factoring
+// them into one builder (and sharing the handful of leaf-field schemas
+// that recur) is pure structural dedup: the emitted schemas are
+// byte-for-byte identical, just assembled from shared parts.
+const OBJ = (properties, required = []) =>
+  ({ type: 'object', properties, required, additionalProperties: false });
+const STR  = { type: 'string' };                 // optional string
+const STR1 = { type: 'string', minLength: 1 };   // required non-empty string
+const NO_INPUT = OBJ({});
 
 const ok  = (data)  => ({ ok: true,  data });
 const err = (error) => ({ ok: false, error });
 
-/** Structural deep copy of the supported state shape (plain objects +
- *  arrays; primitives — including NaN/Infinity — pass through).
- *  Mirrors the engine's own `deepClone` rather than importing it: this
- *  module is standalone and zero-dep.
- *
- *  Every tool that returns engine state clones it first. Over a JSON
- *  transport that copy happens anyway, but this module is explicitly
+/** Deep copy of engine state before it leaves a tool handler. Over a
+ *  JSON transport a copy happens anyway, but this module is explicitly
  *  designed to be handed to an in-process agent library — and there a
  *  live `appState` reference is a hole straight past the write guard:
- *  mutate the object you got back from getState and no handler ever
- *  runs. */
-const clone = (v) => {
-  if (Array.isArray(v)) return v.map(clone);
-  if (v && typeof v === 'object') {
-    const o = {};
-    for (const k of Object.keys(v)) o[k] = clone(v[k]);
-    return o;
-  }
-  return v;
-};
+ *  mutate the object you got back from `getState` and no handler ever
+ *  runs.
+ *
+ *  `structuredClone` (a platform global — Safari 15.4+, under our 16.4
+ *  floor) is a drop-in for the JSON-shaped state domain, and it beats a
+ *  hand-rolled walker on bytes. Its one behavioural difference — a
+ *  literal own `__proto__` key would be copied rather than dropped —
+ *  cannot arise: the engine's SAFE_KEY guards block such a key from ever
+ *  landing in state. Bonus: NaN/Infinity survive (a JSON round-trip
+ *  would not). */
+const clone = structuredClone;
 
 /** Build a path guard from a non-empty `protectedPaths` array (the
  *  caller's three-way ternary only reaches here with one). Returns
@@ -109,8 +114,9 @@ const isIndex = (v) => Number.isInteger(v) && v >= 0;
 // Message builders — the same two sentences appear across nine
 // handlers. Naming the offending field keeps the envelope useful to an
 // agent trying to correct its own call.
-const badStr = (f) => err(`${f} must be a non-empty string`);
-const badInt = (f) => err(`${f} must be a non-negative integer`);
+const bad    = (f, t) => err(`${f} must be ${t}`);
+const badStr = (f) => bad(f, 'a non-empty string');
+const badInt = (f) => bad(f, 'a non-negative integer');
 
 /**
  * Build the MCP tool catalog for a Spektrum instance.
@@ -143,7 +149,7 @@ export const createTools = (spektrum, opts = {}) => {
   // every action it carries is a checkpoint. Opt back in deliberately
   // with allowTimeTravel when an agent needs to scrub a read-only app.
   const timeTravelDenied = !writesEnabled && !opts.allowTimeTravel;
-  const readOnlyErr = () => err('read-only: history is not writable (set allowTimeTravel to permit scrubbing)');
+  const readOnlyErr = () => err('read-only; set allowTimeTravel to scrub');
   const t = (name, description, inputSchema, handler) => ({
     name: prefix + name, description, inputSchema, handler,
   });
@@ -153,25 +159,21 @@ export const createTools = (spektrum, opts = {}) => {
 
   return [
     t('getState',
-      'Return the current committed application state as JSON. Cheap; does not include history.',
+      'Current committed state as JSON. Excludes history.',
       NO_INPUT,
       () => ok(clone(spektrum.appState))),
 
     t('describe',
-      'Return the operational manifest: state, registered systems, fns and their schemas, refs, intents, checkpoints, history shape, and instance options. The single best first call for an agent orienting itself.',
+      'Operational manifest: state, systems, fns, refs, intents, checkpoints, options. Best first call to orient.',
       NO_INPUT,
       () => ok(clone(spektrum.describe()))),
 
     t('explain',
-      'Causal trace over a slice of history. Each entry is annotated with the systems whose subscriptions intersect its path.',
-      {
-        type: 'object',
-        properties: {
-          from: { type: 'integer', minimum: 0, description: 'Inclusive start index (default 0).' },
-          to:   { type: 'integer', minimum: 0, description: 'Exclusive end index (default history.length).' },
-        },
-        additionalProperties: false,
-      },
+      'Causal trace over a history slice; each entry annotated with the systems its path triggers.',
+      OBJ({
+        from: { type: 'integer', minimum: 0, description: 'Inclusive start index (default 0).' },
+        to:   { type: 'integer', minimum: 0, description: 'Exclusive end index (default history.length).' },
+      }),
       ({ from, to } = {}) => {
         if (from !== undefined && !isIndex(from)) return badInt('from');
         if (to !== undefined && !isIndex(to)) return badInt('to');
@@ -179,17 +181,8 @@ export const createTools = (spektrum, opts = {}) => {
       }),
 
     t('setValue',
-      'Write `value` to the dotted state path. Recorded in history; subscribed systems fire on the next tick.',
-      {
-        type: 'object',
-        properties: {
-          path:  { type: 'string', minLength: 1, description: 'Dotted path, e.g. "user.email".' },
-          value: { description: 'Any JSON-serializable value.' },
-          id:    { type: 'string', description: 'Optional history id (defaults to "set:<path>").' },
-        },
-        required: ['path'],
-        additionalProperties: false,
-      },
+      'Write value to a dotted state path. Recorded; fires subscribers next tick.',
+      OBJ({ path: { ...STR1, description: 'Dotted path, e.g. "user.email".' }, value: {}, id: STR }, ['path']),
       ({ path, value, id } = {}) => {
         if (!isPath(path)) return badStr('path');
         if (guard && guard(path)) return err(`protected: ${path}`);
@@ -198,36 +191,19 @@ export const createTools = (spektrum, opts = {}) => {
       }),
 
     t('trigger',
-      'Record an additive numeric change at the given path.',
-      {
-        type: 'object',
-        properties: {
-          id:    { type: 'string', minLength: 1 },
-          path:  { type: 'string', minLength: 1 },
-          value: { type: 'number' },
-        },
-        required: ['id', 'path', 'value'],
-        additionalProperties: false,
-      },
+      'Additive numeric change at a path.',
+      OBJ({ id: STR1, path: STR1, value: { type: 'number' } }, ['id', 'path', 'value']),
       ({ id, path, value } = {}) => {
         if (!isPath(path) || !isPath(id)) return badStr('id and path');
-        if (typeof value !== 'number') return err('value must be a number');
+        if (typeof value !== 'number') return bad('value', 'a number');
         if (guard && guard(path)) return err(`protected: ${path}`);
         spektrum.trigger(id, path, value);
         return ok({ cursor: spektrum.cursor });
       }),
 
     t('checkpoint',
-      'Mark a tagged boundary in history. Pure marker — replay walks past it without state effect.',
-      {
-        type: 'object',
-        properties: {
-          name:     { type: 'string', minLength: 1 },
-          metadata: { description: 'Optional JSON-serializable payload.' },
-        },
-        required: ['name'],
-        additionalProperties: false,
-      },
+      'Tag a boundary in history. Pure marker; no state effect on replay.',
+      OBJ({ name: STR1, metadata: {} }, ['name']),
       ({ name, metadata } = {}) => {
         if (timeTravelDenied) return readOnlyErr();
         if (!isPath(name)) return badStr('name');
@@ -236,45 +212,29 @@ export const createTools = (spektrum, opts = {}) => {
       }),
 
     t('attempt.start',
-      'Begin a speculative attempt. Returns a handle id; pair with attempt.commit or attempt.discard. Use this when you want to try an edit, evaluate the result, and decide whether to keep it.',
-      {
-        type: 'object',
-        properties: {
-          name:    { type: 'string', minLength: 1, description: 'Label for the attempt; appears in history as "attempt:<name>".' },
-          actions: {
-            type: 'array',
-            description: 'Sequence of setValue / trigger / checkpoint calls to perform inside the attempt.',
-            items: {
-              type: 'object',
-              properties: {
-                op:    { enum: ['set', 'add', 'checkpoint'] },
-                path:  { type: 'string' },
-                value: {},
-                id:    { type: 'string' },
-                name:  { type: 'string' },
-              },
-              required: ['op'],
-              additionalProperties: false,
-            },
-          },
+      'Begin a speculative attempt (returns a handle id). Pair with attempt.commit/discard.',
+      OBJ({
+        name:    STR1,
+        actions: {
+          type: 'array',
+          description: 'Sequence of setValue / trigger / checkpoint calls to perform inside the attempt.',
+          items: OBJ({ op: { enum: ['set', 'add', 'checkpoint'] }, path: STR, value: {}, id: STR, name: STR }, ['op']),
         },
-        required: ['name', 'actions'],
-        additionalProperties: false,
-      },
+      }, ['name', 'actions']),
       ({ name, actions } = {}) => {
         if (timeTravelDenied) return readOnlyErr();
         if (!isPath(name)) return badStr('name');
-        if (!Array.isArray(actions)) return err('actions must be an array');
+        if (!Array.isArray(actions)) return bad('actions', 'an array');
         // Validate and guard EVERY action up front, before the attempt
         // records its opening checkpoint — a rejection must leave no
         // trace in history.
         for (const a of actions) {
           if (!a || (a.op !== 'set' && a.op !== 'add' && a.op !== 'checkpoint')) {
-            return err('each action needs op: "set" | "add" | "checkpoint"');
+            return bad('action.op', 'set/add/checkpoint');
           }
           if (a.op === 'checkpoint') continue;
           if (!isPath(a.path)) return badStr('action path');
-          if (a.op === 'add' && typeof a.value !== 'number') return err('add actions need a numeric value');
+          if (a.op === 'add' && typeof a.value !== 'number') return bad('action.value', 'a number');
           if (guard && guard(a.path)) return err(`protected: ${a.path}`);
         }
         const handle = spektrum.attempt(name, () => {
@@ -295,13 +255,8 @@ export const createTools = (spektrum, opts = {}) => {
       }),
 
     t('attempt.commit',
-      'Commit a previously started attempt; records a "<name>:commit" checkpoint and forgets the handle.',
-      {
-        type: 'object',
-        properties: { id: { type: 'string', minLength: 1 } },
-        required: ['id'],
-        additionalProperties: false,
-      },
+      'Commit an attempt; records a commit checkpoint and forgets the handle.',
+      OBJ({ id: STR1 }, ['id']),
       ({ id } = {}) => {
         const h = speculative.get(id);
         if (!h) return err('unknown attempt id');
@@ -311,13 +266,8 @@ export const createTools = (spektrum, opts = {}) => {
       }),
 
     t('attempt.discard',
-      'Discard a previously started attempt; rewinds the cursor to before the attempt and forgets the handle. The discarded entries land on `forks` on the next mutation.',
-      {
-        type: 'object',
-        properties: { id: { type: 'string', minLength: 1 } },
-        required: ['id'],
-        additionalProperties: false,
-      },
+      'Discard an attempt; rewinds to before it. Discarded entries land on forks.',
+      OBJ({ id: STR1 }, ['id']),
       ({ id } = {}) => {
         const h = speculative.get(id);
         if (!h) return err('unknown attempt id');
@@ -327,13 +277,8 @@ export const createTools = (spektrum, opts = {}) => {
       }),
 
     t('replay',
-      'Move the cursor to history index `n` and rebuild state. Cheap when `snapshotEvery` is set on the instance.',
-      {
-        type: 'object',
-        properties: { n: { type: 'integer', minimum: 0 } },
-        required: ['n'],
-        additionalProperties: false,
-      },
+      'Move the cursor to history index n and rebuild state.',
+      OBJ({ n: { type: 'integer', minimum: 0 } }, ['n']),
       ({ n } = {}) => {
         if (timeTravelDenied) return readOnlyErr();
         if (!isIndex(n)) return badInt('n');
@@ -342,28 +287,19 @@ export const createTools = (spektrum, opts = {}) => {
       }),
 
     t('findByIntent',
-      'Return a list of element descriptors (tag, id, classes, dataset) for every element carrying the given data-intent. Lets the agent locate UI by purpose, not selector.',
-      {
-        type: 'object',
-        properties: { name: { type: 'string', minLength: 1 } },
-        required: ['name'],
-        additionalProperties: false,
-      },
+      'Element descriptors for every element with the given data-intent. Locate UI by purpose, not selector.',
+      OBJ({ name: STR1 }, ['name']),
       ({ name } = {}) => {
         if (!isPath(name)) return badStr('name');
         return ok(spektrum.findByIntent(name).map(describeElement));
       }),
 
     t('serialize',
-      'Return a portable JSON snapshot. Default includes state, history, and cursor (replay-able). Pass includeForks for debug dumps.',
-      {
-        type: 'object',
-        properties: {
-          includeHistory: { type: 'boolean' },
-          includeForks:   { type: 'boolean' },
-        },
-        additionalProperties: false,
-      },
+      'Portable JSON snapshot: state, history, cursor. includeForks for debug dumps.',
+      OBJ({
+        includeHistory: { type: 'boolean' },
+        includeForks:   { type: 'boolean' },
+      }),
       (args = {}) => ok(JSON.parse(spektrum.serialize(args)))),
   ];
 };

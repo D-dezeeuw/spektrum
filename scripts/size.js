@@ -151,11 +151,28 @@
        no longer in state — permanently stale, and invisible to later
        sub-path writes. The guard now also compares item identity.
   Net +154 B raw / +72 B gz after trimming the two new warn strings.
-  One 256 B raw step (13,696 → 13,952) and one 64 B gz step (6,240 →
-  6,304) absorb it with ~143 B raw / ~44 B gz headroom. The companion
-  emitter rewrite that lands alongside (strict-mode-safe output that
-  honours data-each scope) costs zero runtime bytes — spektrum-compile
-  is build-time only and ships in no bundle.
+  This briefly raised the engine cap to 13,952 B raw / 6,304 B gz — then
+  the caps were declared hard limits, so the bytes were CLAWED BACK
+  rather than left absorbed. The engine's hand-rolled `deepClone` was
+  replaced with the `structuredClone` platform global: equivalent on
+  every input the engine can hand it (state is only plain objects /
+  arrays / primitives; SAFE_KEY on every write means no own `__proto__`
+  key can reach it; NaN/Infinity survive), zero source cost, and it more
+  than paid for the four fixes. A now-dead cacheSet guard (precompile no
+  longer routes through it) came out too. Engine is back UNDER the
+  original 13,696 B raw / 6,240 B gz — caps below are restored to those
+  values, and the four fixes ship inside them. The compile-companion
+  emitter rewrite costs zero runtime bytes (build-time only).
+
+  Policy note (see the banner above): every cap below was subsequently
+  RESTORED to its pre-session value. Where a batch's new logic didn't
+  fit, it was trimmed until it did — structuredClone for the two clone
+  sites (engine + mcp), a schema-builder + shared field consts + terser
+  tool descriptions in mcp, and, where it still didn't fit, dropped: the
+  persist page-hide flush was prototyped and discarded because a
+  listener-with-teardown is ~150 B and persist had ~69 B of headroom.
+  The mcp guard-hardening and the persist newest-wins fix both ship
+  under the ORIGINAL caps. Nothing below was raised to accommodate them.
 */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -167,7 +184,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const TARGETS = [
   // file relative to repo root, raw cap (bytes), gzipped cap (bytes)
-  { file: 'spektrum.min.js',          raw: 13952, gz: 6304 },
+  { file: 'spektrum.min.js',          raw: 13696, gz: 6240 },
   // Persist gains a pagehide/visibilitychange flush so a debounced
   // autoSave doesn't lose its pending window when the page goes away —
   // `pagehide` rather than `beforeunload` because mobile browsers
@@ -182,7 +199,7 @@ const TARGETS = [
   // gz for the flush plumbing; one 512 B raw step (1,024 → 1,536) and
   // one 128 B gz step (576 → 704), keeping this the smallest companion
   // by a wide margin.
-  { file: 'companions/spektrum-persist.min.js',  raw:  1536, gz:  704 },
+  { file: 'companions/spektrum-persist.min.js',  raw:  1024, gz:  576 },
   // 1.2 dock integration adds ~120 B for the [data-spektrum-dock]
   // detection branch + dockPanel.detach() in unmount. Standalone
   // behavior unchanged; cap raised once to absorb the integration.
@@ -235,7 +252,7 @@ const TARGETS = [
   // the clearest justification: without it the documented security
   // boundary does not hold. Five 256 B raw steps (5,376 → 6,656) and
   // four 128 B gz steps (2,112 → 2,624), leaving ~167 B raw / ~78 B gz.
-  { file: 'companions/spektrum-mcp.min.js',      raw:  6656, gz: 2624 },
+  { file: 'companions/spektrum-mcp.min.js',      raw:  5376, gz: 2112 },
   { file: 'companions/spektrum-agent.min.js',    raw: 13312, gz: 5120 },
   // Inspect Phase 1 + Lint (element inspector with hover tooltip +
   // outline overlay, three-tab panel, mutation tracer with filter, and

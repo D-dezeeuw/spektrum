@@ -34,23 +34,22 @@ This also applies to object fields: publishing `{...row}` with a key omitted lea
 
 Why we keep this: the alternative is tracking *written paths* separately from the delta's shape, which means a parallel structure threaded through every write, merge, and replay path. That's a real cost against the size budget for a case a one-character change (`null`) already covers.
 
-## `computed` writes into the delta, not state
+## `computed` writes to both state and the delta
 
-A computed value lands in `appStateDelta` during the tick that recomputes it, and merges into `appState` when that tick commits. Mid-tick reads of the same path therefore see the *prior committed* value, not the value the current pass is producing. After `tick()` returns, both reads agree.
+A computed value is written to `appStateDelta` *and* directly into `appState` in the same derivation. The state write gives read-through: a system running after the derivation in the same pass reads the fresh value from `state`. The delta write keeps fan-out working: systems subscribed to the computed path still fire on the next pass.
 
 ```js
 computed('total', ['cart.items'], (s) => s.cart.items.reduce((a, x) => a + x.price, 0));
 setValue('cart.items', [{price: 10}, {price: 5}]);
-// During the tick this triggered, a system reading appState.total still
-// sees the previous value (or undefined). After tick() returns, both
-// appState.total and (a stateSnapshot read) return 15.
+tick();
+// During that tick, a system running after the derivation already read
+// state.total === 15; systems subscribed to 'total' fired on the next
+// pass; after tick() returns, appState.total === 15 for everyone.
 ```
 
-Read computed values from the snapshot/state passed to your subscriber, or after `tick()` has returned to the caller. Anything reactive sees the new value via the delta on the next pass — that's the design, not a bug.
+The wrinkle that remains is about *plain* writes, not computed ones: `setValue` lands only in the delta until `tick()` commits, so synchronous code that runs before the tick — e.g. the portion of an `addAsync` fn body before its first `await` — still sees pre-write state. Call `spektrum.tick()` between a `setValue` and an `addAsync` registration whose fn body needs the just-written value.
 
-The same wrinkle applies to `addAsync`: the synchronous portion of its fn body (everything before the first `await`) sees pre-tick state, since the value you just wrote with `setValue` lives in the delta until `tick()` commits. Call `spektrum.tick()` between a `setValue` and an `addAsync` if the fn body needs the just-written value.
-
-Why we keep this: it matches the engine's commit-on-tick model. Treating the delta as the single write target keeps the `appState ⊕ appStateDelta` invariant simple to reason about.
+Why we keep this: plain mutators writing only the delta is what keeps the `appState ⊕ appStateDelta` commit-on-tick invariant simple, and the dual write in `computed` exists precisely because derived values are read mid-tick by sibling systems — without the read-through, every consumer would be one pass behind.
 
 ## `history.splice(0, n)` on `historyLimit` overflow is O(n)
 

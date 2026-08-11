@@ -8,7 +8,7 @@ This page complements [philosophy.md](philosophy.md), which covers the *vision* 
 
 ## Single-file engine
 
-The whole engine is one file: [`spektrum.js`](../spektrum.js), ~1100 lines including comments. No internal module boundaries, no build step required to read it, no jumping between files to follow a code path.
+The whole engine is one file: [`spektrum.js`](../spektrum.js), ~1,430 lines including comments. No internal module boundaries, no build step required to read it, no jumping between files to follow a code path.
 
 **Why it matters.** The pitch is *"read it in an afternoon"* — and the entire engine fits in any LLM's context window in one tool call. Both audiences (humans auditing, agents reasoning) get the complete picture in one read. A multi-file engine forces both to chase imports.
 
@@ -32,7 +32,7 @@ No `dependencies` in `package.json`. Ever. **No exceptions.**
 
 ## Size budget enforced at CI
 
-Engine cap: **13,952 B raw / 6,304 B gzipped**, with a per-companion cap alongside it. The budget is asserted in [`scripts/size.js`](../scripts/size.js) and runs as part of `npm run size` — CI fails if a change pushes any bundle over. (The caps carry their own history: each past adjustment is logged in that file with the feature that caused it.)
+Engine cap: **13,696 B raw / 6,240 B gzipped**, with a per-companion cap alongside it. The authoritative numbers live in [`scripts/size.js`](../scripts/size.js) — when this page and that file disagree, the script is right. The budget is asserted by `npm run size` and CI fails if a change pushes any bundle over. (The caps carry their own history: each past adjustment is logged in that file with the feature that caused it.)
 
 **The caps are hard limits, not targets.** A change that does not fit is trimmed until it does, or it is not merged. **Raising a cap requires explicit maintainer sign-off** and is never something an implementer decides on their own — however well-justified the feature, however thorough the write-up. Trim, or ask.
 
@@ -54,7 +54,7 @@ The engine traverses with `Object.keys`, matches with regex, and walks the DOM w
 
 ## Deterministic and synchronous test surface
 
-`tick()`, `reset()`, `replay()`, `bindDOM()`, `setValue()`, `trigger()` are all public, synchronous, and deterministic. The test suite uses `node --test` with `happy-dom` — no mocks, no fake timers, no awaiting microtasks for engine behavior.
+`tick()`, `reset()`, `replay()`, `bindDOM()`, `setValue()`, `addValue()` are all public, synchronous, and deterministic. The test suite uses `node --test` with `happy-dom` — no mocks, no fake timers, no awaiting microtasks for engine behavior.
 
 **Why it matters.** Determinism is what makes time-travel meaningful: `replay(n)` returns to *the same* state every time, every test run. If `tick()` resolved asynchronously, every test would race; if `setValue` deferred to a microtask, `replay` would have to model that. Sync + deterministic also means agents reasoning about a sequence of actions get the same result the user does.
 

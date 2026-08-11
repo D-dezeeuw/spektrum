@@ -20,9 +20,9 @@ If any of these are deal-breakers for your project, **rule Spektrum out now** ra
 
 Every line of code in Spektrum was added against these constraints. Each constraint is a deliberate filter that has rejected features.
 
-- **Single file engine.** ~1100 lines. The whole thing fits in your head — and in any LLM's context window in one read.
-- **Zero runtime dependencies.** Forever. The dev deps are `esbuild` and `eslint`; both are optional for users.
-- **Size budget enforced at CI.** Engine cap is ~11.5 KB minified / ~5.2 KB gzipped. Bumps are documented in [scripts/size.js](../scripts/size.js); each is one-shot, justified by a named feature.
+- **Single file engine.** ~1,430 lines. The whole thing fits in your head — and in any LLM's context window in one read.
+- **Zero runtime dependencies.** Forever. The dev deps are tooling only (`esbuild`, `eslint`, `typescript`, `typedoc`, happy-dom for tests); all are optional for users.
+- **Size budget enforced at CI.** Engine cap is 13,696 B raw / 6,240 B gzipped, asserted in [scripts/size.js](../scripts/size.js) — the authoritative record of every cap and the feature that motivated it. Caps are hard limits: trim to fit, or ask the maintainer.
 - **No CSS-in-JS, no virtual DOM, no proxies on hot paths.** The engine uses `Object.keys` traversal, regex matchers, and a hand-written iterative tree walker. Boring, fast, and visible.
 - **Deterministic + synchronous test surface.** `tick()`, `reset()`, `replay()` are public, synchronous, and deterministic. No mocks, no fake timers, no awaiting microtasks. If a test needs async, it's because the user code under test is async — never because of the engine.
 - **Auditability over abstraction.** Every non-obvious decision in the source has a comment explaining *why*, not what. Comments are bytes the bundle has to carry; we accept the cost because the engine's pitch is "read it in an afternoon."
@@ -39,7 +39,7 @@ Every line of code in Spektrum was added against these constraints. Each constra
 | [`spektrum.d.ts`](../spektrum.d.ts) | TypeScript declarations. |
 | [`companions/`](../companions/) | Opt-in subpath modules — `devtools`, `persist`, `compile`, `mcp`, `agent`, `inspect`, `dock`. Each is a single file. |
 | [`tests/`](../tests/) | Engine + DOM tests (`node --test`, happy-dom). One file per concern. |
-| [`example/`](../example/) | Demo page (`index.html` + `app.js`) — declarative bindings using every feature, two isolated Spektrum instances. |
+| [`example/`](../example/) | Demo page (`index.html` + `app.js`) — a live feature tour: three isolated Spektrum instances, every directive in use, each demo displaying its own markup. |
 | [`docs/`](../docs/) | Reference + topical guides, plus the agent workflow at [`../AGENTS.md`](../AGENTS.md). |
 | [`scripts/size.js`](../scripts/size.js) | Zero-dep size budget enforcer. |
 

@@ -45,6 +45,11 @@ jobs:
       - run: npm ci
       - name: Build API reference
         run: npm run docs
+      # llms.txt at the site root so AI tooling that probes
+      # <site>/llms.txt finds the discovery map alongside the
+      # rendered API reference.
+      - name: Include llms.txt at the site root
+        run: cp llms.txt docs-site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: docs-site

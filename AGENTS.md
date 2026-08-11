@@ -10,13 +10,29 @@ The [demo app](example/) is wired with all of this. Open the page, then open dev
 
 ---
 
+## Check your priors — Spektrum is not Vue/React/Alpine
+
+Most mistakes agents make here come from pattern-matching another framework's idioms. The five that bite hardest:
+
+| If you're assuming… | Spektrum actually… |
+| --- | --- |
+| `v-for`-style loops — directive on the repeated element | `data-each` goes on the **container** (first element child is the template), or on a `<template>` element. Loop scope is real: `item` (or `data-as` name), `$index`, `$first`, `$last`, `$path`. |
+| `{{…}}` works in attributes | Text nodes **only**. Reactive attributes are `:attr="expr"`; row-relative targets use scope-resolved paths (`data-id="item.field"`). |
+| `trigger` fires events | It's the **deprecated alias** of `addValue(path, value)` — additive numeric. Absolute writes are `setValue(path, value)`. There is no event bus. |
+| `v-if` unmounts | `data-if` only toggles `display` (v-show semantics); children stay bound. |
+| Clearing with `undefined` | An `undefined` write does **not** fire subscribers — write `null` to clear. And never assign into `appState` directly; unrecorded writes skip history, systems, and replay. |
+
+The complete current-idiom reference is the [`spektrum` skill](.claude/skills/spektrum/SKILL.md) and [docs/](docs/); [llms.txt](llms.txt) maps everything in one page.
+
+---
+
 ## Why Spektrum for agents
 
 Other engines treat agent-friendliness as an afterthought. Spektrum's foundations were already aligned:
 
 | Property | Why an agent cares |
 | --- | --- |
-| ~1100 LOC, single file | The entire engine fits in your context window. One Read tool call and you've grokked the runtime. |
+| ~1,430 lines, single file | The entire engine fits in your context window. One Read tool call and you've grokked the runtime. |
 | `setValue('user.email', 'x')` | Path-based mutation is structured data — far easier for an LLM to synthesize than `setState(prev => ({...}))`. |
 | Time-travel built into the primitive | Try an edit, evaluate, roll back. Every move is replayable. Discarded branches survive on `forks`. |
 | Declarative HTML bindings | `data-action="submit.prevent"` and `data-intent="checkout.submit"` tell you what an element does without reading JS. |
@@ -85,14 +101,14 @@ Multiple elements can share an intent. `describe().intents` shows you the catalo
 
 To **trigger** UI: don't synthesize click events — call the underlying state mutator directly (next step). UI events are cosmetic; state is the source of truth.
 
-### 4. Mutate — `setValue` / `trigger`
+### 4. Mutate — `setValue` / `addValue`
 
-Two recorded write primitives, both round-trip through history.
+Two recorded write primitives, both round-trip through history. (`trigger(id, path, value)` is the deprecated pre-1.0 alias of `addValue` — read it in old code, don't write it in new code.)
 
 ```js
 spektrum.setValue('user.email', 'alice@example.com');     // absolute write
 spektrum.setValue('cart.items', [...]);                   // overwrites whole value at path
-spektrum.trigger('inc', 'count', 1);                      // additive numeric (accumulates in one tick)
+spektrum.addValue('count', 1, 'inc');                     // additive numeric (accumulates in one tick)
 spektrum.checkpoint('after-edit', { actor: 'agent-1' });  // tagged marker, no state effect
 ```
 
@@ -348,7 +364,7 @@ The agent surface gives an agent the same authority any caller of `setValue` / `
 
 | Topic | Where |
 | --- | --- |
-| Engine source | [spektrum.js](spektrum.js) — read it. ~1100 lines. |
+| Engine source | [spektrum.js](spektrum.js) — read it. ~1,430 lines. |
 | Type definitions | [spektrum.d.ts](spektrum.d.ts) — `Spektrum`, `SpektrumManifest`, `ExplainedEntry`, `AttemptHandle`, `FnMeta`. |
 | MCP tool factory | [companions/spektrum-mcp.js](companions/spektrum-mcp.js) — twelve tools, plain JS, SDK-agnostic. |
 | Wired demo | [example/](example/) — open in a browser, then `window.spektrum.{counter,basket}` in devtools. |

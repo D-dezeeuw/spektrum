@@ -110,11 +110,16 @@ GitHub, npm, and unpkg read them by exact name there.
   sync.
 - **Docs touchup after refactors.** When a refactor renames or
   removes an internal helper or built-in (e.g. the old
-  `rewriteScope`, `data-stable-key`), grep `docs/` for references
-  before opening the PR — stale cross-links lie to readers. The
-  short ritual: `git diff --stat main…HEAD` to spot renamed
-  identifiers, then `grep -rn '<name>' docs/` for each. Same goes
-  for the `## Related` link blocks at the bottom of each doc page.
+  `rewriteScope`, `data-stable-key`), grep **every doc layer** —
+  `docs/`, `AGENTS.md`, `.claude/skills/spektrum/SKILL.md`,
+  `llms.txt`, `README.md`, `example/` — for references before
+  opening the PR; stale guides teach an engine that no longer
+  exists (the pre-1.0 idioms survived in the skill and AGENTS.md
+  for months this way). The short ritual: `git diff --stat
+  main…HEAD` to spot renamed identifiers, then
+  `grep -rn '<name>' docs/ AGENTS.md .claude llms.txt README.md example/`
+  for each. Same goes for the `## Related` link blocks at the
+  bottom of each doc page.
 - **Changelog.** Add a line under `## [Unreleased]` in
   `CHANGELOG.md`. The format follows
   [Keep a Changelog](https://keepachangelog.com/).

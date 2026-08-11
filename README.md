@@ -12,9 +12,9 @@
 
 **[Live demo →](https://d-dezeeuw.github.io/spektrum/example/)**
 
-Spektrum is one file with zero runtime dependencies and no build step. The ~1,350 commented source lines audit in an afternoon, and there's nothing transitive to pick up someone else's CVE from. The same small footprint drops cleanly into a WordPress theme, an MV3 browser extension, an Electron renderer, or — once expressions are precompiled with `spektrum/compile` — a strict-CSP environment with no `unsafe-eval`. No SPA framework required.
+Spektrum is one file with zero runtime dependencies and no build step. The ~1,430 commented source lines audit in an afternoon, and there's nothing transitive to pick up someone else's CVE from. The same small footprint drops cleanly into a WordPress theme, an MV3 browser extension, an Electron renderer, or — once expressions are precompiled with `spektrum/compile` — a strict-CSP environment with no `unsafe-eval`. No SPA framework required.
 
-At ~12 KB the whole engine fits in any LLM's context window in one tool call — so when an AI agent writes Spektrum code, it's working from the source, not a guess. `attempt()` is speculative execution as a primitive: try a change, run validation, commit or discard. `describe()` returns the full operational manifest. The MCP companion exposes the running app as a tool catalog any MCP-compatible agent can drive.
+At ~13 kB the whole engine fits in any LLM's context window in one tool call — so when an AI agent writes Spektrum code, it's working from the source, not a guess. `attempt()` is speculative execution as a primitive: try a change, run validation, commit or discard. `describe()` returns the full operational manifest. The MCP companion exposes the running app as a tool catalog any MCP-compatible agent can drive.
 
 Every mutation flows through one path — the same path that updates the DOM also writes history. `replay(n)` reconstructs any past state, deterministically. Ship a serialized history with a bug report and QA reproduces the user's exact actions; build multi-step wizards with native undo; emit audit trails for compliance — all built into the primitive.
 
@@ -24,7 +24,7 @@ A tiny templating engine with HTML-attribute bindings — `{{expr}}` for text, `
 
 ```html
 <p>{{count}}</p>
-<button data-action="click" data-fn="trigger" data-id="count" data-value="1" data-name="inc">+1</button>
+<button data-action="click" data-fn="addValue" data-id="count" data-value="1" data-name="inc">+1</button>
 
 <script type="module">
   import { setValue, bindDOM, run } from 'https://unpkg.com/spektrum';
@@ -38,7 +38,7 @@ That's a working reactive counter. Read the engine in an afternoon, or hand the 
 ## Why
 
 - **Time-travel.** Every mutation recorded. `replay(n)` rebuilds any past state. Undo / scrub / agent-rollback for free.
-- **Auditable.** ~12 KB minified, ~5.5 KB gzipped, ~1100 lines, single file, **zero runtime dependencies**.
+- **Auditable.** ~13 kB minified, ~6 kB gzipped, ~1,430 lines, single file, **zero runtime dependencies**.
 - **Drop-in.** ESM from a `<script type="module">` — works in plain HTML, a WordPress theme, a browser extension, an Electron renderer, anywhere.
 - **CSP-safe.** Strict-CSP via `spektrum/compile`.
 - **Agent-native.** `describe()` returns the full operational manifest. `attempt()` is speculative execution. Mount an in-page LLM panel in 5 lines.
@@ -84,6 +84,17 @@ The depth lives in [`docs/`](docs/). Single source of truth, plain Markdown.
 | [Constraints](docs/constraints.md) | Non-negotiables that gate every feature |
 | [Trade-offs](docs/trade-offs.md) | Deliberate design choices and their rationale |
 | [Philosophy](docs/philosophy.md) | Non-goals; the engine in three sentences |
+
+## For AI agents
+
+Discovery is layered so an agent loads only what the task needs:
+
+1. **[`llms.txt`](llms.txt)** — one-page map of everything, with the assumption-breakers (how Spektrum differs from Vue/React/Alpine) up front. Start here.
+2. **[`AGENTS.md`](AGENTS.md)** — driving a *running* Spektrum app (orient → speculate → explain → commit) and making apps agent-ready.
+3. **[`.claude/skills/spektrum/SKILL.md`](.claude/skills/spektrum/SKILL.md)** — auto-loads as the `spektrum` skill in Claude Code: mental model, current idioms, gotchas, task→doc router.
+4. **[`docs/`](docs/)** and **[`spektrum.js`](spektrum.js)** — the depth; the source wins every disagreement.
+
+The npm package ships `llms.txt`, `AGENTS.md`, and `docs/` alongside the code, so agents working inside `node_modules/spektrum` see the same layers. At runtime, `describe()` returns the running app's full operational manifest in one call.
 
 ## Built with Spektrum
 

@@ -72,7 +72,7 @@ Each fork is a plain `HistoryEntry[]` (no new types), tagged with the cursor it 
 const restore = (fork) => {
   for (const e of fork.entries) {
     if (e.op === 'set') spektrum.setValue(e.path, e.value, e.id);
-    else spektrum.trigger(e.id, e.path, e.value);
+    else spektrum.addValue(e.path, e.value, e.id);
   }
 };
 

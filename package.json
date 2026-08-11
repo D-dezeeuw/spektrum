@@ -45,7 +45,11 @@
     "spektrum.js",
     "spektrum.min.js",
     "spektrum.d.ts",
-    "companions/"
+    "companions/",
+    "AGENTS.md",
+    "CHANGELOG.md",
+    "llms.txt",
+    "docs/"
   ],
   "scripts": {
     "start": "python3 -m http.server 8088",

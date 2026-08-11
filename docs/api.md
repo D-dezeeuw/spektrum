@@ -173,7 +173,7 @@ Two ways to wipe runtime state, with different scopes:
 - **`resetState()`** clears `appState`, `appStateDelta`, `refs`, `history`, `snapshots`, `forks`, and the `bindDOM` idempotency tracker. **Preserves** registered systems, `defineFn` entries, and hook registrations (`onError`, `onRecord`, `onFork`). Use this when you're swapping the data set under a running app — `spektrum/persist`'s `loadHistory` calls it internally.
 - **`reset()`** does everything `resetState()` does *and* clears systems. Built-in fns and hook registrations still survive. Calling it with active systems emits a `[spektrum] reset() dropped N system(s); see resetState` warning — the warn is there because silent detachment has bitten users who assumed `reset()` was state-only. Use `resetState()` instead when you only want to wipe state.
 
-Built-in `data-fn` handlers (`trigger`, `setValue`, `setText`, `setStyle`, `toggle`) are re-registered on every `createSpektrum()`; they survive both reset paths.
+Built-in `data-fn` handlers (`setValue`, `addValue` — plus `trigger`, its deprecated alias — `setText`, `setStyle`, `toggle`) are re-registered on every `createSpektrum()`; they survive both reset paths.
 
 ## Agent surface — quick reference
 

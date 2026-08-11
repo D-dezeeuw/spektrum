@@ -1,6 +1,6 @@
 # Security policy
 
-Spektrum is a single ~1,350-line file with zero runtime dependencies.
+Spektrum is a single ~1,430-line file with zero runtime dependencies.
 The supply-chain story is the whole pitch — please help keep it
 honest.
 

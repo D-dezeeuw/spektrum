@@ -1,0 +1,51 @@
+# Spektrum
+
+> A tiny reactive engine for the browser: one source file (~1,430 lines, ~13 kB minified / ~6 kB gzipped), zero runtime dependencies, no build step. State lives in `appState`; every mutation (`setValue` / `addValue`) is recorded to `history` and drained by `tick()` into subscribed systems, so `replay(n)` deterministically rebuilds any past state. Declarative HTML directives (`{{expr}}`, `:attr`, `data-if`, `data-each`, `data-model`, `data-action`) bind the real DOM at `bindDOM()` time — no virtual DOM, no components. An agent surface (`describe()`, `explain()`, `attempt()`, `findByIntent()`) makes a running app drivable by an LLM.
+
+Spektrum resembles Vue and Alpine but differs where it counts. Check these against your priors before writing code:
+
+- `data-each` goes on the list **container** (first element child is the template) or on a `<template>` element — not on the repeated element like Vue's `v-for` / Alpine's `x-for`. Use the `<template>` form inside `<table>` / `<select>`.
+- Inside `data-each`, the loop variable (`item`, or the `data-as` name) plus `$index`, `$first`, `$last`, `$path` are real lexical scope. On built-in handlers, `data-id="item.field"` resolves to the row's actual state path.
+- `{{expr}}` interpolates **text nodes only**. Reactive attributes use `:attr="expr"` (`<a :href="url">`, never `href="{{url}}"`).
+- `data-if` toggles `display` (Vue `v-show` semantics); children stay bound. There is no unmount directive.
+- Mutators: `setValue(path, value, id?)` is absolute, `addValue(path, value, id?)` is additive-numeric. `trigger(id, path, value)` is a **deprecated alias** of `addValue`. Writing `undefined` does not fire subscribers — write `null` to clear a value.
+- Paths are dotted strings (`'user.email'`, `'items.0.name'`). Never assign into `appState` directly — history, replay, and bindings won't see the write.
+- Keyed `data-each` rows (`data-key="item.id"`) always reuse their DOM node across reorder; `data-stable-key` is accepted as a no-op for back-compat.
+- No SSR, no components, no router, no proxies, no virtual DOM — deliberate non-goals, not gaps.
+
+Links below mirror the repository layout. The npm package ships `AGENTS.md`, `CHANGELOG.md`, `docs/`, the source, and this file at the same relative paths (the Claude skill and tests live in the repository only).
+
+## Start here
+
+- [Claude skill](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/.claude/skills/spektrum/SKILL.md): mental model, working example, current gotchas, and a task→doc router — the fastest complete orientation for an AI writing Spektrum code
+- [AGENTS.md](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/AGENTS.md): driving a running Spektrum app as an agent (orient → speculate → explain → commit) and making apps agent-ready
+- [README](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/README.md): pitch, install, quick start
+
+## Reference
+
+- [Public API](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/docs/api.md): every export with examples — mutators, `computed`, `addAsync`, `addSystem`, `defineFn`, error codes, `serialize`, agent surface
+- [Bindings](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/docs/bindings.md): the full directive spec — `data-each` forms and keying, scope variables, `data-model` modifiers, `data-action` modifiers, URL-attribute safety, `data-cloak`
+- [Time-travel](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/docs/time-travel.md): `replay`, `checkpoint`, `forks`, `snapshotEvery`, persistence
+- [Companion modules](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/docs/modules.md): `spektrum/devtools`, `persist`, `compile`, `mcp`, `agent`, `inspect`, `dock`
+- [Type declarations](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/spektrum.d.ts): canonical typed signatures with JSDoc
+
+## Design rationale
+
+- [Constraints](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/docs/constraints.md): the non-negotiables (single file, zero deps, hard size caps) that gate every change — read before proposing engine changes
+- [Trade-offs](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/docs/trade-offs.md): deliberate compromises with reasoning — read when the engine surprises you
+- [Philosophy](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/docs/philosophy.md): the engine in three sentences, and the non-goals
+- [Security model](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/docs/security-model.md): trust boundaries — author-written templates, agent read/write authority; read before mounting an agent
+- [CSP guide](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/docs/csp.md): strict-CSP deployments via build-time precompile
+
+## Ground truth
+
+- [spektrum.js](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/spektrum.js): the whole engine in one commented file — small enough to read end-to-end; when any doc disagrees with it, the source is right
+- [Tests](https://github.com/D-dezeeuw/spektrum/tree/main/tests): behavior pins for every feature (`node --test`, happy-dom, plus real-browser smoke tests)
+- [Example app](https://github.com/D-dezeeuw/spektrum/tree/main/example): counter + basket demo — two isolated instances, every directive, devtools/persist/inspect/agent wired
+- [CHANGELOG](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/CHANGELOG.md): behavior changes and deprecations per release
+
+## Optional
+
+- [Contributing](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/CONTRIBUTING.md): dev workflow and review etiquette
+- [Roadmap](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/ROADMAP.md): what's planned and what's deliberately deferred
+- [API site](https://d-dezeeuw.github.io/spektrum/): TypeDoc-rendered reference generated from the type declarations

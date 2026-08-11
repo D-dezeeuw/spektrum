@@ -72,16 +72,19 @@ counter.defineFn('undo', () => {
 // restoreFork: rewind to where the fork was discarded, then re-apply
 // its entries. Any diverging history past forkedAt becomes a NEW fork,
 // so the user's "wrong turn" gets preserved exactly once and the
-// original future is back. data-id="f" is rewritten by data-each to
-// "forkSummary.<i>" per row — the index is the last segment.
-const restoreFork = (instance) => (el) => {
-  const idx = Number(el.dataset.id.split('.').pop());
+// original future is back. The row index comes from the data-each
+// iteration scope ($index), which bindAction passes to every handler
+// as the trailing argument. (Pre-1.0 this read a data-id that the old
+// text-rewriter rewrote per row; that mechanism is gone, and the old
+// read silently produced NaN.)
+const restoreFork = (instance) => (_el, _s, _d, _v, _e, scope) => {
+  const idx = scope?.$index;
   const fork = instance.forks[idx];
   if (!fork) return;
   instance.replay(fork.forkedAt);
   for (const e of fork.entries) {
     if (e.op === 'set') instance.setValue(e.path, e.value, e.id);
-    else if (e.op === 'add') instance.trigger(e.id, e.path, e.value);
+    else if (e.op === 'add') instance.addValue(e.path, e.value, e.id);
     else if (e.op === 'checkpoint') instance.checkpoint(e.id, e.value);
   }
   // Consumed. We mutated forks directly (splice) which doesn't tick,
@@ -90,7 +93,7 @@ const restoreFork = (instance) => (el) => {
   mirrorForks(instance, instance.appStateDelta);
 };
 counter.defineFn('restoreFork', restoreFork(counter), {
-  description: 'Re-apply a discarded future from spektrum.forks at the indicated index. Reads data-id="forkSummary.<i>".',
+  description: 'Re-apply the discarded future at the clicked row (index from the iteration scope).',
 });
 
 counter.bindDOM(document.getElementById('counter'));
@@ -169,7 +172,7 @@ basket.defineFn('undo', () => {
 });
 
 basket.defineFn('restoreFork', restoreFork(basket), {
-  description: 'Re-apply a discarded future from spektrum.forks at the indicated index.',
+  description: 'Re-apply the discarded future at the clicked row (index from the iteration scope).',
 });
 
 // resetAll: footer link uses data-action="click.prevent" so the
@@ -266,7 +269,7 @@ for (const root of document.querySelectorAll('[data-spektrum-devtools]')) {
 //   spektrum.basket.findByIntent('basket.add')       // [el, el, el, el]
 //   spektrum.counter.attempt('+5', () => {           // speculative edit
 //     for (let i = 0; i < 5; i++)
-//       spektrum.counter.trigger('inc', 'count', 1);
+//       spektrum.counter.addValue('count', 1, 'inc');
 //   })                                                // → { result, commit, discard }
 //   spektrum.counter.explain({ from: spektrum.counter.history.length - 5 })
 //

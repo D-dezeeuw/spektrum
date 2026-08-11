@@ -21,9 +21,18 @@ Reference material for working with Spektrum. The [root README](../README.md) is
 
 - **[../AGENTS.md](../AGENTS.md)** — agent workflow tutorial: orient → speculate → explain → commit. Covers the in-page agent panel and the MCP catalog.
 
+## AI entry points
+
+Progressively layered — start at the top, load deeper pages only when the task needs them:
+
+- **[`../llms.txt`](../llms.txt)** — one-page discovery map with the assumption-breakers up front (also shipped in the npm package and published at the site root)
+- **[`../.claude/skills/spektrum/SKILL.md`](../.claude/skills/spektrum/SKILL.md)** — mental model, working example, gotchas, task→doc router (auto-loads as the `spektrum` skill in Claude Code)
+- **[`../AGENTS.md`](../AGENTS.md)** — driving a *running* app as an agent; authoring agent-ready apps
+- **[`../CLAUDE.md`](../CLAUDE.md)** — contributing to this repo: source-of-truth order, hard gates, commands
+
 ## Source-of-truth pointers
 
-- **Engine** — [`spektrum.js`](../spektrum.js) (~1100 lines, single file, zero deps)
+- **Engine** — [`spektrum.js`](../spektrum.js) (~1,430 lines, single file, zero deps)
 - **Types** — [`spektrum.d.ts`](../spektrum.d.ts)
 - **Tests** — [`tests/`](../tests/) (engine + DOM, one file per concern)
 - **Demo** — [`example/`](../example/)

@@ -39,7 +39,7 @@ Every line of code in Spektrum was added against these constraints. Each constra
 | [`spektrum.d.ts`](../spektrum.d.ts) | TypeScript declarations. |
 | [`companions/`](../companions/) | Opt-in subpath modules — `devtools`, `persist`, `compile`, `mcp`, `agent`, `inspect`, `dock`. Each is a single file. |
 | [`tests/`](../tests/) | Engine + DOM tests (`node --test`, happy-dom). One file per concern. |
-| [`example/`](../example/) | Demo page (`index.html` + `app.js`) — declarative bindings using every feature, two isolated Spektrum instances. |
+| [`example/`](../example/) | Demo page (`index.html` + `app.js`) — a live feature tour: three isolated Spektrum instances, every directive in use, each demo displaying its own markup. |
 | [`docs/`](../docs/) | Reference + topical guides, plus the agent workflow at [`../AGENTS.md`](../AGENTS.md). |
 | [`scripts/size.js`](../scripts/size.js) | Zero-dep size budget enforcer. |
 

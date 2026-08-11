@@ -41,7 +41,7 @@ Links below mirror the repository layout. The npm package ships `AGENTS.md`, `CH
 
 - [spektrum.js](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/spektrum.js): the whole engine in one commented file — small enough to read end-to-end; when any doc disagrees with it, the source is right
 - [Tests](https://github.com/D-dezeeuw/spektrum/tree/main/tests): behavior pins for every feature (`node --test`, happy-dom, plus real-browser smoke tests)
-- [Example app](https://github.com/D-dezeeuw/spektrum/tree/main/example): counter + basket demo — two isolated instances, every directive, devtools/persist/inspect/agent wired
+- [Example app](https://github.com/D-dezeeuw/spektrum/tree/main/example): live feature tour — counter + basket plus ten self-documenting sections, three isolated instances, every directive in use, each demo displaying its own markup
 - [CHANGELOG](https://raw.githubusercontent.com/D-dezeeuw/spektrum/main/CHANGELOG.md): behavior changes and deprecations per release
 
 ## Optional

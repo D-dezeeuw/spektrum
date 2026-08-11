@@ -1,18 +1,27 @@
 /*
-  Two isolated Spektrum instances on one page, wired to the demo's
-  full feature surface:
+  The Spektrum demo — three isolated instances on one page:
 
-    createSpektrum(opts)  → historyLimit + snapshotEvery
-    onError               → log system exceptions
-    data-key              → keyed list reconciliation (see basket)
-    data-action="x.mod"   → event modifiers (.stop, .prevent)
-    spektrum/devtools     → floating scrubber panel (per instance)
-    spektrum/persist      → loadHistory + autoSave (uses onRecord
-                            internally to catch every mutation,
-                            including data-model two-way edits)
+    counter  — the flagship widget: persisted history, undo, forks,
+               a free-floating devtools scrubber.
+    basket   — keyed lists, filtering, intents, persisted history,
+               the dock UI (devtools + inspect as tabs), and the
+               opt-in in-page agent panel.
+    tour     — the self-documenting feature tour below the panels.
+               Every section binds a live demo AND shows its own
+               markup: the snippet is extracted from the DOM before
+               bindDOM() runs, so what you read is exactly what's
+               bound. The JS shown per section is fn.toString() of
+               the wiring that actually ran — same guarantee.
 
-  Every binding form is exercised somewhere in the markup; this
-  file just wires the engine side.
+  House rules this file follows (worth copying into your own app):
+    - Defaults (`state.x ??= …`) are direct-mutated inside a seed
+      system — they don't belong in history.
+    - Reactive mirrors of engine internals (cursor, forks) are
+      written into the DELTA directly (no record), so they fan out
+      without polluting the timeline.
+    - Custom data-fn handlers read the data-each row from the scope
+      argument (`scope.item`, `scope.$index`) — never from a
+      rewritten data-id (that pre-1.0 mechanism is gone).
 */
 
 import { createSpektrum } from '../spektrum.js';
@@ -147,22 +156,23 @@ basket.defineFn('addKind', (el, state, delta) => {
   },
 });
 
-// removeAt: data-id is rewritten by data-each from "item" to "items.<i>"
-// per cloned row, so the click handler reads the absolute path and
-// extracts the index from the last segment. Note the markup uses
-// data-action="click.stop" so the click doesn't bubble (cosmetic
-// here — the row itself doesn't capture clicks — but it demonstrates
-// the modifier syntax).
-basket.defineFn('removeAt', (el, state, delta) => {
-  const i = Number(el.dataset.id.split('.').pop());
+// removeAt: the clicked row's identity comes from the data-each
+// iteration scope (scope.item), which bindAction passes to every
+// handler as the trailing argument. Filtering by identity (not index)
+// stays correct however the list is filtered or reordered. (Pre-1.0
+// this parsed an index out of a data-id the old text-rewriter rewrote
+// per row; that mechanism is gone — the old read produced NaN and
+// silently removed nothing.) The markup keeps data-action="click.stop"
+// to demonstrate the modifier syntax.
+basket.defineFn('removeAt', (_el, state, delta, _v, _e, scope) => {
   const current = delta.items || state.items || [];
   basket.setValue(
     'items',
-    current.filter((_, idx) => idx !== i),
-    `remove ${i}`,
+    current.filter((it) => it !== scope.item),
+    `remove ${scope.item?.label ?? '?'}`,
   );
 }, {
-  description: 'Remove a row from basket.items by index. Reads the index from data-id="items.<i>".',
+  description: 'Remove the clicked row from basket.items (row identity from the iteration scope).',
 });
 
 basket.defineFn('undo', () => {
@@ -200,6 +210,304 @@ autoSave(basket, { key: basketKey, debounce: 200 });
 // data-ref demo: focus the filter input after bind so users can start
 // typing immediately. refs is populated synchronously by bindDOM().
 basket.refs.filterInput?.focus();
+
+// ============================================================
+// === The feature tour =======================================
+// ============================================================
+//
+// A third isolated instance. Not persisted — every load starts clean,
+// so the demos are deterministic. Each section below follows the same
+// shape: a setup fn wires the engine side, the markup lives in
+// index.html, and BOTH are displayed inside the section verbatim
+// (markup extracted pre-bind, JS via fn.toString()), so the page can
+// never show code that differs from what runs.
+
+const tour = createSpektrum({ snapshotEvery: 20 });
+tour.onError((err) => console.error('[tour] system threw:', err));
+
+// --- 1 · state, delta, tick — and the undefined footgun ---
+
+const setupState = () => {
+  tour.defineFn('msgHello', () => tour.setValue('msg', 'hello'), {
+    description: 'Absolute write: setValue("msg", "hello").',
+  });
+  // Writing `undefined` records + merges, but fires NO subscribers —
+  // tick() selects systems by whether the path RESOLVES in the delta.
+  // The readouts above go stale on purpose. Write null to clear.
+  tour.defineFn('msgUndef', () => tour.setValue('msg', undefined), {
+    description: 'The footgun: setValue("msg", undefined) — merges but re-renders nothing.',
+  });
+  tour.defineFn('msgNull', () => tour.setValue('msg', null), {
+    description: 'The fix: setValue("msg", null) — resolves, so bindings re-render empty.',
+  });
+};
+
+// --- 2 · text + attribute bindings ---
+
+const setupText = () => {
+  // Nothing to wire: {{expr}} and :attr bindings are pure markup.
+  // data-model="mood" writes state, the bindings re-render. See the
+  // markup panel — note the comparison lives in :class (attribute
+  // values are one string; a bare > inside {{…}} in a TEXT node can
+  // be split by the HTML parser).
+};
+
+// --- 3 · two-way forms: data-model + modifiers ---
+
+const setupForms = () => {
+  // .trim / .number / .lazy are trailing path modifiers, chainable.
+  // The JSON readout below the form subscribes to `form` — any
+  // sub-path write (form.email, form.age, …) resolves through it.
+};
+
+// --- 4 · conditional display: data-if ---
+
+const setupIf = () => {
+  // data-if toggles display (v-show semantics) — children STAY BOUND.
+  // The panel keeps re-rendering while hidden; unhide to see the
+  // clicks it counted in the dark. The +1 button is the built-in
+  // data-fn="addValue" — additive, accumulates within a tick.
+};
+
+// --- 5 · lists: data-each, keys, scope, <template>, nesting ---
+
+const TRACK_NAMES = ['aurora', 'basalt', 'cirrus', 'dune', 'ember', 'fjord', 'geyser'];
+const setupLists = () => {
+  tour.defineFn('addTrack', (_el, state) => {
+    const tracks = state.tracks || [];
+    const name = TRACK_NAMES[tracks.length % TRACK_NAMES.length];
+    tour.setValue('tracks', [...tracks, { id: nextId++, name }], `track+${name}`);
+  }, { description: 'Append the next demo track to tracks.' });
+
+  tour.defineFn('shuffleTracks', (_el, state) => {
+    tour.setValue('tracks', [...state.tracks].sort(() => Math.random() - 0.5), 'shuffle');
+  }, { description: 'Shuffle tracks — keyed rows keep their DOM nodes (and any half-typed note).' });
+
+  tour.defineFn('sortTracks', (_el, state) => {
+    tour.setValue('tracks', [...state.tracks].sort((a, b) => a.name.localeCompare(b.name)), 'sort');
+  }, { description: 'Sort tracks by name — same keyed-reuse story as shuffle.' });
+
+  // Row identity comes from the scope argument — scope.t is the row
+  // object because the markup says data-as="t".
+  tour.defineFn('removeTrack', (_el, state, _d, _v, _e, scope) => {
+    tour.setValue('tracks', state.tracks.filter(x => x !== scope.t), `track-${scope.t?.name}`);
+  }, { description: 'Remove the clicked row (identity via scope.t).' });
+
+  tour.defineFn('bumpStock', (_el, state) => {
+    const i = Math.floor(Math.random() * state.stock.length);
+    tour.addValue(`stock.${i}.qty`, 1, `stock+${i}`);
+  }, { description: 'addValue on a random stock.<i>.qty — the computed total re-derives.' });
+};
+
+// --- 6 · events: data-action modifiers, built-ins, cycle, refs ---
+
+const setupActions = () => {
+  tour.defineFn('shout', (el) => {
+    tour.setValue('actionLog', `keydown.enter → you said “${el.value}”`);
+    el.value = '';
+  }, { description: 'Fires only on Enter (keydown.enter key gate).' });
+
+  tour.defineFn('onlyOnce', () => {
+    tour.setValue('actionLog', '.once fired — the listener removed itself; click again, nothing happens');
+  }, { description: 'One-shot listener via the .once modifier.' });
+
+  tour.defineFn('selfOnly', () => {
+    tour.setValue('actionLog', '.self — the padded box itself was clicked');
+  }, { description: 'Fires only when event.target IS the bound element (.self).' });
+
+  tour.defineFn('innerClick', () => {
+    tour.setValue('actionLog', 'inner button clicked — the parent’s .self handler stayed quiet');
+  }, { description: 'Sibling handler proving .self filtered the bubbled click.' });
+
+  tour.defineFn('focusSay', () => tour.refs.say?.focus(), {
+    description: 'Imperative escape hatch: focus the input registered via data-ref="say".',
+  });
+
+  // data-action="cycle" is a SUBSCRIPTION, not a DOM event: the fn
+  // runs whenever the data-id path changes. This one watches the
+  // data-if demo's click counter.
+  tour.defineFn('onClicksChange', () => {
+    tour.addValue('cycleFired', 1, 'cycle');
+  }, { description: 'Runs on every ui.clicks change (data-action="cycle" subscription).' });
+};
+
+// --- 7 · derived + async: computed, addAsync, refresh ---
+
+const QUOTES = [
+  'state is a timeline, not a snapshot',
+  'every mutation is a fact — record it',
+  'replay(n) is the debugger you already had',
+  'small enough to read, honest enough to audit',
+];
+const setupDerived = () => {
+  // computed: re-derives when any dep changes; throws E_COMPUTED_SELF_DEP
+  // at registration if a dep overlaps its own output path.
+  tour.computed('stockTotal', ['stock'], s =>
+    (s.stock || []).reduce((sum, row) => sum + row.qty, 0));
+
+  // addAsync sets quote.loading / quote.error / quote.data as the
+  // promise progresses — each phase records through setValue, so a
+  // replay re-applies the values without re-fetching. The "fetch" here
+  // is a 700 ms timer picking the next line.
+  let i = 0;
+  tour.addAsync('quote', () => new Promise(resolve =>
+    setTimeout(() => resolve(QUOTES[i++ % QUOTES.length]), 700)));
+
+  tour.defineFn('reloadQuote', () => tour.refresh('quote'), {
+    description: 'Re-run the loader registered under "quote" via refresh(path).',
+  });
+};
+
+// --- 8 · time-travel: history, replay, checkpoints, forks ---
+
+const feed = [];
+const setupTimeTravel = () => {
+  // Mirror engine internals (cursor, history length, …) into the DELTA
+  // directly — a mirror is presentation, not a fact, so it must not
+  // record. onRecord covers live mutations (including checkpoints);
+  // the system covers replay(), because replay re-fires every system
+  // against the final state after the scrub.
+  const mirrorTT = (delta) => {
+    delta.ttCursor = tour.cursor;
+    delta.ttLength = tour.history.length;
+    delta.ttSnaps = tour.snapshots.length;
+    delta.ttForks = tour.forks.length;
+    delta.ttHasMark = tour.checkpoints.some(c => c.id === 'marked');
+    delta.ttFeed = feed.slice(-4).join('  ·  ') || '—';
+  };
+  tour.onRecord((entry) => {
+    feed.push(`${entry.op}:${entry.id}`);
+    mirrorTT(tour.appStateDelta);
+  });
+  tour.addSystem(['tt'], (_state, delta) => mirrorTT(delta));
+
+  tour.defineFn('ttUndo', () => tour.replay(Math.max(0, tour.cursor - 1)), {
+    description: 'replay(cursor − 1): rewind the WHOLE tour instance one recorded entry.',
+  });
+  tour.defineFn('ttMark', () => tour.checkpoint('marked', { by: 'tour' }), {
+    description: 'Drop a named checkpoint — a tagged marker in history, no state effect.',
+  });
+  tour.defineFn('ttJump', () => {
+    const cp = tour.checkpoints.findLast(c => c.id === 'marked');
+    if (cp) tour.replay(cp.index + 1);
+  }, { description: 'replay() to just after the most recent "marked" checkpoint.' });
+};
+
+// --- 9 · the agent surface ---
+
+let specHandle = null;
+const setupAgent = () => {
+  // describe(): the one-call manifest. We inspect the COUNTER instance
+  // (small state, easy to read) — cross-instance calls are just JS.
+  tour.defineFn('runDescribe', () => {
+    tour.setValue('agentOut', JSON.stringify(counter.describe(), null, 2), 'describe');
+  }, { description: 'Render counter.describe() — the full operational manifest in one call.' });
+
+  tour.defineFn('runExplain', () => {
+    const trace = counter.explain({ from: Math.max(0, counter.cursor - 5) });
+    tour.setValue('agentOut', JSON.stringify(trace, null, 2), 'explain');
+  }, { description: 'Render counter.explain() for the last 5 entries — each annotated with the systems it triggers.' });
+
+  // findByIntent: semantic UI lookup. Flash the four basket.add
+  // buttons so the result is visible, not just countable.
+  tour.defineFn('flashIntents', () => {
+    const els = basket.findByIntent('basket.add');
+    for (const el of els) {
+      el.style.outline = '2px solid var(--accent)';
+      setTimeout(() => { el.style.outline = ''; }, 1200);
+    }
+    tour.setValue('agentOut',
+      `basket.findByIntent('basket.add') → ${els.length} elements (flashing above)`, 'findByIntent');
+  }, { description: 'Locate elements by data-intent and flash them.' });
+
+  // attempt(): speculative execution against THIS instance. The
+  // pending flag is recorded AFTER the attempt's checkpoint, so
+  // discard() rewinds it automatically — no cleanup bookkeeping.
+  tour.defineFn('specStart', () => {
+    specHandle = tour.attempt('plus-five', () => {
+      for (let i = 0; i < 5; i++) tour.addValue('tt.count', 1, 'spec+1');
+    });
+    tour.setValue('spec.pending', true);
+  }, { description: 'attempt("plus-five"): speculatively add 5 to tt.count.' });
+
+  tour.defineFn('specCommit', () => {
+    specHandle?.commit();               // records a plus-five:commit checkpoint
+    specHandle = null;
+    tour.setValue('spec.pending', false);
+  }, { description: 'Keep the speculative branch (records a :commit checkpoint).' });
+
+  tour.defineFn('specDiscard', () => {
+    specHandle?.discard();              // replays back; entries land on forks
+    specHandle = null;                  // (spec.pending rewinds with them)
+  }, { description: 'Rewind the speculative branch; its entries land on tour.forks.' });
+};
+
+// --- boot the tour ---
+
+// Seed defaults directly (not recorded — they're the starting facts,
+// not user history), mirroring the counter/basket house pattern.
+const seedTour = (state) => {
+  state.msg ??= '(unset)';
+  state.mood ??= '';
+  state.form ??= { email: '', age: null, bio: '', newsletter: false, plan: '' };
+  state.ui ??= { showPanel: true, clicks: 0 };
+  state.tracks ??= [
+    { id: nextId++, name: 'aurora' },
+    { id: nextId++, name: 'basalt' },
+    { id: nextId++, name: 'cirrus' },
+  ];
+  state.stock ??= [
+    { id: nextId++, name: '🍎 apples', qty: 3 },
+    { id: nextId++, name: '🍌 bananas', qty: 5 },
+    { id: nextId++, name: '🥭 mangos', qty: 2 },
+  ];
+  state.groups ??= [
+    { id: nextId++, title: 'citrus', items: [{ id: nextId++, label: 'lime' }, { id: nextId++, label: 'yuzu' }] },
+    { id: nextId++, title: 'stone',  items: [{ id: nextId++, label: 'peach' }] },
+  ];
+  state.tt ??= { count: 0 };
+  state.spec ??= { pending: false };
+  state.actionLog ??= '(nothing yet)';
+  state.cycleFired ??= 0;
+};
+seedTour(tour.appState);
+
+setupState();
+setupText();
+setupForms();
+setupIf();
+setupLists();
+setupActions();
+setupDerived();
+setupTimeTravel();
+setupAgent();
+
+// Self-documentation. Order matters: extract each demo's markup BEFORE
+// bindDOM rewrites its text nodes, so the snippet is the author-written
+// source. The JS panel gets the section's setup fn, verbatim.
+const dedent = (html) => {
+  const lines = html.replace(/^\n+/, '').trimEnd().split('\n');
+  const pad = Math.min(...lines.filter(l => l.trim()).map(l => /^\s*/.exec(l)[0].length));
+  return lines.map(l => l.slice(pad)).join('\n');
+};
+const SECTION_JS = {
+  'f-state': setupState,
+  'f-lists': setupLists,
+  'f-actions': setupActions,
+  'f-derived': setupDerived,
+  'f-time': setupTimeTravel,
+  'f-agent': setupAgent,
+};
+for (const feature of document.querySelectorAll('.feature')) {
+  const demo = feature.querySelector('.demo');
+  const html = feature.querySelector('details.src-html code');
+  if (demo && html) html.textContent = dedent(demo.innerHTML);
+  const js = feature.querySelector('details.src-js code');
+  const fn = SECTION_JS[feature.id];
+  if (js && fn) js.textContent = `const ${fn.name} = ` + fn.toString() + ';';
+  if (demo) tour.bindDOM(demo);
+}
+tour.run();
 
 // === Devtools ===
 //
@@ -262,8 +570,8 @@ for (const root of document.querySelectorAll('[data-spektrum-devtools]')) {
 
 // === Agent surface playground ===
 //
-// Both instances are exposed on `window.spektrum` so anyone (or any
-// in-browser agent) can drive them from devtools console:
+// All three instances are exposed on `window.spektrum` so anyone (or
+// any in-browser agent) can drive them from devtools console:
 //
 //   spektrum.basket.describe()                       // full manifest
 //   spektrum.basket.findByIntent('basket.add')       // [el, el, el, el]
@@ -274,7 +582,7 @@ for (const root of document.querySelectorAll('[data-spektrum-devtools]')) {
 //   spektrum.counter.explain({ from: spektrum.counter.history.length - 5 })
 //
 // See AGENTS.md in the repo root for a full agent workflow tutorial.
-window.spektrum = { counter, basket };
+window.spektrum = { counter, basket, tour };
 
 // === In-page AI agent (opt-in) ===
 //

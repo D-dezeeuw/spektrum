@@ -103,7 +103,7 @@ The npm package ships `llms.txt`, `AGENTS.md`, and `docs/` alongside the code, s
 | **SKYo** | Hourly weather, single page | [d-dezeeuw.github.io/hourly-weather](https://d-dezeeuw.github.io/hourly-weather/) | [github.com/D-dezeeuw/hourly-weather](https://github.com/D-dezeeuw/hourly-weather) |
 | **Devworld26 guide** | Conference schedule navigator | [d-dezeeuw.github.io/my-confs](https://d-dezeeuw.github.io/my-confs/) | [github.com/D-dezeeuw/my-confs](https://github.com/D-dezeeuw/my-confs) |
 | **Subgenre Playlists** | Spotify playlist builder with AI track suggestions, SSE-streamed search, nested subgenre/track state | — | [github.com/D-dezeeuw/spotify-subgenre-playlists](https://github.com/D-dezeeuw/spotify-subgenre-playlists) |
-| **Spektrum demo** | Counter + basket reference, two isolated instances, devtools, persist, inspect, agent | [d-dezeeuw.github.io/spektrum/example](https://d-dezeeuw.github.io/spektrum/example/) | [example/](example/) |
+| **Spektrum demo** | Live feature tour — counter + basket plus ten self-documenting sections; three isolated instances; every demo shows its own markup | [d-dezeeuw.github.io/spektrum/example](https://d-dezeeuw.github.io/spektrum/example/) | [example/](example/) |
 
 Shipped something on Spektrum? Open a PR adding it here.
 

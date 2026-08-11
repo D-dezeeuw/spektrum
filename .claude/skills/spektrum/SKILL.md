@@ -315,5 +315,5 @@ For mutation visibility while debugging, mount `spektrum/inspect` (hover-to-see-
 - [docs/philosophy.md](../../../docs/philosophy.md) — Vision and non-goals. Read to know what Spektrum will never do.
 - [spektrum.js](../../../spektrum.js) — The engine, one commented file. Read end-to-end when you need ground truth — it wins every disagreement.
 - [spektrum.d.ts](../../../spektrum.d.ts) — TypeScript declarations. Read for typed signatures.
-- [example/](../../../example/) — Reference app: counter + basket, two isolated instances, every directive in use.
+- [example/](../../../example/) — Reference app and live feature tour: three isolated instances, every directive in use, each demo showing its own markup.
 - [llms.txt](../../../llms.txt) — One-page discovery map of everything above (also shipped in the npm package).

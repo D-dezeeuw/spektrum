@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Spektrum</title>
+<title>Spektrum — live feature tour</title>
 <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 <style>
   :root {
@@ -51,7 +51,6 @@
   }
 
   main {
-    flex: 1;
     display: flex;
     gap: 24px;
     padding: 24px;
@@ -86,7 +85,7 @@
     letter-spacing: 0.18em;
   }
 
-  button, input {
+  button, input, select {
     font-family: inherit;
     font-size: 13px;
   }
@@ -267,6 +266,253 @@
     background: rgba(252, 211, 77, 0.15);
   }
 
+  /* === the feature tour === */
+
+  .tour {
+    max-width: 920px;
+    margin: 0 auto;
+    width: 100%;
+    padding: 0 24px 24px;
+  }
+  .tour-intro {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 8px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--text-dim);
+  }
+  .tour-intro strong { color: var(--text); font-weight: normal; }
+  .toc {
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    font-size: 11px;
+  }
+  .toc a {
+    color: var(--accent);
+    text-decoration: none;
+    border: 1px solid var(--button-line);
+    border-radius: 999px;
+    padding: 3px 10px;
+    display: inline-block;
+  }
+  .toc a:hover { background: var(--hover); }
+
+  .feature {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 20px 24px 16px;
+    margin-bottom: 24px;
+  }
+  .feature h3 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: normal;
+    letter-spacing: 0.16em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+  .explain {
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--text-dim);
+    margin: 0 0 10px;
+  }
+  .explain strong { color: var(--text); font-weight: normal; }
+  .feature code, .tour-intro code {
+    background: #232328;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 0 5px;
+    font-size: 12px;
+    color: #c9e8d4;
+    white-space: nowrap;
+  }
+  .docline {
+    font-size: 11px;
+    color: var(--text-faint);
+    margin: 10px 0 0;
+  }
+  .docline a { color: var(--text-dim); }
+  .docline a:hover { color: var(--accent); }
+
+  .demo {
+    border: 1px dashed var(--button-line);
+    border-radius: 6px;
+    padding: 16px;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+  .demo p { margin: 6px 0; }
+  .demo input, .demo select {
+    padding: 6px 10px;
+    background: var(--button);
+    border: 1px solid var(--button-line);
+    color: var(--text);
+    border-radius: 4px;
+  }
+  .btnrow, .rowset {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin: 8px 0;
+  }
+  .rowset label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .big { font-size: 18px; }
+  .big strong { color: var(--accent); font-weight: normal; }
+  .dim { color: var(--text-faint); font-style: normal; }
+  .err { color: #ef4444; }
+  .hint {
+    font-size: 11px;
+    color: var(--text-faint);
+    letter-spacing: 0.06em;
+  }
+  .glow { color: var(--accent); text-shadow: 0 0 12px rgba(74, 222, 128, 0.5); }
+
+  details.src-html, details.src-js {
+    margin: 8px 0 0;
+  }
+  details summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text-faint);
+    letter-spacing: 0.08em;
+    user-select: none;
+  }
+  details summary:hover { color: var(--text-dim); }
+  details pre {
+    background: #0a0a0b;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin: 8px 0 0;
+    overflow-x: auto;
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: #b8b8c0;
+  }
+
+  .stateview {
+    background: #0a0a0b;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 10px 12px;
+    margin: 10px 0 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #b8b8c0;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .ifpanel {
+    border: 1px solid rgba(74, 222, 128, 0.35);
+    background: rgba(74, 222, 128, 0.05);
+    border-radius: 6px;
+    padding: 4px 14px;
+    margin: 8px 0;
+  }
+  .padbox {
+    border: 1px dotted var(--button-line);
+    border-radius: 6px;
+    padding: 14px;
+    color: var(--text-faint);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .tracks, .groups { list-style: none; padding: 0; margin: 8px 0; }
+  .tracks li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #232328;
+    border-radius: 4px;
+    padding: 5px 10px;
+    margin-bottom: 4px;
+  }
+  .tracks li.first { border-left: 3px solid var(--accent); }
+  .tracks li.last { border-left: 3px solid #a16207; }
+  .tracks .idx {
+    color: var(--text-faint);
+    font-size: 11px;
+    min-width: 16px;
+    text-align: right;
+  }
+  .tracks input { flex: 1; min-width: 60px; font-size: 12px; padding: 4px 8px; }
+  .tracks .x {
+    background: transparent;
+    border: none;
+    color: var(--text-faint);
+    padding: 0 6px;
+  }
+  .tracks .x:hover { color: var(--text); background: transparent; }
+  .tracks em, .groups em { font-size: 10px; }
+
+  .groups > li { margin-bottom: 6px; }
+  .groups ul { list-style: none; padding: 0 0 0 18px; margin: 2px 0; }
+  .groups ul li { color: var(--text-dim); font-size: 12px; padding: 1px 0; }
+
+  .demo-table {
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 12px;
+    min-width: 60%;
+  }
+  .demo-table th, .demo-table td {
+    border: 1px solid var(--line);
+    padding: 5px 12px;
+    text-align: left;
+  }
+  .demo-table th {
+    color: var(--text-faint);
+    font-weight: normal;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .demo-table tfoot td { color: var(--accent); }
+
+  blockquote.quote {
+    margin: 8px 0;
+    padding: 6px 12px;
+    border-left: 3px solid var(--accent);
+    color: var(--text);
+    font-style: italic;
+  }
+
+  .ctable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin: 8px 0;
+  }
+  .ctable td {
+    border-top: 1px solid var(--line);
+    padding: 6px 10px 6px 0;
+    vertical-align: top;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .ctable td:first-child { white-space: nowrap; color: var(--text); }
+
   footer {
     padding: 16px 24px 32px;
     text-align: center;
@@ -295,7 +541,7 @@
 
     /* iOS zooms the page when a focused input has font-size < 16px.
        Bump everything to 16px on mobile to keep the viewport stable. */
-    button, input { font-size: 16px; }
+    button, input, select { font-size: 16px; }
 
     #counter .readout { font-size: 56px; }
     #counter .meta { margin-bottom: 16px; }
@@ -307,6 +553,9 @@
     #basket .items li { padding: 6px 8px; gap: 6px; font-size: 14px; }
     #basket .items .note { font-size: 14px; padding: 6px 8px; }
 
+    .tour { padding: 0 12px 12px; }
+    .feature, .tour-intro { padding: 14px 16px; border-radius: 6px; }
+
     footer { padding: 12px 16px 24px; }
     footer .reset { display: block; margin: 8px 0 0; }
   }
@@ -315,7 +564,7 @@
 <body>
   <header>
     <img src="Spektrum-logo.png" alt="Spektrum" class="logo">
-    <p>two isolated instances · time-travel devtools · persisted across reloads</p>
+    <p>the live tour · every feature on this page is real, and every demo shows its own markup</p>
   </header>
 
   <main>
@@ -382,7 +631,7 @@
           <span class="label">{{item.label}}</span>
           <input class="note" type="text" data-model="item.note.lazy"
                  aria-label="note" placeholder="note…">
-          <button class="remove" data-intent="basket.remove" data-action="click.stop" data-fn="removeAt" data-id="item"
+          <button class="remove" data-intent="basket.remove" data-action="click.stop" data-fn="removeAt"
                   aria-label="remove" title="remove">×</button>
         </li>
       </ul>
@@ -408,12 +657,355 @@
     </section>
   </main>
 
+  <div class="tour">
+    <div class="tour-intro">
+      <strong>How this page works.</strong> Spektrum is a single-file reactive engine
+      (~13 kB minified, zero dependencies): state lives in <code>appState</code>, every
+      mutation is recorded to <code>history</code>, and each <code>tick()</code> drains
+      pending writes into the subscribed bindings — which is why <code>replay(n)</code>
+      can rebuild any past moment. This page runs <strong>three isolated instances</strong>
+      from <code>createSpektrum()</code>: the <strong>counter</strong> and
+      <strong>basket</strong> above (persisted across reloads via
+      <code>spektrum/persist</code> — reload and they come back), and a
+      <strong>tour</strong> instance powering the sections below (fresh each load).
+      Every section pairs a live demo with the exact markup that renders it —
+      extracted from this page before binding, so it can't lie — and, where there's
+      engine wiring, the verbatim JS that ran.
+      <ul class="toc">
+        <li><a href="#f-state">state &amp; tick</a></li>
+        <li><a href="#f-text">text &amp; attributes</a></li>
+        <li><a href="#f-forms">forms</a></li>
+        <li><a href="#f-if">conditionals</a></li>
+        <li><a href="#f-lists">lists &amp; scope</a></li>
+        <li><a href="#f-actions">events</a></li>
+        <li><a href="#f-derived">derived &amp; async</a></li>
+        <li><a href="#f-time">time-travel</a></li>
+        <li><a href="#f-agent">agent surface</a></li>
+        <li><a href="#f-companions">companions</a></li>
+      </ul>
+    </div>
+
+    <section class="feature" id="f-state">
+      <h3>1 · state, delta, tick</h3>
+      <p class="explain">
+        Two write primitives, both recorded into history: <code>setValue(path, value)</code>
+        for absolute writes and <code>addValue(path, value)</code> for additive-numeric ones
+        (<code>trigger</code> is its deprecated pre-1.0 alias). Paths are dotted strings —
+        <code>'user.email'</code>, <code>'items.0.name'</code>. Writes land in a
+        <em>delta</em> first; the next <code>tick()</code> merges them into
+        <code>appState</code> and fires subscribed systems. Never assign into
+        <code>appState</code> directly — an unrecorded write skips history, bindings, and replay.
+      </p>
+      <p class="explain">
+        One famous footgun, live below: <strong>writing <code>undefined</code> fires no
+        subscribers</strong> — the engine selects systems by whether the path <em>resolves</em>
+        in the delta, so the readout goes stale. Write <code>null</code> to clear.
+      </p>
+      <div class="demo" data-cloak>
+        <p class="big">msg = <strong>{{msg}}</strong>
+           <span class="dim">(raw: {{JSON.stringify(msg)}})</span></p>
+        <div class="btnrow">
+          <button data-action="click" data-fn="msgHello">setValue('msg', 'hello')</button>
+          <button data-action="click" data-fn="msgUndef">setValue('msg', undefined) — stales!</button>
+          <button data-action="click" data-fn="msgNull">setValue('msg', null) — clears</button>
+        </div>
+        <p class="hint">click “hello”, then “undefined” — the readout keeps showing hello. that's the lesson.</p>
+      </div>
+      <details class="src-html"><summary>markup powering this demo</summary><pre><code></code></pre></details>
+      <details class="src-js"><summary>wiring (verbatim from app.js)</summary><pre><code></code></pre></details>
+      <p class="docline">deeper: <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/api.md">docs/api.md</a> · <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/trade-offs.md">docs/trade-offs.md</a></p>
+    </section>
+
+    <section class="feature" id="f-text">
+      <h3>2 · text &amp; attribute bindings</h3>
+      <p class="explain">
+        <code>{{expr}}</code> interpolates <strong>text nodes only</strong> — full JS
+        expressions, auto-escaped. Attributes never see mustache; reactive attributes are
+        <code>:attr="expr"</code> (a property write — <code>:class</code> also accepts an
+        object of toggles, and URL attributes like <code>:href</code> neutralize
+        <code>javascript:</code> schemes). One parser quirk: a bare <code>&gt;</code> inside a
+        text-node mustache can split the node — keep comparisons in attribute expressions
+        (like the <code>:class</code> below) or use <code>&amp;gt;</code>.
+      </p>
+      <div class="demo" data-cloak>
+        <div class="rowset">
+          <input data-model="mood" placeholder="type your mood…" aria-label="mood">
+          <button :disabled="!mood">enabled only with a mood (:disabled)</button>
+        </div>
+        <p class="big" :class="{glow: mood && mood.length > 3}">
+          mood: <strong>{{mood ? mood.toUpperCase() : '…'}}</strong>
+          <span class="dim">({{(mood || '').length}} chars)</span>
+        </p>
+        <p><a :href="'https://github.com/D-dezeeuw/spektrum#' + (mood || '')">this link's :href updates as you type</a></p>
+      </div>
+      <details class="src-html"><summary>markup powering this demo</summary><pre><code></code></pre></details>
+      <p class="docline">deeper: <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/bindings.md">docs/bindings.md</a></p>
+    </section>
+
+    <section class="feature" id="f-forms">
+      <h3>3 · two-way forms — data-model + modifiers</h3>
+      <p class="explain">
+        <code>data-model="path"</code> binds inputs both ways: state → element, and element →
+        state through <code>setValue</code> (so <strong>every keystroke is history</strong> —
+        undo works on form edits too). Trailing modifiers chain Vue-style:
+        <code>.trim</code> strips whitespace, <code>.number</code> coerces via
+        <code>parseFloat</code>, <code>.lazy</code> commits on change/blur instead of
+        every keystroke. The JSON readout subscribes to <code>form</code> — any sub-path
+        write resolves through it.
+      </p>
+      <div class="demo" data-cloak>
+        <div class="rowset">
+          <label>email <input data-model="form.email.trim" placeholder="  spaces get trimmed  " aria-label="email"></label>
+          <label>age <input type="number" data-model="form.age.number" style="width:70px" aria-label="age"></label>
+        </div>
+        <div class="rowset">
+          <label>bio <input data-model="form.bio.lazy" placeholder="commits on blur (.lazy)" aria-label="bio"></label>
+          <label><input type="checkbox" data-model="form.newsletter"> newsletter</label>
+          <label>plan
+            <select data-model="form.plan" aria-label="plan">
+              <option>free</option><option>pro</option><option>team</option>
+            </select>
+          </label>
+        </div>
+        <pre class="stateview">form = {{JSON.stringify(form, null, 1)}}</pre>
+      </div>
+      <details class="src-html"><summary>markup powering this demo</summary><pre><code></code></pre></details>
+      <p class="docline">deeper: <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/bindings.md">docs/bindings.md</a> (incl. why <code>lazy</code>/<code>number</code>/<code>trim</code> are reserved path suffixes)</p>
+    </section>
+
+    <section class="feature" id="f-if">
+      <h3>4 · conditional display — data-if</h3>
+      <p class="explain">
+        <code>data-if="expr"</code> toggles <code>display</code> — Vue's
+        <code>v-show</code> semantics, not <code>v-if</code>. <strong>Children stay
+        bound while hidden</strong>: nothing unmounts, so state keeps flowing into the
+        hidden subtree. Hide the panel, click +1 a few times, unhide — it counted in the
+        dark. The +1 button is the built-in <code>data-fn="addValue"</code>: additive,
+        and multiple clicks in one tick accumulate instead of overwriting.
+      </p>
+      <div class="demo" data-cloak>
+        <label><input type="checkbox" data-model="ui.showPanel"> show the panel</label>
+        <div class="ifpanel" data-if="ui.showPanel">
+          <p>hidden ≠ unmounted — my bindings kept re-rendering while I was <code>display: none</code>.</p>
+          <p>you've clicked +1 <strong>{{ui.clicks}}</strong> times (counted even while hidden).</p>
+        </div>
+        <button data-action="click" data-fn="addValue" data-id="ui.clicks" data-value="1" data-name="if+1">+1 (works while the panel hides)</button>
+      </div>
+      <details class="src-html"><summary>markup powering this demo</summary><pre><code></code></pre></details>
+      <p class="docline">deeper: <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/bindings.md">docs/bindings.md</a></p>
+    </section>
+
+    <section class="feature" id="f-lists">
+      <h3>5 · lists — data-each, keys, scope, &lt;template&gt;, nesting</h3>
+      <p class="explain">
+        <code>data-each="path"</code> goes on the <strong>container</strong> (its first
+        element child is the row template) — the opposite of Vue's <code>v-for</code>.
+        It takes a dotted path, not an expression; derive filtered/sorted arrays with
+        <code>computed()</code>. Inside a row you get real lexical scope: the loop
+        variable (<code>item</code>, renamed here via <code>data-as="t"</code>) plus
+        <code>$index</code>, <code>$first</code>, <code>$last</code>, and
+        <code>$path</code> — the row's actual state path. With
+        <code>data-key</code>, a moved row <strong>keeps its DOM node</strong>: type in a
+        note below, shuffle, and your half-typed text survives the move.
+      </p>
+      <div class="demo" data-cloak>
+        <div class="btnrow">
+          <button data-action="click" data-fn="addTrack">add track</button>
+          <button data-action="click" data-fn="shuffleTracks">shuffle</button>
+          <button data-action="click" data-fn="sortTracks">sort by name</button>
+        </div>
+        <ul class="tracks" data-each="tracks" data-as="t" data-key="t.id">
+          <li :class="{first: $first, last: $last}">
+            <span class="idx">{{$index}}</span>
+            <span>{{t.name}}</span>
+            <input data-model="t.note.lazy" placeholder="type, then shuffle — I survive" aria-label="track note">
+            <em class="dim">{{$path}}</em>
+            <button class="x" data-action="click" data-fn="removeTrack" aria-label="remove track">×</button>
+          </li>
+        </ul>
+
+        <!-- The <template> form: required inside <table> / <select>,
+             where the HTML parser would re-parent a stray container-form
+             child. Clones are inserted before the <template> anchor. -->
+        <table class="demo-table">
+          <thead><tr><th>stock</th><th>qty</th><th>row path</th></tr></thead>
+          <tbody>
+            <template data-each="stock" data-as="row" data-key="row.id">
+              <tr><td>{{row.name}}</td><td>{{row.qty}}</td><td class="dim">{{$path}}</td></tr>
+            </template>
+          </tbody>
+          <tfoot><tr><td>total (computed)</td><td>{{stockTotal}}</td><td></td></tr></tfoot>
+        </table>
+        <button data-action="click" data-fn="bumpStock">addValue on a random stock.&lt;i&gt;.qty</button>
+
+        <!-- Nested data-each: the inner loop resolves g.items through
+             the outer row's scope; inner rows see outer variables. -->
+        <ul class="groups" data-each="groups" data-as="g" data-key="g.id">
+          <li><strong>{{g.title}}</strong>
+            <ul data-each="g.items" data-as="it" data-key="it.id">
+              <li>{{g.title}} › {{it.label}} <em class="dim">({{$path}})</em></li>
+            </ul>
+          </li>
+        </ul>
+      </div>
+      <details class="src-html"><summary>markup powering this demo</summary><pre><code></code></pre></details>
+      <details class="src-js"><summary>wiring (verbatim from app.js)</summary><pre><code></code></pre></details>
+      <p class="docline">deeper: <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/bindings.md">docs/bindings.md</a> — reconciliation modes, duplicate-key warnings, <code>data-stable-key</code> back-compat</p>
+    </section>
+
+    <section class="feature" id="f-actions">
+      <h3>6 · events — data-action, modifiers, cycle, refs</h3>
+      <p class="explain">
+        <code>data-action="event[.modifier]*"</code> + <code>data-fn="name"</code> dispatches
+        DOM events into registered handlers. Modifiers chain: behavior
+        (<code>.prevent</code> <code>.stop</code> <code>.once</code> <code>.self</code>),
+        listener options (<code>.capture</code> <code>.passive</code>), and key gates
+        (<code>.enter</code> <code>.esc</code> <code>.tab</code> <code>.shift</code>
+        <code>.cmd</code>). Handlers receive
+        <code>(el, state, delta, value, event, scope)</code>. Two non-event tools:
+        <code>data-ref="name"</code> exposes an element on <code>refs</code>, and
+        <code>data-action="cycle"</code> is a <em>subscription</em> — the fn runs whenever
+        the <code>data-id</code> path changes (the one below watches the click counter
+        from section 4).
+      </p>
+      <div class="demo" data-cloak>
+        <div class="rowset">
+          <input data-ref="say" data-action="keydown.enter" data-fn="shout" placeholder="type + Enter (keydown.enter)" aria-label="say">
+          <button data-action="click" data-fn="focusSay">focus it via refs.say (data-ref)</button>
+        </div>
+        <div class="rowset">
+          <button data-action="click.once" data-fn="onlyOnce">.once — fires a single time</button>
+          <div class="padbox" data-action="click.self" data-fn="selfOnly">
+            .self — click my padding, not the button →
+            <button data-action="click" data-fn="innerClick">inner</button>
+          </div>
+        </div>
+        <p>log: <span class="dim">{{actionLog}}</span></p>
+        <p class="hint" data-action="cycle" data-fn="onClicksChange" data-id="ui.clicks">
+          cycle subscription: ui.clicks changed {{cycleFired}} times — go click +1 in section 4.
+        </p>
+      </div>
+      <details class="src-html"><summary>markup powering this demo</summary><pre><code></code></pre></details>
+      <details class="src-js"><summary>wiring (verbatim from app.js)</summary><pre><code></code></pre></details>
+      <p class="docline">deeper: <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/bindings.md">docs/bindings.md</a> — the full modifier table; built-ins <code>setValue</code> / <code>addValue</code> / <code>setText</code> / <code>setStyle</code> / <code>toggle</code></p>
+    </section>
+
+    <section class="feature" id="f-derived">
+      <h3>7 · derived &amp; async — computed, addAsync, refresh</h3>
+      <p class="explain">
+        <code>computed(path, deps, fn)</code> re-derives whenever a dependency changes and
+        writes to <em>both</em> state and delta, so systems later in the same tick already read
+        the fresh value (the stock total in section 5 is this computed). It refuses
+        self-referential deps at registration (<code>E_COMPUTED_SELF_DEP</code>).
+        <code>addAsync(path, fn)</code> tracks a promise as
+        <code>path.loading</code> / <code>path.error</code> / <code>path.data</code> —
+        each phase recorded through <code>setValue</code>, so replay re-applies results
+        without re-fetching. <code>refresh(path)</code> re-runs a registered loader.
+      </p>
+      <div class="demo" data-cloak>
+        <div class="btnrow">
+          <button data-action="click" data-fn="reloadQuote" :disabled="quote.loading">refresh('quote')</button>
+          <span class="dim" data-if="quote.loading">loading…</span>
+          <span class="err" data-if="quote.error">{{quote.error}}</span>
+        </div>
+        <blockquote class="quote" data-if="quote.data">{{quote.data}}</blockquote>
+        <p class="hint">the “fetch” is a 700 ms timer — watch loading flip in the readout and in history.</p>
+      </div>
+      <details class="src-html"><summary>markup powering this demo</summary><pre><code></code></pre></details>
+      <details class="src-js"><summary>wiring (verbatim from app.js)</summary><pre><code></code></pre></details>
+      <p class="docline">deeper: <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/api.md">docs/api.md</a></p>
+    </section>
+
+    <section class="feature" id="f-time">
+      <h3>8 · time-travel — history, replay, checkpoints, forks</h3>
+      <p class="explain">
+        Every mutation on this page was recorded — the counters, your form keystrokes, the
+        quote fetches. <code>replay(n)</code> rebuilds the state at any entry;
+        <code>checkpoint(name)</code> drops a named marker; mutating after scrubbing back
+        parks the abandoned future on <code>forks</code> (restorable — try it on the
+        counter panel up top). <strong>Undo below rewinds the whole tour instance</strong>:
+        watch the sections above scrub backwards with it. The live numbers come from the
+        <code>onRecord</code> hook plus a system, mirroring engine internals into the delta
+        without recording. Reloading the page proves the same machinery again —
+        <code>spektrum/persist</code> replays the counter's and basket's saved history.
+      </p>
+      <div class="demo" data-cloak>
+        <p class="big">tt.count = <strong>{{tt.count}}</strong></p>
+        <div class="btnrow">
+          <button data-action="click" data-fn="addValue" data-id="tt.count" data-value="1" data-name="tt+1">+1</button>
+          <button data-action="click" data-fn="ttUndo" :disabled="ttCursor === 0">↶ undo anything (replay cursor−1)</button>
+          <button data-action="click" data-fn="ttMark">checkpoint('marked')</button>
+          <button data-action="click" data-fn="ttJump" :disabled="!ttHasMark">jump to checkpoint</button>
+        </div>
+        <p class="hint">cursor {{ttCursor}} / {{ttLength}} recorded · snapshots {{ttSnaps}} · forks {{ttForks}}</p>
+        <p class="hint">recent: {{ttFeed}}</p>
+      </div>
+      <details class="src-html"><summary>markup powering this demo</summary><pre><code></code></pre></details>
+      <details class="src-js"><summary>wiring (verbatim from app.js)</summary><pre><code></code></pre></details>
+      <p class="docline">deeper: <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/time-travel.md">docs/time-travel.md</a> — <code>snapshotEvery</code>, <code>historyLimit</code>, <code>serialize()</code></p>
+    </section>
+
+    <section class="feature" id="f-agent">
+      <h3>9 · the agent surface — describe, explain, attempt, findByIntent</h3>
+      <p class="explain">
+        Spektrum is built to be driven by AI agents as a first-class user.
+        <code>describe()</code> returns the full operational manifest in one call — state
+        shape, registered fns with their <code>defineFn</code> metadata, semantic intents,
+        history shape. <code>explain()</code> annotates history entries with the systems
+        they trigger. <code>findByIntent()</code> locates UI by
+        <code>data-intent="verb.noun"</code> markers instead of brittle selectors — every
+        interactive element on this page carries one. And <code>attempt(name, fn)</code>
+        is <strong>speculative execution</strong>: try a change, inspect the result,
+        <code>commit()</code> or <code>discard()</code> — a discarded branch rewinds
+        (and lands on <code>forks</code> at the next mutation). All three instances are on
+        <code>window.spektrum</code> — open the console and drive them yourself.
+      </p>
+      <div class="demo" data-cloak>
+        <div class="btnrow">
+          <button data-action="click" data-fn="runDescribe">counter.describe()</button>
+          <button data-action="click" data-fn="runExplain">counter.explain({from: −5})</button>
+          <button data-action="click" data-fn="flashIntents">basket.findByIntent('basket.add')</button>
+        </div>
+        <div class="btnrow">
+          <button data-action="click" data-fn="specStart" :disabled="spec.pending">attempt('plus-five') — speculative +5</button>
+          <button data-action="click" data-fn="specCommit" :disabled="!spec.pending">commit()</button>
+          <button data-action="click" data-fn="specDiscard" :disabled="!spec.pending">discard()</button>
+          <span class="dim" data-if="spec.pending">tt.count is speculatively at {{tt.count}} — keep it or roll it back</span>
+        </div>
+        <pre class="stateview" data-if="agentOut">{{agentOut}}</pre>
+      </div>
+      <details class="src-html"><summary>markup powering this demo</summary><pre><code></code></pre></details>
+      <details class="src-js"><summary>wiring (verbatim from app.js)</summary><pre><code></code></pre></details>
+      <p class="docline">deeper: <a href="https://github.com/D-dezeeuw/spektrum/blob/main/AGENTS.md">AGENTS.md</a> — the full workflow · <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/security-model.md">docs/security-model.md</a> before exposing writes</p>
+    </section>
+
+    <section class="feature" id="f-companions">
+      <h3>10 · companions — opt-in subpath modules</h3>
+      <p class="explain">
+        The engine stays one file; everything optional ships as a separate
+        <code>spektrum/*</code> module. Four of them are live on this page right now:
+      </p>
+      <table class="ctable">
+        <tr><td><code>spektrum/devtools</code></td><td>the scrubber panels — counter's floats bottom-left; drag the cursor and watch state rewind</td></tr>
+        <tr><td><code>spektrum/persist</code></td><td>counter + basket survive reloads: <code>loadHistory</code> replays localStorage, <code>autoSave</code> (debounced, via <code>onRecord</code>) keeps it fresh — “clear saved state” in the footer wipes it</td></tr>
+        <tr><td><code>spektrum/inspect</code></td><td>in the dock (right edge): hover any element to see its bindings, trace mutations, run the static lint</td></tr>
+        <tr><td><code>spektrum/dock</code></td><td>the shared tabbed container hosting basket's devtools + inspect</td></tr>
+        <tr><td><code>spektrum/agent</code></td><td>the in-page LLM panel — “enable AI assistant” in the footer mounts it against the basket (bring your own API key; writes need explicit opt-in)</td></tr>
+        <tr><td><code>spektrum/mcp</code></td><td>the same tool catalog as an MCP server surface — wire <code>createTools(instance)</code> into any MCP SDK; writes denied by default</td></tr>
+        <tr><td><code>spektrum/compile</code></td><td>build-time expression precompiler for strict-CSP deployments (no <code>unsafe-eval</code>) — nothing to demo at runtime: that's the point</td></tr>
+      </table>
+      <p class="docline">deeper: <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/modules.md">docs/modules.md</a> · <a href="https://github.com/D-dezeeuw/spektrum/blob/main/docs/csp.md">docs/csp.md</a></p>
+    </section>
+  </div>
+
   <footer>
     <a href="https://github.com/D-dezeeuw/spektrum">github</a>
     ·
     <a href="https://www.npmjs.com/package/spektrum">npm</a>
-    .
-  <a href="https://unpkg.com/spektrum@latest/spektrum.min.js">cdn</a>
+    ·
+    <a href="https://unpkg.com/spektrum@latest/spektrum.min.js">cdn</a>
+    ·
+    <a href="https://github.com/D-dezeeuw/spektrum/tree/main/docs">docs</a>
     <a href="#" class="reset" id="enable-agent" aria-label="enable in-page AI assistant">enable AI assistant</a>
     <a href="#" class="reset" data-action="click.prevent" data-fn="resetAll"
        aria-label="clear saved state and reload">clear saved state</a>
